@@ -48,6 +48,7 @@
 #include "core/io/stream_peer.h"
 #include "core/object/class_db.h"
 #include "core/object/object_id.h"
+#include "core/os/os.h"
 #include "core/version.h"
 #include "scene/3d/bone_attachment_3d.h"
 #include "scene/3d/camera_3d.h"
@@ -2247,16 +2248,26 @@ void GLTFDocument::_parse_image_save_image(Ref<GLTFState> p_state, const Vector<
 			}
 			if (must_write) {
 				Error err = OK;
+				// Extracted textures are ordinary project source files, so another editor
+				// session can be scanning this directory while they are written. Writing to a
+				// hidden temporary file and renaming means a peer sees either the previous
+				// texture or the new one, never a half-written image.
+				const String temporary_path = file_path.get_base_dir().path_join("." + file_path.get_file() + vformat(".%d.tmp", OS::get_singleton()->get_process_id()));
 				if (p_file_extension.is_empty()) {
 					// If a file extension was not specified, save the image data to a PNG file.
-					err = p_image->save_png(file_path);
+					err = p_image->save_png(temporary_path);
 					ERR_FAIL_COND(err != OK);
 				} else {
 					// If a file extension was specified, save the original bytes to a file with that extension.
-					Ref<FileAccess> file = FileAccess::open(file_path, FileAccess::WRITE, &err);
+					Ref<FileAccess> file = FileAccess::open(temporary_path, FileAccess::WRITE, &err);
 					ERR_FAIL_COND(err != OK);
 					file->store_buffer(p_bytes);
 					file->close();
+				}
+				err = DirAccess::rename_absolute(temporary_path, file_path);
+				if (err != OK) {
+					DirAccess::remove_absolute(temporary_path);
+					ERR_FAIL_MSG(vformat("glTF: Could not write extracted image to '%s'.", file_path));
 				}
 			}
 			if (must_import) {

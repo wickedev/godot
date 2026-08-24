@@ -45,6 +45,7 @@ public:
 	constexpr const static ID INVALID_ID = -1;
 
 	static String get_cache_file();
+	static String get_cache_export_file();
 
 private:
 	void *crypto = nullptr; // CryptoCore::RandomGenerator (avoid including crypto_core.h)
@@ -79,13 +80,14 @@ public:
 	void set_id(ID p_id, const String &p_path);
 	String get_id_path(ID p_id) const;
 	ID get_path_id(const String &p_path) const;
+	HashMap<ID, String> get_id_map() const;
 	void remove_id(ID p_id);
 
 	static String uid_to_path(const String &p_uid);
 	static String path_to_uid(const String &p_path);
 	static String ensure_path(const String &p_uid_or_path);
 
-	Error load_from_cache(bool p_reset);
+	Error load_from_cache(bool p_reset, const String &p_cache_file = String());
 	Error save_to_cache();
 	Error update_cache();
 	static String get_path_from_cache(Ref<FileAccess> &p_cache_file, const String &p_uid_string);

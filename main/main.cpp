@@ -46,6 +46,7 @@
 #include "core/io/file_access_zip.h"
 #include "core/io/image.h"
 #include "core/io/image_loader.h"
+#include "core/io/import_generation_store.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "core/object/class_db.h"
@@ -124,6 +125,7 @@
 #include "editor/editor_node.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/file_system/editor_session_paths.h"
 #include "editor/gui/progress_dialog.h"
 #include "editor/project_manager/project_manager.h"
 #include "editor/register_editor_types.h"
@@ -225,6 +227,7 @@ static ProcessID editor_pid = 0;
 static bool found_project = false;
 static bool recovery_mode = false;
 static bool auto_build_solutions = false;
+static String editor_session_id;
 static String debug_server_uri;
 static bool wait_for_import = false;
 static bool restore_editor_window_layout = true;
@@ -234,6 +237,14 @@ static int converter_max_line_length = 100000;
 #endif // DISABLE_DEPRECATED
 
 HashMap<Main::CLIScope, Vector<String>> forwardable_cli_arguments;
+
+static String _generate_editor_session_id() {
+	uint8_t random_bytes[16];
+	if (OS::get_singleton()->get_entropy(random_bytes, sizeof(random_bytes)) == OK) {
+		return String::hex_encode_buffer(random_bytes, sizeof(random_bytes));
+	}
+	return uitos(OS::get_singleton()->get_process_id()) + "-" + uitos(OS::get_singleton()->get_ticks_usec());
+}
 #endif
 static bool single_threaded_scene = false;
 
@@ -562,6 +573,7 @@ void Main::print_help(const char *p_binary) {
 #ifdef TOOLS_ENABLED
 	print_help_option("-e, --editor", "Start the editor instead of running the scene.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("-p, --project-manager", "Start the project manager, even if a project is auto-detected.\n", CLI_OPTION_AVAILABILITY_EDITOR);
+	print_help_option("--editor-session-id <id>", "Use a stable editor session identity for project-local working state. Independent editor windows must use different IDs.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--recovery-mode", "Start the editor in recovery mode, which disables features that can typically cause startup crashes, such as tool scripts, editor plugins, GDExtension addons, and others.\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--debug-server <uri>", "Start the editor debug server (<protocol>://<host/IP>[:port], e.g. tcp://127.0.0.1:6007)\n", CLI_OPTION_AVAILABILITY_EDITOR);
 	print_help_option("--dap-port <port>", "Use the specified port for the GDScript Debug Adapter Protocol. Recommended port range [1024, 49151].\n", CLI_OPTION_AVAILABILITY_EDITOR);
@@ -1595,6 +1607,18 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 			editor = true;
 		} else if (arg == "-p" || arg == "--project-manager") { // starts project manager
 			project_manager = true;
+		} else if (arg == "--editor-session-id") {
+			if (N) {
+				editor_session_id = N->get();
+				if (!ProjectSettings::is_valid_editor_session_id(editor_session_id)) {
+					OS::get_singleton()->print("Invalid editor session ID. Use 1-64 ASCII letters, digits, '-' or '_'.\n");
+					goto error;
+				}
+				N = N->next();
+			} else {
+				OS::get_singleton()->print("Missing editor session ID argument, aborting.\n");
+				goto error;
+			}
 		} else if (arg == "--recovery-mode") { // Enables recovery mode.
 			recovery_mode = true;
 		} else if (arg == "--debug-server") {
@@ -2098,10 +2122,20 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	}
 #endif // defined(DEBUG_ENABLED) || defined (TOOLS_ENABLED)
 
+#ifdef TOOLS_ENABLED
+	if (editor && !cmdline_tool && editor_session_id.is_empty()) {
+		editor_session_id = _generate_editor_session_id();
+	}
+	globals->set_editor_session_id(editor_session_id);
+#endif
+
 	OS::get_singleton()->_in_editor = editor;
 	if (globals->setup(project_path, main_pack, false, editor) == OK) {
 #ifdef TOOLS_ENABLED
 		found_project = true;
+		if (globals->has_editor_session()) {
+			EditorSessionPaths::create(editor);
+		}
 #endif
 	} else {
 #ifdef TOOLS_ENABLED
@@ -2280,6 +2314,17 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 		ResourceUID::get_singleton()->enable_reverse_cache();
 	}
 	ResourceUID::get_singleton()->load_from_cache(true); // Load UUIDs from cache.
+#ifdef TOOLS_ENABLED
+	if (ProjectSettings::get_singleton()->has_editor_session()) {
+		if (ImportGenerationStore::replay_uid_events() != OK) {
+			ERR_PRINT("Could not replay committed import UID events; the project's import event journal disagrees with itself. Refusing to continue with stale UID state. Inspect '.godot/events' and '.godot/transactions'.");
+			goto error;
+		}
+		// Republish any generation that was committed but whose selector never landed, which
+		// is what a crash between the commit event and the selector replacement leaves behind.
+		ImportGenerationStore::repair_selectors();
+	}
+#endif
 	ProjectSettings::get_singleton()->fix_autoload_paths(); // Handles autoloads saved as UID.
 
 	if (ProjectSettings::get_singleton()->has_custom_feature("dedicated_server")) {
@@ -2958,6 +3003,9 @@ error:
 	if (editor) {
 		OS::get_singleton()->remove_lock_file();
 	}
+#ifdef TOOLS_ENABLED
+	EditorSessionPaths::free();
+#endif
 
 	EngineDebugger::deinitialize();
 

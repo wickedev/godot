@@ -33,7 +33,9 @@
 TEST_FORCE_LINK(test_project_settings)
 
 #include "core/config/project_settings.h"
+#include "core/extension/gdextension.h"
 #include "core/io/dir_access.h"
+#include "core/io/resource_uid.h"
 #include "core/object/message_queue.h"
 #include "core/variant/variant.h"
 #include "tests/signal_watcher.h"
@@ -100,6 +102,36 @@ TEST_CASE("[ProjectSettings] Set value should be returned when retrieved") {
 
 	CHECK(ProjectSettings::get_singleton()->has_setting("my_custom_setting"));
 }
+
+#ifdef TOOLS_ENABLED
+TEST_CASE("[ProjectSettings] Editor session IDs and paths") {
+	CHECK(ProjectSettings::is_valid_editor_session_id("session-A_1"));
+	CHECK(ProjectSettings::is_valid_editor_session_id("0123456789"));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id(""));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id("."));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id(".."));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id("session/other"));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id("session other"));
+	CHECK_FALSE(ProjectSettings::is_valid_editor_session_id("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+
+	ProjectSettings *project_settings = ProjectSettings::get_singleton();
+	const String previous_session_id = project_settings->get_editor_session_id();
+	const String canonical_data_path = project_settings->get_project_data_path();
+	project_settings->set_editor_session_id("session-A_1");
+
+	const String session_data_path = canonical_data_path.path_join("sessions/session-A_1");
+	CHECK_EQ(project_settings->get_project_session_data_path(), session_data_path);
+	CHECK_EQ(project_settings->get_scene_groups_cache_path(), session_data_path.path_join("scene_groups_cache.cfg"));
+	CHECK_EQ(project_settings->get_global_class_list_path(), session_data_path.path_join("global_script_class_cache.cfg"));
+	CHECK_EQ(project_settings->get_global_class_list_export_path(), canonical_data_path.path_join("global_script_class_cache.cfg"));
+	CHECK_EQ(ResourceUID::get_cache_file(), session_data_path.path_join("uid_cache.bin"));
+	CHECK_EQ(ResourceUID::get_cache_export_file(), canonical_data_path.path_join("uid_cache.bin"));
+	CHECK_EQ(GDExtension::get_extension_list_config_file(), session_data_path.path_join("extension_list.cfg"));
+	CHECK_EQ(GDExtension::get_extension_list_export_file(), canonical_data_path.path_join("extension_list.cfg"));
+
+	project_settings->set_editor_session_id(previous_session_id);
+}
+#endif
 
 TEST_CASE("[ProjectSettings] localize_path") {
 	String old_resource_path = TestProjectSettingsInternalsAccessor::resource_path();

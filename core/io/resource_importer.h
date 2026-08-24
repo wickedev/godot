@@ -50,6 +50,7 @@ class ResourceFormatImporter : public ResourceFormatLoader {
 		ResourceUID::ID uid = ResourceUID::INVALID_ID;
 	};
 
+	Error _read_import_metadata(const String &p_path, PathAndType &r_path_and_type, bool p_load, bool *r_valid = nullptr) const;
 	Error _get_path_and_type(const String &p_path, PathAndType &r_path_and_type, bool p_load, bool *r_valid = nullptr) const;
 
 	static inline ResourceFormatImporter *singleton = nullptr;

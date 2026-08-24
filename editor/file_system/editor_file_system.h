@@ -31,13 +31,16 @@
 #pragma once
 
 #include "core/io/dir_access.h"
+#include "core/io/import_generation_store.h"
 #include "core/io/resource_loader_constants.h"
+#include "core/os/mutex.h"
 #include "core/os/semaphore.h"
 #include "core/os/thread.h"
 #include "core/os/thread_safe.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/safe_refcount.h"
 #include "scene/main/node.h"
+#include "scene/main/timer.h"
 
 class ResourceFormatImporter;
 class FileAccess;
@@ -272,6 +275,61 @@ class EditorFileSystem : public Node {
 	bool _update_scan_actions();
 
 	void _update_extensions();
+
+	// One import of one resource: staged privately, then published as an immutable
+	// generation and made visible by a single selector replacement.
+	struct ImportTransaction {
+		bool active = false;
+		bool holds_lease = false;
+		bool owns_group = false;
+		String transaction_id;
+		String generation_id;
+		String resource_key;
+		String staging_path;
+		String logical_base_path;
+	};
+
+	// An importer can import further resources while it runs; a glTF scene extracts its
+	// textures and imports them. Those nested imports join the outer transaction so every
+	// resource the scene produced becomes visible to other editors at the same instant.
+	struct ImportTransactionGroup {
+		String transaction_id;
+		String staging_root;
+		Vector<ImportGenerationStore::UIDClaim> uid_claims;
+		Vector<ImportGenerationStore::ResourceGeneration> resource_generations;
+		Vector<String> leased_resource_keys;
+		// An importer can import the same resource more than once inside one transaction, and
+		// every attempt needs its own immutable generation directory.
+		HashMap<String, int> attempts_by_resource_key;
+	};
+
+	static thread_local ImportTransactionGroup *current_import_group;
+
+	// Committed transactions this editor has already accounted for. Anything new in the
+	// canonical event journal was published by another editor session.
+	HashSet<String> seen_import_transactions;
+	void _poll_import_events();
+
+	// Resources another session was importing when this one wanted to. They stay queued here
+	// so the retry does not have to wait for a focus-in source scan.
+	Mutex deferred_imports_mutex;
+	HashSet<String> deferred_imports;
+	Timer *session_timer = nullptr;
+	uint64_t last_reclaim_msec = 0;
+	uint64_t last_deferred_report_msec = 0;
+	void _session_tick();
+	void _report_deferred_imports();
+	void _retry_deferred_imports();
+	void _reclaim_import_storage();
+
+	String _begin_import_transaction(const String &p_file, ImportTransaction &r_transaction);
+	Error _commit_import_transaction(const String &p_file, ImportTransaction &r_transaction, ResourceUID::ID p_uid);
+	Error _publish_import_transaction_group(ImportTransactionGroup &p_group);
+	void _end_import_transaction_group();
+	void _abort_import_transaction(ImportTransaction &r_transaction);
+	void _abort_import_transactions(HashMap<String, ImportTransaction> &r_transactions, const String &p_group_owner);
+	static String _to_logical_artifact_path(const ImportTransaction &p_transaction, const String &p_path);
+	static String _to_physical_artifact_path(const ImportTransaction &p_transaction, const String &p_path);
 
 	Error _reimport_file(const String &p_file, const HashMap<StringName, Variant> &p_custom_options = HashMap<StringName, Variant>(), const String &p_custom_importer = String(), Variant *generator_parameters = nullptr, bool p_update_file_system = true);
 	Error _reimport_group(const String &p_group_file, const Vector<String> &p_files);

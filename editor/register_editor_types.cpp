@@ -54,6 +54,7 @@
 #include "editor/export/register_exporters.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/file_system/editor_session_paths.h"
 #include "editor/gui/editor_file_dialog.h"
 #include "editor/gui/editor_spin_slider.h"
 #include "editor/gui/editor_toaster.h"
@@ -305,6 +306,13 @@ void register_editor_types() {
 	GLOBAL_DEF("editor/import/reimport_missing_imported_files", true);
 	GLOBAL_DEF("editor/import/use_multiple_threads", true);
 
+	// Reclamation of superseded import generations. The grace period is what makes it safe to
+	// run while another editor session has the same project open, so it is deliberately long.
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "editor/import/session/reclaim_grace_seconds", PROPERTY_HINT_RANGE, "60,86400,1,or_greater"), 600);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "editor/import/session/kept_generations_per_resource", PROPERTY_HINT_RANGE, "0,16,1,or_greater"), 1);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "editor/import/session/generation_storage_limit_mb", PROPERTY_HINT_RANGE, "0,1048576,1,or_greater"), 0);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "editor/import/session/events_before_compaction", PROPERTY_HINT_RANGE, "16,100000,1,or_greater"), 256);
+
 	GLOBAL_DEF(PropertyInfo(Variant::INT, "editor/import/atlas_max_width", PROPERTY_HINT_RANGE, "128,8192,1,or_greater"), 2048);
 
 	GLOBAL_DEF("editor/export/convert_text_resources_to_binary", true);
@@ -345,6 +353,7 @@ void unregister_editor_types() {
 	if (EditorPaths::get_singleton()) {
 		EditorPaths::free();
 	}
+	EditorSessionPaths::free();
 	EditorStringNames::free();
 
 	OS::get_singleton()->benchmark_end_measure("Editor", "Unregister Types");

@@ -61,6 +61,11 @@ Error EditorRun::run(const String &p_scene, const String &p_write_movie, const V
 		args.push_back(resource_path.replace(" ", "%20"));
 	}
 
+	if (ProjectSettings::get_singleton()->has_editor_session()) {
+		args.push_back("--editor-session-id");
+		args.push_back(ProjectSettings::get_singleton()->get_editor_session_id());
+	}
+
 	const String debug_uri = EditorDebuggerNode::get_singleton()->get_server_uri();
 	if (debug_uri.size()) {
 		args.push_back("--remote-debug");

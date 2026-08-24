@@ -30,6 +30,8 @@
 
 #include "editor_paths.h"
 
+#include "editor_session_paths.h"
+
 #include "core/config/engine.h"
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
@@ -129,7 +131,7 @@ EditorPaths::EditorPaths() {
 	ERR_FAIL_COND(singleton != nullptr);
 	singleton = this;
 
-	project_data_dir = ProjectSettings::get_singleton()->get_project_data_path();
+	project_data_dir = ProjectSettings::get_singleton()->get_project_session_data_path();
 
 	// Self-contained mode if a `._sc_` or `_sc_` file is present in executable dir.
 	String exe_path = OS::get_singleton()->get_executable_path().get_base_dir();
@@ -278,7 +280,8 @@ EditorPaths::EditorPaths() {
 			}
 		}
 
-		Engine::get_singleton()->set_shader_cache_path(project_data_dir);
+		const String shader_cache_path = EditorSessionPaths::get_singleton() ? EditorSessionPaths::get_singleton()->get_shader_cache_dir() : project_data_dir;
+		Engine::get_singleton()->set_shader_cache_path(shader_cache_path);
 
 		// Editor metadata dir.
 		if (!dir_res->dir_exists("editor")) {

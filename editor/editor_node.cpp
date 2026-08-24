@@ -377,7 +377,13 @@ void EditorNode::_update_title() {
 		// Display the "modified" mark before anything else so that it can always be seen in the OS task bar.
 		title = vformat("(*) %s", title);
 	}
-	DisplayServer::get_singleton()->window_set_title(title + String(" - ") + GODOT_VERSION_NAME);
+	String window_title = title + String(" - ") + GODOT_VERSION_NAME;
+	if (ProjectSettings::get_singleton()->has_editor_session()) {
+		// Several editors can have this project open at once, so the window has to say which
+		// one it is. The short prefix is enough to tell two windows apart at a glance.
+		window_title += vformat(" [%s]", ProjectSettings::get_singleton()->get_editor_session_id().left(8));
+	}
+	DisplayServer::get_singleton()->window_set_title(window_title);
 	if (project_title) {
 		project_title->set_text(title);
 	}
@@ -6775,6 +6781,11 @@ void EditorNode::_restart_editor(bool p_goto_project_manager) {
 		args.push_back(ProjectSettings::get_singleton()->get_resource_path());
 
 		args.push_back("-e");
+
+		if (ProjectSettings::get_singleton()->has_editor_session()) {
+			args.push_back("--editor-session-id");
+			args.push_back(ProjectSettings::get_singleton()->get_editor_session_id());
+		}
 	}
 
 	if (!to_reopen.is_empty()) {
