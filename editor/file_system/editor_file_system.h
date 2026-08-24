@@ -33,12 +33,14 @@
 #include "core/io/dir_access.h"
 #include "core/io/import_generation_store.h"
 #include "core/io/resource_loader_constants.h"
+#include "core/os/mutex.h"
 #include "core/os/semaphore.h"
 #include "core/os/thread.h"
 #include "core/os/thread_safe.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/safe_refcount.h"
 #include "scene/main/node.h"
+#include "scene/main/timer.h"
 
 class ResourceFormatImporter;
 class FileAccess;
@@ -308,11 +310,24 @@ class EditorFileSystem : public Node {
 	HashSet<String> seen_import_transactions;
 	void _poll_import_events();
 
+	// Resources another session was importing when this one wanted to. They stay queued here
+	// so the retry does not have to wait for a focus-in source scan.
+	Mutex deferred_imports_mutex;
+	HashSet<String> deferred_imports;
+	Timer *session_timer = nullptr;
+	uint64_t last_reclaim_msec = 0;
+	uint64_t last_deferred_report_msec = 0;
+	void _session_tick();
+	void _report_deferred_imports();
+	void _retry_deferred_imports();
+	void _reclaim_import_storage();
+
 	String _begin_import_transaction(const String &p_file, ImportTransaction &r_transaction);
 	Error _commit_import_transaction(const String &p_file, ImportTransaction &r_transaction, ResourceUID::ID p_uid);
 	Error _publish_import_transaction_group(ImportTransactionGroup &p_group);
 	void _end_import_transaction_group();
 	void _abort_import_transaction(ImportTransaction &r_transaction);
+	void _abort_import_transactions(HashMap<String, ImportTransaction> &r_transactions, const String &p_group_owner);
 	static String _to_logical_artifact_path(const ImportTransaction &p_transaction, const String &p_path);
 	static String _to_physical_artifact_path(const ImportTransaction &p_transaction, const String &p_path);
 

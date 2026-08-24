@@ -40,6 +40,7 @@
 #include "core/io/file_access_pack.h" // PACK_HEADER_MAGIC, PACK_FORMAT_VERSION
 #include "core/io/image.h"
 #include "core/io/image_loader.h"
+#include "core/io/import_generation_store.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "core/io/resource_uid.h"
@@ -1621,14 +1622,17 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 				for (const String &F : remaps) {
 					String remap = F;
 					if (remap == "path") {
+						// `.import` records the canonical path, which is also the name the
+						// exported project resolves. The bytes come from whichever generation
+						// is currently published.
 						save_info.path = config->get_value("remap", remap);
-						err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(save_info.path));
+						err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(path, save_info.path)));
 					} else if (remap.begins_with("path.")) {
 						String feature = remap.get_slicec('.', 1);
 
 						if (remap_features.has(feature)) {
 							save_info.path = config->get_value("remap", remap);
-							err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(save_info.path));
+							err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(path, save_info.path)));
 						} else {
 							// Remove paths if feature not enabled.
 							config->erase_section_key("remap", remap);
@@ -1680,8 +1684,10 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 				}
 			}
 
+			// A dependency can be an import artifact reached without its source file, so this
+			// resolves from the artifact path alone.
 			save_info.path = export_path;
-			err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(export_path));
+			err = save_proxy.save_file(p_preset, p_udata, save_info, FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(export_path)));
 			if (err != OK) {
 				return err;
 			}

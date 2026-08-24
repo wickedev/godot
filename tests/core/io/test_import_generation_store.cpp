@@ -389,4 +389,183 @@ TEST_CASE("[ImportGenerationStore] UID claims continue the chain replay expects"
 	resource_uid->remove_id(uid);
 }
 
+static void _publish_test_generation(const String &p_project_data_path, const String &p_source_path, const String &p_generation_id, int64_t p_epoch, const String &p_contents, bool p_select) {
+	const String resource_key = ImportGenerationStore::get_resource_key(p_source_path);
+	const String staging_path = p_project_data_path.path_join("staging").path_join(p_generation_id);
+	REQUIRE(_write_staged_file(staging_path, resource_key + ".scn", p_contents) == OK);
+	REQUIRE(ImportGenerationStore::publish_generation(resource_key, p_generation_id, staging_path, nullptr, p_project_data_path) == OK);
+	if (p_select) {
+		ImportGenerationStore::Selector selector;
+		selector.resource_key = resource_key;
+		selector.generation_id = p_generation_id;
+		selector.epoch = p_epoch;
+		selector.file_names.push_back(resource_key + ".scn");
+		REQUIRE(ImportGenerationStore::write_selector(selector, p_project_data_path) == OK);
+	}
+}
+
+TEST_CASE("[ImportGenerationStore] Reclamation keeps the selected generation") {
+	const String project_data_path = _project_data_path("import-generation-store-gc");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://gc.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	_publish_test_generation(project_data_path, source_path, "gc-1", 1, "one", false);
+	_publish_test_generation(project_data_path, source_path, "gc-2", 2, "two", false);
+	_publish_test_generation(project_data_path, source_path, "gc-3", 3, "three", true);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 0;
+	settings.keep_per_resource = 0;
+	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
+
+	CHECK(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "gc-3", project_data_path)));
+	CHECK_FALSE(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "gc-1", project_data_path)));
+	CHECK_FALSE(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "gc-2", project_data_path)));
+
+	ImportGenerationStore::Selector selector;
+	REQUIRE(ImportGenerationStore::read_selector(resource_key, selector, project_data_path));
+	CHECK(selector.generation_id == "gc-3");
+}
+
+TEST_CASE("[ImportGenerationStore] Reclamation honours the retention count") {
+	const String project_data_path = _project_data_path("import-generation-store-gc-keep");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://gc-keep.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	_publish_test_generation(project_data_path, source_path, "keep-1", 1, "one", false);
+	_publish_test_generation(project_data_path, source_path, "keep-2", 2, "two", false);
+	_publish_test_generation(project_data_path, source_path, "keep-3", 3, "three", true);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 0;
+	settings.keep_per_resource = 1;
+	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
+
+	int surviving = 0;
+	for (const String &generation_id : DirAccess::get_directories_at(ImportGenerationStore::get_resource_generations_path(resource_key, project_data_path))) {
+		surviving++;
+	}
+	CHECK(surviving == 2); // The selected one plus one predecessor.
+	CHECK(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "keep-3", project_data_path)));
+}
+
+TEST_CASE("[ImportGenerationStore] A grace period protects recent generations") {
+	const String project_data_path = _project_data_path("import-generation-store-gc-grace");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://gc-grace.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	_publish_test_generation(project_data_path, source_path, "grace-1", 1, "one", false);
+	_publish_test_generation(project_data_path, source_path, "grace-2", 2, "two", true);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 3600;
+	settings.keep_per_resource = 0;
+	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
+
+	// Another editor could still be loading from it, so nothing this recent is reclaimed.
+	CHECK(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "grace-1", project_data_path)));
+}
+
+TEST_CASE("[ImportGenerationStore] A removed source takes its generations with it") {
+	const String project_data_path = _project_data_path("import-generation-store-gc-orphan");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://gone/removed.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	_publish_test_generation(project_data_path, source_path, "orphan-1", 1, "one", true);
+	CHECK(ImportGenerationStore::record_resource_source(resource_key, source_path, project_data_path) == OK);
+	CHECK(ImportGenerationStore::read_resource_source(resource_key, project_data_path) == source_path);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 0;
+	settings.keep_per_resource = 1;
+	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
+	CHECK_FALSE(DirAccess::dir_exists_absolute(ImportGenerationStore::get_resource_generations_path(resource_key, project_data_path)));
+}
+
+TEST_CASE("[ImportGenerationStore] The storage limit reclaims the oldest unselected generations") {
+	const String project_data_path = _project_data_path("import-generation-store-gc-quota");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://quota.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	_publish_test_generation(project_data_path, source_path, "quota-1", 1, "aaaaaaaaaa", false);
+	_publish_test_generation(project_data_path, source_path, "quota-2", 2, "bbbbbbbbbb", true);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 0;
+	settings.keep_per_resource = 4; // Retention alone would keep both.
+	settings.storage_limit_bytes = 15;
+	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
+
+	CHECK(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "quota-2", project_data_path)));
+	CHECK_FALSE(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "quota-1", project_data_path)));
+}
+
+TEST_CASE("[ImportGenerationStore] Compaction folds old transactions and preserves replay") {
+	const String project_data_path = _project_data_path("import-generation-store-compact");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://compact.glb";
+	ImportGenerationStore::PreparedManifest first = _manifest("compact-1", uid, source_path, "", 1);
+	first.resource_generations.push_back(_resource_generation(source_path, "compact-1", 1));
+	ImportGenerationStore::PreparedManifest second = _manifest("compact-2", uid, source_path, source_path, 2);
+	second.resource_generations.push_back(_resource_generation(source_path, "compact-2", 2));
+	ImportGenerationStore::PreparedManifest third = _manifest("compact-3", uid, source_path, source_path, 3);
+	third.resource_generations.push_back(_resource_generation(source_path, "compact-3", 3));
+
+	for (const ImportGenerationStore::PreparedManifest &manifest : { first, second, third }) {
+		CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, manifest) == OK);
+		CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, manifest.transaction_id) == OK);
+	}
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 0;
+	settings.min_events_to_compact = 2;
+	CHECK(ImportGenerationStore::compact_event_journal(settings, project_data_path) == OK);
+
+	CHECK(DirAccess::get_files_at(ImportGenerationStore::get_events_path(project_data_path)).is_empty());
+	CHECK(DirAccess::get_files_at(ImportGenerationStore::get_checkpoints_path(project_data_path)).size() == 1);
+
+	// The checkpoint has to replay to exactly what the folded transactions did.
+	CHECK(ImportGenerationStore::replay_uid_events(project_data_path, false) == OK);
+	CHECK(resource_uid->get_id_path(uid) == source_path);
+
+	// Compacting again has nothing left to fold.
+	CHECK(ImportGenerationStore::compact_event_journal(settings, project_data_path) == OK);
+	CHECK(DirAccess::get_files_at(ImportGenerationStore::get_checkpoints_path(project_data_path)).size() == 1);
+
+	resource_uid->remove_id(uid);
+}
+
+TEST_CASE("[ImportGenerationStore] Compaction leaves recent transactions replayable") {
+	const String project_data_path = _project_data_path("import-generation-store-compact-recent");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://recent.glb";
+	ImportGenerationStore::PreparedManifest manifest = _manifest("recent-1", uid, source_path, "", 1);
+	manifest.resource_generations.push_back(_resource_generation(source_path, "recent-1", 1));
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, manifest) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "recent-1") == OK);
+
+	ImportGenerationStore::ReclaimSettings settings;
+	settings.grace_seconds = 3600;
+	settings.min_events_to_compact = 1;
+	CHECK(ImportGenerationStore::compact_event_journal(settings, project_data_path) == OK);
+
+	CHECK_FALSE(DirAccess::dir_exists_absolute(ImportGenerationStore::get_checkpoints_path(project_data_path)));
+	CHECK(DirAccess::get_files_at(ImportGenerationStore::get_events_path(project_data_path)).size() == 1);
+	CHECK(ImportGenerationStore::replay_uid_events(project_data_path, false) == OK);
+	CHECK(resource_uid->get_id_path(uid) == source_path);
+
+	resource_uid->remove_id(uid);
+}
+
 } // namespace TestImportGenerationStore

@@ -87,6 +87,15 @@ public:
 	}
 };
 
+static PackedStringArray _list_files(const String &p_path) {
+	// Most of these directories only exist once a project has actually used the feature.
+	return DirAccess::dir_exists_absolute(p_path) ? DirAccess::get_files_at(p_path) : PackedStringArray();
+}
+
+static PackedStringArray _list_directories(const String &p_path) {
+	return DirAccess::dir_exists_absolute(p_path) ? DirAccess::get_directories_at(p_path) : PackedStringArray();
+}
+
 static String _variant_to_string(const Variant &p_value) {
 	String value;
 	VariantWriter::write_to_string(p_value, value);
@@ -512,32 +521,56 @@ Error ImportGenerationStore::commit_prepared_manifest(const String &p_project_da
 	return _write_immutable_file(event_path, serialize_commit_event(p_transaction_id, manifest_sha256));
 }
 
-Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path, bool p_update_cache) {
-	const String events_path = get_events_path(p_project_data_path);
-	if (!DirAccess::dir_exists_absolute(events_path)) {
-		return OK;
+Error ImportGenerationStore::_replay(const String &p_project_data_path, ReplayState &r_state, int64_t p_max_commit_time, Vector<String> *r_eligible_transaction_ids) {
+	HashMap<ResourceUID::ID, Vector<UIDClaim>> claims_by_uid;
+	int64_t total_uid_claims = 0;
+
+	// A checkpoint stands in for every transaction that was folded into it, so replay starts
+	// from the newest one instead of from the beginning of the project's history.
+	const String checkpoints_path = get_checkpoints_path(p_project_data_path);
+	Vector<String> checkpoint_files;
+	for (const String &checkpoint_file : _list_files(checkpoints_path)) {
+		if (checkpoint_file.ends_with(".checkpoint")) {
+			checkpoint_files.push_back(checkpoint_file);
+		}
+	}
+	checkpoint_files.sort();
+	if (!checkpoint_files.is_empty()) {
+		const String checkpoint_file = checkpoint_files[checkpoint_files.size() - 1];
+		const String checkpoint_path = checkpoints_path.path_join(checkpoint_file);
+		if (FileAccess::get_size(checkpoint_path) > MAX_EVENT_FILE_SIZE) {
+			return ERR_FILE_CORRUPT;
+		}
+		Error read_error = OK;
+		const String contents = FileAccess::get_file_as_string(checkpoint_path, &read_error);
+		if (read_error != OK) {
+			return read_error;
+		}
+		PreparedManifest checkpoint;
+		const Error checkpoint_error = _parse_prepared_manifest(contents, String(), checkpoint);
+		if (checkpoint_error != OK && checkpoint_error != ERR_SKIP) {
+			return checkpoint_error;
+		}
+		if (checkpoint_error == OK) {
+			total_uid_claims += checkpoint.uid_claims.size();
+			for (const UIDClaim &claim : checkpoint.uid_claims) {
+				claims_by_uid[claim.uid].push_back(claim);
+			}
+			for (const ResourceGeneration &resource_generation : checkpoint.resource_generations) {
+				r_state.final_generations[resource_generation.resource_key] = resource_generation;
+			}
+		}
 	}
 
-	Error directory_error = OK;
-	Ref<DirAccess> events_directory = DirAccess::open(events_path, &directory_error);
-	if (events_directory.is_null()) {
-		return directory_error;
-	}
-	const Error list_error = events_directory->list_dir_begin();
-	if (list_error != OK) {
-		return list_error;
-	}
+	const String events_path = get_events_path(p_project_data_path);
 	Vector<String> event_files;
-	for (String event_file = events_directory->get_next(); !event_file.is_empty(); event_file = events_directory->get_next()) {
-		if (!events_directory->current_is_dir() && event_file.ends_with(".commit")) {
+	for (const String &event_file : _list_files(events_path)) {
+		if (event_file.ends_with(".commit")) {
 			event_files.push_back(event_file);
 		}
 	}
-	events_directory->list_dir_end();
 	event_files.sort();
 
-	int64_t total_uid_claims = 0;
-	HashMap<ResourceUID::ID, Vector<UIDClaim>> claims_by_uid;
 	for (const String &event_file : event_files) {
 		const String transaction_id = event_file.left(event_file.length() - String(".commit").length());
 		if (!_is_valid_transaction_id(transaction_id)) {
@@ -545,6 +578,9 @@ Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path
 		}
 
 		const String event_path = events_path.path_join(event_file);
+		if (p_max_commit_time > 0 && int64_t(FileAccess::get_modified_time(event_path)) > p_max_commit_time) {
+			continue; // Too recent to fold away; a peer may not have observed it yet.
+		}
 		if (FileAccess::get_size(event_path) > MAX_EVENT_FILE_SIZE) {
 			return ERR_FILE_CORRUPT;
 		}
@@ -581,6 +617,7 @@ Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path
 		if (manifest_error != OK) {
 			return manifest_error;
 		}
+
 		total_uid_claims += manifest.uid_claims.size();
 		if (total_uid_claims > MAX_TOTAL_UID_CLAIMS) {
 			return ERR_OUT_OF_MEMORY;
@@ -588,43 +625,48 @@ Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path
 		for (const UIDClaim &claim : manifest.uid_claims) {
 			claims_by_uid[claim.uid].push_back(claim);
 		}
+		for (const ResourceGeneration &resource_generation : manifest.resource_generations) {
+			const ResourceGeneration *known = r_state.final_generations.getptr(resource_generation.resource_key);
+			if (!known || known->epoch < resource_generation.epoch) {
+				r_state.final_generations[resource_generation.resource_key] = resource_generation;
+			}
+		}
+		r_state.replayed_transaction_ids.push_back(transaction_id);
+		if (r_eligible_transaction_ids) {
+			r_eligible_transaction_ids->push_back(transaction_id);
+		}
 	}
 
-	ResourceUID *resource_uid = ResourceUID::get_singleton();
-	HashMap<ResourceUID::ID, String> final_mappings;
-	HashMap<ResourceUID::ID, UIDClaim> final_claims;
 	for (KeyValue<ResourceUID::ID, Vector<UIDClaim>> &E : claims_by_uid) {
 		Vector<UIDClaim> &claims = E.value;
 		claims.sort_custom<UIDClaimSort>();
 		for (int i = 1; i < claims.size(); i++) {
 			if (claims[i].path == claims[i - 1].path && claims[i].previous_path == claims[i - 1].previous_path) {
 				// Two editor sessions reimported the same resource and claimed the same UID for
-				// the same path. The outcome is identical either way, so ordering is irrelevant.
+				// the same path, or a checkpoint restates the claim it was built from. The
+				// outcome is identical either way, so ordering is irrelevant.
 				continue;
 			}
 			if (claims[i].epoch <= claims[i - 1].epoch || claims[i].previous_path != claims[i - 1].path) {
 				return ERR_FILE_CORRUPT;
 			}
 		}
-		final_mappings[E.key] = claims[claims.size() - 1].path;
-		final_claims[E.key] = claims[claims.size() - 1];
+		r_state.final_claims[E.key] = claims[claims.size() - 1];
+	}
+	return OK;
+}
+
+Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path, bool p_update_cache) {
+	ReplayState state;
+	const Error replay_error = _replay(p_project_data_path, state);
+	if (replay_error != OK) {
+		return replay_error;
 	}
 
-	// Remember where each UID chain ended, so a claim made by this process continues it
-	// instead of starting a second chain that replay would reject as corrupt.
-	{
-		MutexLock lock(state_mutex);
-		for (const KeyValue<ResourceUID::ID, UIDClaim> &E : final_claims) {
-			const UIDClaim *known = last_uid_claims.getptr(E.key);
-			if (!known || known->epoch < E.value.epoch) {
-				last_uid_claims[E.key] = E.value;
-			}
-		}
-	}
-
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
 	HashMap<String, ResourceUID::ID> final_path_owners;
 	for (const KeyValue<ResourceUID::ID, String> &E : resource_uid->get_id_map()) {
-		if (final_mappings.has(E.key)) {
+		if (state.final_claims.has(E.key)) {
 			continue;
 		}
 		const ResourceUID::ID *owner = final_path_owners.getptr(E.value);
@@ -633,27 +675,41 @@ Error ImportGenerationStore::replay_uid_events(const String &p_project_data_path
 		}
 		final_path_owners[E.value] = E.key;
 	}
-	for (const KeyValue<ResourceUID::ID, String> &E : final_mappings) {
-		const ResourceUID::ID *owner = final_path_owners.getptr(E.value);
+	for (const KeyValue<ResourceUID::ID, UIDClaim> &E : state.final_claims) {
+		const ResourceUID::ID *owner = final_path_owners.getptr(E.value.path);
 		if (owner && *owner != E.key) {
 			return ERR_FILE_CORRUPT;
 		}
-		final_path_owners[E.value] = E.key;
+		final_path_owners[E.value.path] = E.key;
 	}
 
-	for (const KeyValue<ResourceUID::ID, String> &E : final_mappings) {
+	for (const KeyValue<ResourceUID::ID, UIDClaim> &E : state.final_claims) {
 		if (!resource_uid->has_id(E.key)) {
-			resource_uid->add_id(E.key, E.value);
-		} else if (resource_uid->get_id_path(E.key) != E.value) {
-			resource_uid->set_id(E.key, E.value);
+			resource_uid->add_id(E.key, E.value.path);
+		} else if (resource_uid->get_id_path(E.key) != E.value.path) {
+			resource_uid->set_id(E.key, E.value.path);
 		}
 	}
 
-	return p_update_cache && !final_mappings.is_empty() ? resource_uid->update_cache() : OK;
+	// Remember where each UID chain ended, so a claim made by this process continues it
+	// instead of starting a second chain that replay would reject as corrupt.
+	{
+		MutexLock lock(state_mutex);
+		for (const KeyValue<ResourceUID::ID, UIDClaim> &E : state.final_claims) {
+			const UIDClaim *known = last_uid_claims.getptr(E.key);
+			if (!known || known->epoch < E.value.epoch) {
+				last_uid_claims[E.key] = E.value;
+			}
+		}
+	}
+
+	return p_update_cache && !state.final_claims.is_empty() ? resource_uid->update_cache() : OK;
 }
 
 Mutex ImportGenerationStore::state_mutex;
 HashMap<String, ImportGenerationStore::ResolutionEntry> ImportGenerationStore::resolution_cache;
+HashMap<String, String> ImportGenerationStore::artifact_reverse_index;
+bool ImportGenerationStore::artifact_reverse_index_built = false;
 HashMap<ResourceUID::ID, ImportGenerationStore::UIDClaim> ImportGenerationStore::last_uid_claims;
 HashMap<String, ImportGenerationStore::OwnedLease> ImportGenerationStore::owned_resource_leases;
 
@@ -842,7 +898,7 @@ Error ImportGenerationStore::publish_generation(const String &p_resource_key, co
 
 	if (r_published_files) {
 		r_published_files->clear();
-		for (const String &file_name : DirAccess::get_files_at(generation_path)) {
+		for (const String &file_name : _list_files(generation_path)) {
 			r_published_files->push_back(file_name);
 		}
 	}
@@ -850,36 +906,18 @@ Error ImportGenerationStore::publish_generation(const String &p_resource_key, co
 }
 
 Error ImportGenerationStore::repair_selectors(const String &p_project_data_path) {
-	const String events_path = get_events_path(p_project_data_path);
-	if (!DirAccess::dir_exists_absolute(events_path)) {
-		return OK;
+	ReplayState state;
+	const Error replay_error = _replay(p_project_data_path, state);
+	if (replay_error != OK) {
+		return replay_error;
 	}
 
-	Vector<String> event_files;
-	for (const String &event_file : DirAccess::get_files_at(events_path)) {
-		if (event_file.ends_with(".commit")) {
-			event_files.push_back(event_file);
-		}
-	}
-	event_files.sort();
-
-	HashMap<String, ResourceGeneration> newest_by_key;
-	for (const String &event_file : event_files) {
-		const String transaction_id = event_file.left(event_file.length() - String(".commit").length());
-		for (const ResourceGeneration &resource_generation : read_committed_resources(transaction_id, p_project_data_path)) {
-			const ResourceGeneration *known = newest_by_key.getptr(resource_generation.resource_key);
-			if (!known || known->epoch < resource_generation.epoch) {
-				newest_by_key[resource_generation.resource_key] = resource_generation;
-			}
-		}
-	}
-
-	for (const KeyValue<String, ResourceGeneration> &E : newest_by_key) {
+	for (const KeyValue<String, ResourceGeneration> &E : state.final_generations) {
 		const ResourceGeneration &resource_generation = E.value;
 		const String generation_path = get_generation_path(resource_generation.resource_key, resource_generation.generation_id, p_project_data_path);
 		if (!DirAccess::dir_exists_absolute(generation_path)) {
-			// Committed but never published: the importer died between the two steps.
-			// Leaving the selector alone keeps the previous completed generation visible.
+			// Committed but never published, or already reclaimed. Leaving the selector alone
+			// keeps whatever completed generation is currently visible.
 			continue;
 		}
 
@@ -892,11 +930,10 @@ Error ImportGenerationStore::repair_selectors(const String &p_project_data_path)
 		selector.resource_key = resource_generation.resource_key;
 		selector.generation_id = resource_generation.generation_id;
 		selector.epoch = resource_generation.epoch;
-		for (const String &file_name : DirAccess::get_files_at(generation_path)) {
+		for (const String &file_name : _list_files(generation_path)) {
 			selector.file_names.push_back(file_name);
 		}
-		const Error write_error = write_selector(selector, p_project_data_path);
-		if (write_error != OK) {
+		if (write_selector(selector, p_project_data_path) != OK) {
 			ERR_PRINT(vformat("Could not publish import generation '%s' for '%s'.", resource_generation.generation_id, resource_generation.source_path));
 		}
 	}
@@ -940,9 +977,43 @@ String ImportGenerationStore::resolve_artifact_path(const String &p_source_file,
 	return entry->generation_path.path_join(file_name);
 }
 
+String ImportGenerationStore::resolve_artifact_path(const String &p_logical_path) {
+	if (p_logical_path.is_empty() || !ProjectSettings::get_singleton()) {
+		return p_logical_path;
+	}
+	const String imported_files_path = ProjectSettings::get_singleton()->get_imported_files_path();
+	if (!p_logical_path.begins_with(imported_files_path)) {
+		return p_logical_path;
+	}
+
+	MutexLock lock(state_mutex);
+	if (!artifact_reverse_index_built) {
+		// Every selector already lists the logical file names its generation backs, so the
+		// reverse mapping is one pass over the published selectors.
+		artifact_reverse_index.clear();
+		const String generations_path = get_generations_path();
+		for (const String &resource_key : _list_directories(generations_path)) {
+			Selector selector;
+			if (!read_selector(resource_key, selector)) {
+				continue;
+			}
+			const String generation_path = get_generation_path(resource_key, selector.generation_id);
+			for (const String &file_name : selector.file_names) {
+				artifact_reverse_index[file_name] = generation_path;
+			}
+		}
+		artifact_reverse_index_built = true;
+	}
+
+	const String *generation_path = artifact_reverse_index.getptr(p_logical_path.get_file());
+	return generation_path ? generation_path->path_join(p_logical_path.get_file()) : p_logical_path;
+}
+
 void ImportGenerationStore::invalidate_resolution_cache() {
 	MutexLock lock(state_mutex);
 	resolution_cache.clear();
+	artifact_reverse_index.clear();
+	artifact_reverse_index_built = false;
 }
 
 ImportGenerationStore::UIDClaim ImportGenerationStore::make_uid_claim(ResourceUID::ID p_uid, const String &p_path) {
@@ -1187,7 +1258,7 @@ Vector<String> ImportGenerationStore::collect_new_commit_events(HashSet<String> 
 		return new_transactions;
 	}
 
-	for (const String &event_file : DirAccess::get_files_at(events_path)) {
+	for (const String &event_file : _list_files(events_path)) {
 		if (!event_file.ends_with(".commit")) {
 			continue;
 		}
@@ -1235,4 +1306,321 @@ Vector<ImportGenerationStore::ResourceGeneration> ImportGenerationStore::read_co
 		return resources;
 	}
 	return manifest.resource_generations;
+}
+
+String ImportGenerationStore::get_checkpoints_path(const String &p_project_data_path) {
+	const String project_data_path = p_project_data_path.is_empty() ? ProjectSettings::get_singleton()->get_project_data_path() : p_project_data_path;
+	return project_data_path.path_join("checkpoints");
+}
+
+String ImportGenerationStore::get_resource_source_path(const String &p_resource_key, const String &p_project_data_path) {
+	return get_resource_generations_path(p_resource_key, p_project_data_path).path_join("source.cfg");
+}
+
+Error ImportGenerationStore::record_resource_source(const String &p_resource_key, const String &p_source_path, const String &p_project_data_path) {
+	if (!_is_valid_name_component(p_resource_key) || !_is_valid_resource_path(p_source_path)) {
+		return ERR_INVALID_PARAMETER;
+	}
+	// The resource key is a one-way hash of the path, so reclamation cannot tell whether a
+	// key still has a source without this note next to the generations.
+	const String path = get_resource_source_path(p_resource_key, p_project_data_path);
+	String contents;
+	contents += "[source]\n\n";
+	contents += "format_version=" + itos(FORMAT_VERSION) + "\n";
+	contents += "source_path=" + _variant_to_string(p_source_path) + "\n";
+	if (FileAccess::exists(path) && FileAccess::get_file_as_string(path) == contents) {
+		return OK;
+	}
+	const Error dir_error = DirAccess::make_dir_recursive_absolute(path.get_base_dir());
+	if (dir_error != OK && dir_error != ERR_ALREADY_EXISTS) {
+		return dir_error;
+	}
+	Ref<FileAccess> file = FileAccess::open(path, FileAccess::WRITE);
+	if (file.is_null()) {
+		return ERR_FILE_CANT_WRITE;
+	}
+	file->store_string(contents);
+	return OK;
+}
+
+String ImportGenerationStore::read_resource_source(const String &p_resource_key, const String &p_project_data_path) {
+	const String path = get_resource_source_path(p_resource_key, p_project_data_path);
+	if (!FileAccess::exists(path)) {
+		return String();
+	}
+	Error read_error = OK;
+	const String contents = FileAccess::get_file_as_string(path, &read_error);
+	if (read_error != OK) {
+		return String();
+	}
+	ConfigFile config;
+	if (config.parse(contents) != OK) {
+		return String();
+	}
+	const Variant source_value = config.get_value("source", "source_path");
+	return source_value.get_type() == Variant::STRING ? String(source_value) : String();
+}
+
+namespace {
+
+struct GenerationEntry {
+	String generation_id;
+	String path;
+	int64_t modified_time = 0;
+	int64_t size = 0;
+	bool selected = false;
+};
+
+struct GenerationEntrySort {
+	bool operator()(const GenerationEntry &p_left, const GenerationEntry &p_right) const {
+		if (p_left.modified_time == p_right.modified_time) {
+			return p_left.generation_id < p_right.generation_id;
+		}
+		return p_left.modified_time > p_right.modified_time; // Newest first.
+	}
+};
+
+int64_t _directory_size(const String &p_path, int64_t &r_newest_modified_time) {
+	int64_t total = 0;
+	for (const String &file_name : _list_files(p_path)) {
+		const String file_path = p_path.path_join(file_name);
+		total += int64_t(FileAccess::get_size(file_path));
+		r_newest_modified_time = MAX(r_newest_modified_time, int64_t(FileAccess::get_modified_time(file_path)));
+	}
+	return total;
+}
+
+bool _erase_directory(const String &p_path) {
+	Ref<DirAccess> directory = DirAccess::open(p_path);
+	if (directory.is_valid() && directory->erase_contents_recursive() != OK) {
+		return false;
+	}
+	return DirAccess::remove_absolute(p_path) == OK;
+}
+
+} // namespace
+
+Error ImportGenerationStore::collect_generation_garbage(const ReclaimSettings &p_settings, const String &p_project_data_path) {
+	const String generations_path = get_generations_path(p_project_data_path);
+	if (!DirAccess::dir_exists_absolute(generations_path)) {
+		return OK;
+	}
+
+	const int64_t now = int64_t(OS::get_singleton()->get_unix_time());
+	const int64_t cutoff = now - MAX(p_settings.grace_seconds, int64_t(0));
+	String owner;
+#ifdef TOOLS_ENABLED
+	if (ProjectSettings::get_singleton()) {
+		owner = ProjectSettings::get_singleton()->get_editor_session_id();
+	}
+#endif
+
+	Vector<GenerationEntry> quota_candidates;
+	int64_t total_size = 0;
+
+	for (const String &resource_key : _list_directories(generations_path)) {
+		if (!_is_valid_name_component(resource_key)) {
+			continue;
+		}
+		const String resource_path = get_resource_generations_path(resource_key, p_project_data_path);
+
+		Selector selector;
+		const bool has_selector = read_selector(resource_key, selector, p_project_data_path);
+
+		Vector<GenerationEntry> entries;
+		for (const String &generation_id : _list_directories(resource_path)) {
+			if (!_is_valid_transaction_id(generation_id)) {
+				continue;
+			}
+			GenerationEntry entry;
+			entry.generation_id = generation_id;
+			entry.path = resource_path.path_join(generation_id);
+			entry.size = _directory_size(entry.path, entry.modified_time);
+			entry.selected = has_selector && selector.generation_id == generation_id;
+			entries.push_back(entry);
+			total_size += entry.size;
+		}
+		if (entries.is_empty()) {
+			continue;
+		}
+		entries.sort_custom<GenerationEntrySort>();
+
+		// A source that no longer exists takes its whole history with it, but only once the
+		// grace period has passed: a peer may have just created it and not scanned yet.
+		const String source_path = read_resource_source(resource_key, p_project_data_path);
+		const bool orphaned = !source_path.is_empty() && !FileAccess::exists(source_path);
+		if (orphaned && !is_leased_by_peer(resource_key, owner, p_project_data_path)) {
+			bool all_expired = true;
+			for (const GenerationEntry &entry : entries) {
+				all_expired = all_expired && entry.modified_time <= cutoff;
+			}
+			if (all_expired) {
+				if (_erase_directory(resource_path)) {
+					print_verbose(vformat("ImportGenerationStore: reclaimed every generation of the removed resource '%s'.", source_path));
+					for (const GenerationEntry &entry : entries) {
+						total_size -= entry.size;
+					}
+				}
+				continue;
+			}
+		}
+
+		if (is_leased_by_peer(resource_key, owner, p_project_data_path)) {
+			continue; // Being imported right now; leave its history alone.
+		}
+
+		int kept = 0;
+		for (const GenerationEntry &entry : entries) {
+			if (entry.selected) {
+				continue; // Never reclaim what the project currently resolves to.
+			}
+			if (kept < p_settings.keep_per_resource) {
+				kept++;
+				quota_candidates.push_back(entry);
+				continue;
+			}
+			if (entry.modified_time > cutoff) {
+				// Young enough that an editor could still be loading from it.
+				quota_candidates.push_back(entry);
+				continue;
+			}
+			if (_erase_directory(entry.path)) {
+				total_size -= entry.size;
+				print_verbose(vformat("ImportGenerationStore: reclaimed superseded generation '%s'.", entry.path));
+			}
+		}
+	}
+
+	if (p_settings.storage_limit_bytes <= 0 || total_size <= p_settings.storage_limit_bytes) {
+		return OK;
+	}
+
+	// Over quota: give up the oldest generations that are neither selected nor in flight.
+	quota_candidates.sort_custom<GenerationEntrySort>();
+	for (int i = quota_candidates.size() - 1; i >= 0 && total_size > p_settings.storage_limit_bytes; i--) {
+		const GenerationEntry &entry = quota_candidates[i];
+		if (entry.modified_time > cutoff) {
+			continue;
+		}
+		if (_erase_directory(entry.path)) {
+			total_size -= entry.size;
+			print_verbose(vformat("ImportGenerationStore: reclaimed generation '%s' to stay under the storage limit.", entry.path));
+		}
+	}
+	return OK;
+}
+
+Error ImportGenerationStore::compact_event_journal(const ReclaimSettings &p_settings, const String &p_project_data_path) {
+	const int64_t cutoff = int64_t(OS::get_singleton()->get_unix_time()) - MAX(p_settings.grace_seconds, int64_t(0));
+
+	ReplayState state;
+	Vector<String> eligible;
+	const Error replay_error = _replay(p_project_data_path, state, cutoff, &eligible);
+	if (replay_error != OK) {
+		return replay_error;
+	}
+	if (eligible.size() < p_settings.min_events_to_compact) {
+		return OK;
+	}
+
+	// The checkpoint restates the end of every UID chain and the newest generation per
+	// resource, which is exactly what the transactions it replaces would have replayed to.
+	const String checkpoints_path = get_checkpoints_path(p_project_data_path);
+	int64_t sequence = 1;
+	Vector<String> existing_checkpoints;
+	for (const String &checkpoint_file : _list_files(checkpoints_path)) {
+		if (checkpoint_file.ends_with(".checkpoint")) {
+			existing_checkpoints.push_back(checkpoint_file);
+		}
+	}
+	existing_checkpoints.sort();
+	if (!existing_checkpoints.is_empty()) {
+		sequence = existing_checkpoints[existing_checkpoints.size() - 1].get_basename().to_int() + 1;
+	}
+
+	PreparedManifest checkpoint;
+	checkpoint.transaction_id = vformat("checkpoint-%d", sequence);
+	for (const KeyValue<ResourceUID::ID, UIDClaim> &E : state.final_claims) {
+		checkpoint.uid_claims.push_back(E.value);
+	}
+	for (const KeyValue<String, ResourceGeneration> &E : state.final_generations) {
+		checkpoint.resource_generations.push_back(E.value);
+	}
+
+	const String contents = serialize_prepared_manifest(checkpoint);
+	PreparedManifest validated;
+	const Error validation_error = _parse_prepared_manifest(contents, checkpoint.transaction_id, validated);
+	if (validation_error != OK) {
+		return validation_error;
+	}
+
+	const String checkpoint_path = checkpoints_path.path_join(vformat("%016d.checkpoint", sequence));
+	const Error write_error = _write_immutable_file(checkpoint_path, contents);
+	if (write_error != OK) {
+		return write_error;
+	}
+
+	// Only now are the folded transactions redundant. A crash before this point leaves the
+	// journal intact; a crash during it leaves a checkpoint that simply restates them.
+	for (const String &transaction_id : eligible) {
+		DirAccess::remove_absolute(get_events_path(p_project_data_path).path_join(transaction_id + ".commit"));
+		DirAccess::remove_absolute(get_transactions_path(p_project_data_path).path_join(transaction_id + ".prepared"));
+	}
+	for (int i = 0; i < existing_checkpoints.size(); i++) {
+		DirAccess::remove_absolute(checkpoints_path.path_join(existing_checkpoints[i]));
+	}
+
+	print_verbose(vformat("ImportGenerationStore: folded %d committed transaction(s) into checkpoint %d.", eligible.size(), sequence));
+	return OK;
+}
+
+Error ImportGenerationStore::clean_abandoned_staging(const ReclaimSettings &p_settings, const String &p_session_data_root, const String &p_current_session_id) {
+	if (!DirAccess::dir_exists_absolute(p_session_data_root)) {
+		return OK;
+	}
+
+	const int64_t cutoff = int64_t(OS::get_singleton()->get_unix_time()) - MAX(p_settings.grace_seconds, int64_t(0));
+	for (const String &session_id : _list_directories(p_session_data_root)) {
+		if (session_id == p_current_session_id) {
+			continue;
+		}
+
+		// A single import can run for half an hour without touching its staging directory's
+		// own timestamp, so liveness is decided by the session lease, never by file age.
+		const String session_path = p_session_data_root.path_join(session_id);
+		const String lease_path = session_path.path_join("lease.cfg");
+		if (FileAccess::exists(lease_path)) {
+			Error read_error = OK;
+			const String contents = FileAccess::get_file_as_string(lease_path, &read_error);
+			ConfigFile config;
+			if (read_error == OK && config.parse(contents) == OK) {
+				const Variant heartbeat_value = config.get_value("lease", "heartbeat_unix");
+				const Variant process_value = config.get_value("lease", "process_id");
+				const int64_t heartbeat_unix = heartbeat_value.get_type() == Variant::INT ? int64_t(heartbeat_value) : 0;
+				const int64_t process_id = process_value.get_type() == Variant::INT ? int64_t(process_value) : 0;
+				if (_is_lease_live(heartbeat_unix, process_id)) {
+					continue; // That editor is still running.
+				}
+			} else {
+				continue; // Unreadable lease: assume the session is alive and leave it alone.
+			}
+		}
+
+		const String staging_path = session_path.path_join("staging");
+		if (!DirAccess::dir_exists_absolute(staging_path)) {
+			continue;
+		}
+		for (const String &transaction_id : _list_directories(staging_path)) {
+			const String transaction_path = staging_path.path_join(transaction_id);
+			if (int64_t(FileAccess::get_modified_time(transaction_path)) > cutoff) {
+				continue;
+			}
+			// Staged output is never referenced by anything canonical, so an abandoned
+			// transaction directory is pure waste once its session is gone.
+			if (_erase_directory(transaction_path)) {
+				print_verbose(vformat("ImportGenerationStore: discarded abandoned staging '%s'.", transaction_path));
+			}
+		}
+	}
+	return OK;
 }
