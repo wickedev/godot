@@ -2315,9 +2315,14 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 	}
 	ResourceUID::get_singleton()->load_from_cache(true); // Load UUIDs from cache.
 #ifdef TOOLS_ENABLED
-	if (ProjectSettings::get_singleton()->has_editor_session() && ImportGenerationStore::replay_uid_events() != OK) {
-		ERR_PRINT("Could not replay committed import UID events. Refusing to continue with stale UID state.");
-		goto error;
+	if (ProjectSettings::get_singleton()->has_editor_session()) {
+		if (ImportGenerationStore::replay_uid_events() != OK) {
+			ERR_PRINT("Could not replay committed import UID events; the project's import event journal disagrees with itself. Refusing to continue with stale UID state. Inspect '.godot/events' and '.godot/transactions'.");
+			goto error;
+		}
+		// Republish any generation that was committed but whose selector never landed, which
+		// is what a crash between the commit event and the selector replacement leaves behind.
+		ImportGenerationStore::repair_selectors();
 	}
 #endif
 	ProjectSettings::get_singleton()->fix_autoload_paths(); // Handles autoloads saved as UID.
@@ -4963,11 +4968,6 @@ bool Main::iteration() {
 	iterating++;
 
 	const uint64_t ticks = OS::get_singleton()->get_ticks_usec();
-#ifdef TOOLS_ENABLED
-	if (EditorSessionPaths::get_singleton()) {
-		EditorSessionPaths::get_singleton()->heartbeat(ticks);
-	}
-#endif
 	Engine::get_singleton()->_frame_ticks = ticks;
 	main_timer_sync.set_cpu_ticks_usec(ticks);
 	main_timer_sync.set_fixed_fps(fixed_fps);

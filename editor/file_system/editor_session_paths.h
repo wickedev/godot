@@ -30,29 +30,32 @@
 
 #pragma once
 
+#include "core/os/thread.h"
 #include "core/string/ustring.h"
+#include "core/templates/safe_refcount.h"
 #include "core/typedefs.h"
 
 class EditorSessionPaths {
 	static EditorSessionPaths *singleton;
 
 	bool lease_owner = false;
-	uint64_t last_heartbeat_usec = 0;
 	String session_data_dir;
 	String editor_data_dir;
 	String shader_cache_dir;
 	String staging_dir;
 	String lease_file;
 
+	Thread heartbeat_thread;
+	SafeFlag heartbeat_exit;
+
 	void _bootstrap_file(const String &p_file_name);
-	void _write_lease(uint64_t p_ticks_usec);
+	void _write_lease();
+	static void _heartbeat_thread_func(void *p_userdata);
 
 public:
 	static void create(bool p_lease_owner);
 	static void free();
 	static EditorSessionPaths *get_singleton() { return singleton; }
-
-	void heartbeat(uint64_t p_ticks_usec);
 
 	String get_session_data_dir() const { return session_data_dir; }
 	String get_editor_data_dir() const { return editor_data_dir; }
