@@ -117,6 +117,9 @@ protected:
 	bool is_global_class_list_loaded = false;
 
 	String project_data_dir_name;
+#ifdef TOOLS_ENABLED
+	String editor_session_id;
+#endif
 
 	bool _set(const StringName &p_name, const Variant &p_value);
 	bool _get(const StringName &p_name, Variant &r_ret) const;
@@ -170,6 +173,7 @@ public:
 	void refresh_global_class_list();
 	void store_global_class_list(const Array &p_classes);
 	String get_global_class_list_path() const;
+	String get_global_class_list_export_path() const;
 
 	bool has_setting(const String &p_var) const;
 	String localize_path(const String &p_path) const;
@@ -185,6 +189,13 @@ public:
 
 	String get_project_data_dir_name() const;
 	String get_project_data_path() const;
+#ifdef TOOLS_ENABLED
+	static bool is_valid_editor_session_id(const String &p_session_id);
+	void set_editor_session_id(const String &p_session_id);
+	String get_editor_session_id() const;
+	bool has_editor_session() const;
+	String get_project_session_data_path() const;
+#endif
 	String get_resource_path() const;
 	String get_imported_files_path() const;
 

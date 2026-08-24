@@ -1246,7 +1246,7 @@ Dictionary EditorExportPlatform::get_internal_export_files(const Ref<EditorExpor
 Vector<String> EditorExportPlatform::get_forced_export_files(const Ref<EditorExportPreset> &p_preset) {
 	Vector<String> files;
 
-	files.push_back(ProjectSettings::get_singleton()->get_global_class_list_path());
+	files.push_back(ProjectSettings::get_singleton()->get_global_class_list_export_path());
 
 	String icon = ResourceUID::ensure_path(get_project_setting(p_preset, "application/config/icon"));
 	String splash = ResourceUID::ensure_path(get_project_setting(p_preset, "application/boot_splash/image"));
@@ -1259,7 +1259,7 @@ Vector<String> EditorExportPlatform::get_forced_export_files(const Ref<EditorExp
 
 	String extension_list_config_file = GDExtension::get_extension_list_config_file();
 	if (FileAccess::exists(extension_list_config_file)) {
-		files.push_back(extension_list_config_file);
+		files.push_back(GDExtension::get_extension_list_export_file());
 	}
 
 	return files;
@@ -1804,9 +1804,9 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 	for (const String &file : forced_export) {
 		Vector<uint8_t> array;
 
-		if (file == GDExtension::get_extension_list_config_file()) {
+		if (file == GDExtension::get_extension_list_export_file()) {
 			array = filtered_cache.extension_list;
-		} else if (file == ProjectSettings::get_singleton()->get_global_class_list_path()) {
+		} else if (file == ProjectSettings::get_singleton()->get_global_class_list_export_path()) {
 			array = filtered_cache.global_class_list;
 		} else {
 			array = FileAccess::get_file_as_bytes(file);
@@ -1822,7 +1822,7 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 		}
 	}
 
-	String uid_cache_file_path = ResourceUID::get_cache_file();
+	String uid_cache_file_path = ResourceUID::get_cache_export_file();
 	err = save_proxy.save_file(p_preset, p_udata, uid_cache_file_path, filtered_cache.uids, idx, total, enc_in_filters, enc_ex_filters, key, seed, false);
 	if (err != OK) {
 		return err;

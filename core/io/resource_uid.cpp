@@ -45,6 +45,14 @@ static constexpr uint32_t char_count = ('z' - 'a');
 static constexpr uint32_t base = char_count + ('9' - '0');
 
 String ResourceUID::get_cache_file() {
+#ifdef TOOLS_ENABLED
+	return ProjectSettings::get_singleton()->get_project_session_data_path().path_join("uid_cache.bin");
+#else
+	return get_cache_export_file();
+#endif
+}
+
+String ResourceUID::get_cache_export_file() {
 	return ProjectSettings::get_singleton()->get_project_data_path().path_join("uid_cache.bin");
 }
 
@@ -183,6 +191,12 @@ void ResourceUID::set_id(ID p_id, const String &p_path) {
 		return; // Both are empty strings.
 	}
 	if ((update_ptr == nullptr) != (cached_ptr == nullptr) || strcmp(update_ptr, cached_ptr) != 0) {
+		if (use_reverse_cache) {
+			const ID *reverse_id = reverse_cache.getptr(unique_ids[p_id].cs);
+			if (reverse_id && *reverse_id == p_id) {
+				reverse_cache.erase(unique_ids[p_id].cs);
+			}
+		}
 		unique_ids[p_id].cs = cs;
 		unique_ids[p_id].saved_to_cache = false; //changed
 		if (use_reverse_cache) {
@@ -220,18 +234,39 @@ String ResourceUID::get_id_path(ID p_id) const {
 }
 
 ResourceUID::ID ResourceUID::get_path_id(const String &p_path) const {
-	const ID *id = reverse_cache.getptr(p_path.utf8());
+	MutexLock l(mutex);
+	const CharString path = p_path.utf8();
+	const ID *id = reverse_cache.getptr(path);
 	if (id) {
 		return *id;
 	}
+	if (!use_reverse_cache) {
+		for (const KeyValue<ID, Cache> &E : unique_ids) {
+			if (E.value.cs == path) {
+				return E.key;
+			}
+		}
+	}
 	return INVALID_ID;
+}
+
+HashMap<ResourceUID::ID, String> ResourceUID::get_id_map() const {
+	MutexLock l(mutex);
+	HashMap<ID, String> mappings;
+	for (const KeyValue<ID, Cache> &E : unique_ids) {
+		mappings[E.key] = String::utf8(E.value.cs.ptr(), E.value.cs.length());
+	}
+	return mappings;
 }
 
 void ResourceUID::remove_id(ID p_id) {
 	MutexLock l(mutex);
 	ERR_FAIL_COND(!unique_ids.has(p_id));
 	if (use_reverse_cache) {
-		reverse_cache.erase(unique_ids[p_id].cs);
+		const ID *reverse_id = reverse_cache.getptr(unique_ids[p_id].cs);
+		if (reverse_id && *reverse_id == p_id) {
+			reverse_cache.erase(unique_ids[p_id].cs);
+		}
 	}
 	unique_ids.erase(p_id);
 }
@@ -302,8 +337,8 @@ Error ResourceUID::save_to_cache() {
 	return OK;
 }
 
-Error ResourceUID::load_from_cache(bool p_reset) {
-	Ref<FileAccess> f = FileAccess::open(get_cache_file(), FileAccess::READ);
+Error ResourceUID::load_from_cache(bool p_reset, const String &p_cache_file) {
+	Ref<FileAccess> f = FileAccess::open(p_cache_file.is_empty() ? get_cache_file() : p_cache_file, FileAccess::READ);
 	if (f.is_null()) {
 		return ERR_CANT_OPEN;
 	}
@@ -328,6 +363,15 @@ Error ResourceUID::load_from_cache(bool p_reset) {
 		ERR_FAIL_COND_V(rl != len, ERR_FILE_CORRUPT);
 
 		c.saved_to_cache = true;
+		if (use_reverse_cache) {
+			const Cache *previous = unique_ids.getptr(id);
+			if (previous) {
+				const ID *reverse_id = reverse_cache.getptr(previous->cs);
+				if (reverse_id && *reverse_id == id) {
+					reverse_cache.erase(previous->cs);
+				}
+			}
+		}
 		unique_ids[id] = c;
 		if (use_reverse_cache) {
 			reverse_cache[c.cs] = id;

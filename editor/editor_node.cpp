@@ -6775,6 +6775,11 @@ void EditorNode::_restart_editor(bool p_goto_project_manager) {
 		args.push_back(ProjectSettings::get_singleton()->get_resource_path());
 
 		args.push_back("-e");
+
+		if (ProjectSettings::get_singleton()->has_editor_session()) {
+			args.push_back("--editor-session-id");
+			args.push_back(ProjectSettings::get_singleton()->get_editor_session_id());
+		}
 	}
 
 	if (!to_reopen.is_empty()) {
