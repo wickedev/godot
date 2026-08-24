@@ -33,6 +33,7 @@
 #include "core/config/project_settings.h"
 #include "core/io/config_file.h"
 #include "core/io/image.h"
+#include "core/io/import_generation_store.h"
 #include "core/object/class_db.h"
 #include "core/os/os.h"
 #include "core/variant/variant_parser.h"
@@ -41,7 +42,7 @@ bool ResourceFormatImporter::SortImporterByName::operator()(const Ref<ResourceIm
 	return p_a->get_importer_name() < p_b->get_importer_name();
 }
 
-Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndType &r_path_and_type, bool p_load, bool *r_valid) const {
+Error ResourceFormatImporter::_read_import_metadata(const String &p_path, PathAndType &r_path_and_type, bool p_load, bool *r_valid) const {
 	Error err;
 	Ref<FileAccess> f = FileAccess::open(p_path + ".import", FileAccess::READ, &err);
 
@@ -153,6 +154,16 @@ Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndTy
 		}
 	}
 	return OK;
+}
+
+Error ResourceFormatImporter::_get_path_and_type(const String &p_path, PathAndType &r_path_and_type, bool p_load, bool *r_valid) const {
+	const Error err = _read_import_metadata(p_path, r_path_and_type, p_load, r_valid);
+	if (err == OK) {
+		// `.import` records the canonical logical artifact path so it stays stable in version
+		// control. The file actually backing it is whichever generation is currently published.
+		r_path_and_type.path = ImportGenerationStore::resolve_artifact_path(p_path, r_path_and_type.path);
+	}
+	return err;
 }
 
 Ref<Resource> ResourceFormatImporter::load(const String &p_path, const String &p_original_path, Error *r_error, bool p_use_sub_threads, float *r_progress, CacheMode p_cache_mode) {

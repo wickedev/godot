@@ -33,6 +33,7 @@
 #include "core/config/project_settings.h"
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
+#include "core/io/import_generation_store.h"
 #include "core/os/os.h"
 
 EditorSessionPaths *EditorSessionPaths::singleton = nullptr;
@@ -59,7 +60,7 @@ void EditorSessionPaths::_bootstrap_file(const String &p_file_name) {
 	}
 }
 
-void EditorSessionPaths::_write_lease(uint64_t p_ticks_usec) {
+void EditorSessionPaths::_write_lease() {
 	if (!lease_owner) {
 		return;
 	}
@@ -73,14 +74,23 @@ void EditorSessionPaths::_write_lease(uint64_t p_ticks_usec) {
 	lease->store_line("[lease]");
 	lease->store_line("session_id=\"" + ProjectSettings::get_singleton()->get_editor_session_id() + "\"");
 	lease->store_line("process_id=" + itos(OS::get_singleton()->get_process_id()));
-	lease->store_line("heartbeat_usec=" + uitos(p_ticks_usec));
-	last_heartbeat_usec = p_ticks_usec;
+	lease->store_line("heartbeat_unix=" + itos(int64_t(OS::get_singleton()->get_unix_time())));
 }
 
-void EditorSessionPaths::heartbeat(uint64_t p_ticks_usec) {
+void EditorSessionPaths::_heartbeat_thread_func(void *p_userdata) {
 	static constexpr uint64_t HEARTBEAT_INTERVAL_USEC = 2'000'000;
-	if (lease_owner && p_ticks_usec - last_heartbeat_usec >= HEARTBEAT_INTERVAL_USEC) {
-		_write_lease(p_ticks_usec);
+	static constexpr uint64_t POLL_INTERVAL_USEC = 100'000;
+
+	EditorSessionPaths *session_paths = static_cast<EditorSessionPaths *>(p_userdata);
+	uint64_t waited_usec = HEARTBEAT_INTERVAL_USEC;
+	while (!session_paths->heartbeat_exit.is_set()) {
+		if (waited_usec >= HEARTBEAT_INTERVAL_USEC) {
+			session_paths->_write_lease();
+			ImportGenerationStore::refresh_resource_leases();
+			waited_usec = 0;
+		}
+		OS::get_singleton()->delay_usec(POLL_INTERVAL_USEC);
+		waited_usec += POLL_INTERVAL_USEC;
 	}
 }
 
@@ -130,12 +140,24 @@ EditorSessionPaths::EditorSessionPaths(bool p_lease_owner) {
 	_bootstrap_file("uid_cache.bin");
 
 	if (lease_owner) {
-		_write_lease(OS::get_singleton()->get_ticks_usec());
+		// A single import can run for half an hour without returning to the main loop, so the
+		// heartbeat runs on its own thread. Otherwise a peer would consider this session dead
+		// and take over resources it is still importing.
+		_write_lease();
+		heartbeat_thread.start(_heartbeat_thread_func, this);
 	}
 }
 
 EditorSessionPaths::~EditorSessionPaths() {
+	if (heartbeat_thread.is_started()) {
+		heartbeat_exit.set();
+		heartbeat_thread.wait_to_finish();
+	}
 	if (lease_owner) {
+		ImportGenerationStore::release_all_resource_leases();
 		DirAccess::remove_absolute(lease_file);
+	}
+	if (singleton == this) {
+		singleton = nullptr;
 	}
 }

@@ -171,4 +171,222 @@ TEST_CASE("[ImportGenerationStore] Rejects resource paths outside the project") 
 	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, _manifest("subresource", uid, "res://file.tres::1", "", 1)) == ERR_FILE_CORRUPT);
 }
 
+static ImportGenerationStore::ResourceGeneration _resource_generation(const String &p_source_path, const String &p_generation_id, int64_t p_epoch) {
+	ImportGenerationStore::ResourceGeneration resource_generation;
+	resource_generation.source_path = p_source_path;
+	resource_generation.resource_key = ImportGenerationStore::get_resource_key(p_source_path);
+	resource_generation.generation_id = p_generation_id;
+	resource_generation.epoch = p_epoch;
+	return resource_generation;
+}
+
+static Error _write_staged_file(const String &p_staging_path, const String &p_file_name, const String &p_contents) {
+	const Error dir_error = DirAccess::make_dir_recursive_absolute(p_staging_path);
+	if (dir_error != OK && dir_error != ERR_ALREADY_EXISTS) {
+		return dir_error;
+	}
+	Ref<FileAccess> file = FileAccess::open(p_staging_path.path_join(p_file_name), FileAccess::WRITE);
+	if (file.is_null()) {
+		return ERR_CANT_CREATE;
+	}
+	file->store_string(p_contents);
+	return OK;
+}
+
+TEST_CASE("[ImportGenerationStore] Resource keys are stable per source path") {
+	const String key = ImportGenerationStore::get_resource_key("res://characters/noelle.glb");
+	CHECK(key == ImportGenerationStore::get_resource_key("res://characters/noelle.glb"));
+	CHECK(key != ImportGenerationStore::get_resource_key("res://characters/yanfei.glb"));
+	CHECK(key.begins_with("noelle.glb-"));
+}
+
+TEST_CASE("[ImportGenerationStore] Selectors round-trip and can be cleared") {
+	const String project_data_path = _project_data_path("import-generation-store-selector");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	ImportGenerationStore::Selector selector;
+	selector.resource_key = ImportGenerationStore::get_resource_key("res://selector.glb");
+	selector.generation_id = "gen-1";
+	selector.epoch = 5;
+	selector.file_names.push_back("b.scn");
+	selector.file_names.push_back("a.md5");
+
+	CHECK(ImportGenerationStore::write_selector(selector, project_data_path) == OK);
+
+	ImportGenerationStore::Selector read;
+	REQUIRE(ImportGenerationStore::read_selector(selector.resource_key, read, project_data_path));
+	CHECK(read.generation_id == "gen-1");
+	CHECK(read.epoch == 5);
+	REQUIRE(read.file_names.size() == 2);
+	CHECK(read.file_names[0] == "a.md5"); // Sorted, so the file is byte-identical for equal input.
+	CHECK(read.file_names[1] == "b.scn");
+
+	CHECK(ImportGenerationStore::clear_selector(selector.resource_key, project_data_path) == OK);
+	CHECK_FALSE(ImportGenerationStore::read_selector(selector.resource_key, read, project_data_path));
+	CHECK(ImportGenerationStore::clear_selector(selector.resource_key, project_data_path) == OK);
+}
+
+TEST_CASE("[ImportGenerationStore] Publishing moves staged output into an immutable generation") {
+	const String project_data_path = _project_data_path("import-generation-store-publish");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String source_path = "res://publish.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	const String staging_path = project_data_path.path_join("staging").path_join(resource_key);
+	REQUIRE(_write_staged_file(staging_path, resource_key + ".scn", "scene") == OK);
+	REQUIRE(_write_staged_file(staging_path, resource_key + ".md5", "md5") == OK);
+
+	Vector<String> published_files;
+	CHECK(ImportGenerationStore::publish_generation(resource_key, "gen-a", staging_path, &published_files, project_data_path) == OK);
+	CHECK(published_files.size() == 2);
+	CHECK_FALSE(DirAccess::dir_exists_absolute(staging_path));
+
+	const String generation_path = ImportGenerationStore::get_generation_path(resource_key, "gen-a", project_data_path);
+	CHECK(FileAccess::get_file_as_string(generation_path.path_join(resource_key + ".scn")) == "scene");
+
+	// Publishing the same generation again is a no-op rather than a second move.
+	CHECK(ImportGenerationStore::publish_generation(resource_key, "gen-a", staging_path, nullptr, project_data_path) == OK);
+	CHECK(FileAccess::get_file_as_string(generation_path.path_join(resource_key + ".scn")) == "scene");
+}
+
+TEST_CASE("[ImportGenerationStore] A committed transaction survives a missing selector") {
+	const String project_data_path = _project_data_path("import-generation-store-repair");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://repair.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+	const String staging_path = project_data_path.path_join("staging").path_join(resource_key);
+	REQUIRE(_write_staged_file(staging_path, resource_key + ".scn", "committed") == OK);
+
+	ImportGenerationStore::PreparedManifest manifest = _manifest("repair-1", uid, source_path, "", 1);
+	manifest.resource_generations.push_back(_resource_generation(source_path, "repair-1", 1));
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, manifest) == OK);
+	CHECK(ImportGenerationStore::publish_generation(resource_key, "repair-1", staging_path, nullptr, project_data_path) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "repair-1") == OK);
+
+	// The editor died here, before the selector was replaced.
+	ImportGenerationStore::Selector selector;
+	CHECK_FALSE(ImportGenerationStore::read_selector(resource_key, selector, project_data_path));
+
+	CHECK(ImportGenerationStore::repair_selectors(project_data_path) == OK);
+	REQUIRE(ImportGenerationStore::read_selector(resource_key, selector, project_data_path));
+	CHECK(selector.generation_id == "repair-1");
+	CHECK(selector.file_names.size() == 1);
+
+	// Repair is idempotent and never moves a selector backwards.
+	CHECK(ImportGenerationStore::repair_selectors(project_data_path) == OK);
+	REQUIRE(ImportGenerationStore::read_selector(resource_key, selector, project_data_path));
+	CHECK(selector.epoch == 1);
+}
+
+TEST_CASE("[ImportGenerationStore] A generation committed but never published keeps the old one visible") {
+	const String project_data_path = _project_data_path("import-generation-store-unpublished");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://unpublished.glb";
+	const String resource_key = ImportGenerationStore::get_resource_key(source_path);
+
+	ImportGenerationStore::Selector old_selector;
+	old_selector.resource_key = resource_key;
+	old_selector.generation_id = "old-gen";
+	old_selector.epoch = 1;
+	old_selector.file_names.push_back(resource_key + ".scn");
+	REQUIRE(ImportGenerationStore::write_selector(old_selector, project_data_path) == OK);
+
+	ImportGenerationStore::PreparedManifest manifest = _manifest("never-published", uid, source_path, "", 2);
+	manifest.resource_generations.push_back(_resource_generation(source_path, "never-published", 2));
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, manifest) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "never-published") == OK);
+
+	CHECK(ImportGenerationStore::repair_selectors(project_data_path) == OK);
+	ImportGenerationStore::Selector selector;
+	REQUIRE(ImportGenerationStore::read_selector(resource_key, selector, project_data_path));
+	CHECK(selector.generation_id == "old-gen");
+}
+
+TEST_CASE("[ImportGenerationStore] Commit events are reported once per transaction") {
+	const String project_data_path = _project_data_path("import-generation-store-events");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://events.glb";
+	ImportGenerationStore::PreparedManifest manifest = _manifest("event-1", uid, source_path, "", 1);
+	manifest.resource_generations.push_back(_resource_generation(source_path, "event-1", 1));
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, manifest) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "event-1") == OK);
+
+	HashSet<String> seen;
+	Vector<String> observed = ImportGenerationStore::collect_new_commit_events(seen, project_data_path);
+	REQUIRE(observed.size() == 1);
+	CHECK(observed[0] == "event-1");
+	CHECK(ImportGenerationStore::collect_new_commit_events(seen, project_data_path).is_empty());
+
+	const Vector<ImportGenerationStore::ResourceGeneration> resources = ImportGenerationStore::read_committed_resources("event-1", project_data_path);
+	REQUIRE(resources.size() == 1);
+	CHECK(resources[0].source_path == source_path);
+	CHECK(resources[0].generation_id == "event-1");
+	CHECK(ImportGenerationStore::read_committed_resources("never-committed", project_data_path).is_empty());
+}
+
+TEST_CASE("[ImportGenerationStore] A live lease blocks only the same resource") {
+	const String project_data_path = _project_data_path("import-generation-store-lease");
+	REQUIRE_FALSE(project_data_path.is_empty());
+
+	const String held_key = ImportGenerationStore::get_resource_key("res://held.glb");
+	const String other_key = ImportGenerationStore::get_resource_key("res://other.glb");
+
+	CHECK(ImportGenerationStore::acquire_resource_lease(held_key, "session-a", project_data_path));
+	CHECK_FALSE(ImportGenerationStore::is_leased_by_peer(held_key, "session-a", project_data_path));
+	CHECK(ImportGenerationStore::is_leased_by_peer(held_key, "session-b", project_data_path));
+	CHECK_FALSE(ImportGenerationStore::is_leased_by_peer(other_key, "session-b", project_data_path));
+
+	// Re-acquiring a lease this session already owns stays successful.
+	CHECK(ImportGenerationStore::acquire_resource_lease(held_key, "session-a", project_data_path));
+
+	ImportGenerationStore::release_resource_lease(held_key, "session-a", project_data_path);
+	CHECK_FALSE(ImportGenerationStore::is_leased_by_peer(held_key, "session-b", project_data_path));
+	CHECK(ImportGenerationStore::acquire_resource_lease(held_key, "session-b", project_data_path));
+	ImportGenerationStore::release_all_resource_leases();
+}
+
+TEST_CASE("[ImportGenerationStore] UID claims continue the chain replay expects") {
+	const String project_data_path = _project_data_path("import-generation-store-claims");
+	REQUIRE_FALSE(project_data_path.is_empty());
+	ResourceUID *resource_uid = ResourceUID::get_singleton();
+	const ResourceUID::ID uid = resource_uid->create_id();
+
+	const String source_path = "res://chain.glb";
+	ImportGenerationStore::UIDClaim first = ImportGenerationStore::make_uid_claim(uid, source_path);
+	CHECK(first.previous_path.is_empty());
+	Vector<ImportGenerationStore::UIDClaim> claims;
+	claims.push_back(first);
+	ImportGenerationStore::note_uid_claims(claims);
+
+	const ImportGenerationStore::UIDClaim second = ImportGenerationStore::make_uid_claim(uid, source_path);
+	CHECK(second.previous_path == source_path);
+	CHECK(second.epoch > first.epoch);
+
+	ImportGenerationStore::PreparedManifest first_manifest;
+	first_manifest.transaction_id = "chain-1";
+	first_manifest.uid_claims.push_back(first);
+	ImportGenerationStore::PreparedManifest second_manifest;
+	second_manifest.transaction_id = "chain-2";
+	second_manifest.uid_claims.push_back(second);
+
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, first_manifest) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "chain-1") == OK);
+	CHECK(ImportGenerationStore::write_prepared_manifest(project_data_path, second_manifest) == OK);
+	CHECK(ImportGenerationStore::commit_prepared_manifest(project_data_path, "chain-2") == OK);
+
+	CHECK(ImportGenerationStore::replay_uid_events(project_data_path, false) == OK);
+	CHECK(resource_uid->get_id_path(uid) == source_path);
+
+	resource_uid->remove_id(uid);
+}
+
 } // namespace TestImportGenerationStore
