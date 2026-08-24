@@ -40,6 +40,7 @@
 #include "core/io/file_access_pack.h" // PACK_HEADER_MAGIC, PACK_FORMAT_VERSION
 #include "core/io/image.h"
 #include "core/io/image_loader.h"
+#include "core/io/import_generation_store.h"
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
 #include "core/io/resource_uid.h"
@@ -1662,14 +1663,17 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 					String remap = F;
 					if (remap == "path") {
 						String remapped_path = config->get_value("remap", remap);
-						Vector<uint8_t> array = FileAccess::get_file_as_bytes(remapped_path);
+						// `.import` records the canonical path, which is also the name the
+						// exported project resolves. The bytes come from whichever generation
+						// is currently published.
+						Vector<uint8_t> array = FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(path, remapped_path));
 						err = save_proxy.save_file(p_preset, p_udata, remapped_path, array, idx, total, enc_in_filters, enc_ex_filters, key, seed, false);
 					} else if (remap.begins_with("path.")) {
 						String feature = remap.get_slicec('.', 1);
 
 						if (remap_features.has(feature)) {
 							String remapped_path = config->get_value("remap", remap);
-							Vector<uint8_t> array = FileAccess::get_file_as_bytes(remapped_path);
+							Vector<uint8_t> array = FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(path, remapped_path));
 							err = save_proxy.save_file(p_preset, p_udata, remapped_path, array, idx, total, enc_in_filters, enc_ex_filters, key, seed, false);
 						} else {
 							// Remove paths if feature not enabled.
@@ -1721,7 +1725,9 @@ Error EditorExportPlatform::export_project_files(const Ref<EditorExportPreset> &
 				}
 			}
 
-			Vector<uint8_t> array = FileAccess::get_file_as_bytes(export_path);
+			// A dependency can be an import artifact reached without its source file, so this
+			// resolves from the artifact path alone.
+			Vector<uint8_t> array = FileAccess::get_file_as_bytes(ImportGenerationStore::resolve_artifact_path(export_path));
 			err = save_proxy.save_file(p_preset, p_udata, export_path, array, idx, total, enc_in_filters, enc_ex_filters, key, seed, false);
 			if (err != OK) {
 				return err;

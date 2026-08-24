@@ -98,6 +98,9 @@ public:
 
 	// Reads: map a logical `res://.godot/imported/...` path to the physical file backing it.
 	static String resolve_artifact_path(const String &p_source_file, const String &p_logical_path);
+	// Same, for callers that only hold the artifact path. Builds a reverse index over every
+	// published selector, so prefer the two-argument form when the source is known.
+	static String resolve_artifact_path(const String &p_logical_path);
 	static void invalidate_resolution_cache();
 
 	// UID claim bookkeeping, so successive claims for one UID form a valid chain.
@@ -116,7 +119,34 @@ public:
 	static Vector<String> collect_new_commit_events(HashSet<String> &r_seen_transactions, const String &p_project_data_path = String());
 	static Vector<ResourceGeneration> read_committed_resources(const String &p_transaction_id, const String &p_project_data_path = String());
 
+	// Reclamation. Both steps only ever touch state older than a grace period, which is what
+	// makes them safe to run while other editors are reading the same project.
+	struct ReclaimSettings {
+		int64_t grace_seconds = 600;
+		int keep_per_resource = 1;
+		int64_t storage_limit_bytes = 0; // 0 disables the quota.
+		int64_t min_events_to_compact = 256;
+	};
+
+	static String get_checkpoints_path(const String &p_project_data_path = String());
+	static String get_resource_source_path(const String &p_resource_key, const String &p_project_data_path = String());
+	static Error record_resource_source(const String &p_resource_key, const String &p_source_path, const String &p_project_data_path = String());
+	static String read_resource_source(const String &p_resource_key, const String &p_project_data_path = String());
+
+	static Error collect_generation_garbage(const ReclaimSettings &p_settings, const String &p_project_data_path = String());
+	static Error compact_event_journal(const ReclaimSettings &p_settings, const String &p_project_data_path = String());
+	static Error clean_abandoned_staging(const ReclaimSettings &p_settings, const String &p_session_data_root, const String &p_current_session_id);
+
 private:
+	// The end state a replay produced: the last claim per UID and the newest generation per resource.
+	struct ReplayState {
+		HashMap<ResourceUID::ID, UIDClaim> final_claims;
+		HashMap<String, ResourceGeneration> final_generations;
+		Vector<String> replayed_transaction_ids;
+	};
+
+	static Error _replay(const String &p_project_data_path, ReplayState &r_state, int64_t p_max_commit_time = 0, Vector<String> *r_eligible_transaction_ids = nullptr);
+
 	struct ResolutionEntry {
 		uint64_t selector_modified_time = 0;
 		String generation_path;
@@ -131,6 +161,8 @@ private:
 
 	static Mutex state_mutex;
 	static HashMap<String, ResolutionEntry> resolution_cache;
+	static HashMap<String, String> artifact_reverse_index;
+	static bool artifact_reverse_index_built;
 	static HashMap<ResourceUID::ID, UIDClaim> last_uid_claims;
 	static HashMap<String, OwnedLease> owned_resource_leases;
 };

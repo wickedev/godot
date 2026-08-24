@@ -47,6 +47,7 @@
 #include "editor/editor_node.h"
 #include "editor/file_system/editor_paths.h"
 #include "editor/file_system/editor_session_paths.h"
+#include "editor/gui/editor_toaster.h"
 #include "editor/inspector/editor_resource_preview.h"
 #include "editor/script/script_editor_plugin.h"
 #include "editor/settings/editor_settings.h"
@@ -1777,6 +1778,128 @@ void EditorFileSystem::_poll_import_events() {
 	emit_signal(SNAME("resources_reimported"), reloads);
 }
 
+void EditorFileSystem::_session_tick() {
+	if (!EditorSessionPaths::get_singleton()) {
+		return;
+	}
+	if (first_scan || scanning || scanning_changes || importing || thread.is_started() || thread_sources.is_started()) {
+		return;
+	}
+
+	// Picking peer commits up on a timer rather than only on focus-in means a background
+	// editor window still converges, and a deferred import retries in seconds.
+	_poll_import_events();
+	_retry_deferred_imports();
+	_reclaim_import_storage();
+	_report_deferred_imports();
+}
+
+void EditorFileSystem::_report_deferred_imports() {
+	static constexpr uint64_t REPORT_INTERVAL_MSEC = 30'000;
+
+	int deferred_count = 0;
+	String first_deferred;
+	{
+		MutexLock lock(deferred_imports_mutex);
+		deferred_count = deferred_imports.size();
+		if (deferred_count > 0) {
+			first_deferred = *deferred_imports.begin();
+		}
+	}
+	if (deferred_count == 0) {
+		last_deferred_report_msec = 0;
+		return;
+	}
+
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (last_deferred_report_msec != 0 && now - last_deferred_report_msec < REPORT_INTERVAL_MSEC) {
+		return;
+	}
+	last_deferred_report_msec = now;
+
+	// Waiting on a peer is normal and temporary, but silently doing nothing looks like a bug,
+	// so say so where the user can see it.
+	const String message = deferred_count == 1
+			? vformat(TTR("Waiting for another editor session to finish importing \"%s\"."), first_deferred.get_file())
+			: vformat(TTR("Waiting for another editor session to finish importing \"%s\" and %d other resource(s)."), first_deferred.get_file(), deferred_count - 1);
+	EditorToaster::get_singleton()->popup_str(message, EditorToaster::SEVERITY_INFO);
+}
+
+void EditorFileSystem::_retry_deferred_imports() {
+	Vector<String> ready;
+	{
+		MutexLock lock(deferred_imports_mutex);
+		if (deferred_imports.is_empty()) {
+			return;
+		}
+
+		const String session_id = ProjectSettings::get_singleton()->get_editor_session_id();
+		Vector<String> still_deferred;
+		for (const String &path : deferred_imports) {
+			if (!FileAccess::exists(path)) {
+				continue; // The source is gone; nothing left to import.
+			}
+			if (ImportGenerationStore::is_leased_by_peer(ImportGenerationStore::get_resource_key(path), session_id)) {
+				still_deferred.push_back(path);
+				continue;
+			}
+			ready.push_back(path);
+		}
+		deferred_imports.clear();
+		for (const String &path : still_deferred) {
+			deferred_imports.insert(path);
+		}
+	}
+
+	if (ready.is_empty()) {
+		return;
+	}
+
+	// The peer may have finished the work, in which case the sidecar it published already
+	// satisfies the check and nothing is reimported.
+	Vector<String> needed;
+	for (const String &path : ready) {
+		EditorFileSystemDirectory *fs = nullptr;
+		int cpos = -1;
+		if (!_find_file(path, &fs, cpos)) {
+			continue;
+		}
+		if (_test_for_reimport(path, fs->files[cpos]->import_md5)) {
+			needed.push_back(path);
+		}
+	}
+	if (!needed.is_empty()) {
+		print_verbose(vformat("EditorFileSystem: retrying %d import(s) another editor session was holding.", needed.size()));
+		reimport_files(needed);
+	}
+}
+
+void EditorFileSystem::_reclaim_import_storage() {
+	static constexpr uint64_t RECLAIM_INTERVAL_MSEC = 300'000;
+	const uint64_t now = OS::get_singleton()->get_ticks_msec();
+	if (last_reclaim_msec != 0 && now - last_reclaim_msec < RECLAIM_INTERVAL_MSEC) {
+		return;
+	}
+	last_reclaim_msec = now;
+
+	if (!EditorSessionPaths::get_singleton()) {
+		return;
+	}
+
+	ImportGenerationStore::ReclaimSettings settings;
+	// The floor is what keeps reclamation safe next to a peer that is loading right now.
+	settings.grace_seconds = MAX(int64_t(GLOBAL_GET("editor/import/session/reclaim_grace_seconds")), int64_t(60));
+	settings.keep_per_resource = MAX(int(GLOBAL_GET("editor/import/session/kept_generations_per_resource")), 0);
+	settings.storage_limit_bytes = int64_t(GLOBAL_GET("editor/import/session/generation_storage_limit_mb")) * 1024 * 1024;
+	settings.min_events_to_compact = MAX(int64_t(GLOBAL_GET("editor/import/session/events_before_compaction")), int64_t(16));
+
+	ImportGenerationStore::collect_generation_garbage(settings);
+	ImportGenerationStore::compact_event_journal(settings);
+	ImportGenerationStore::clean_abandoned_staging(settings,
+			ProjectSettings::get_singleton()->get_project_data_path().path_join("sessions"),
+			ProjectSettings::get_singleton()->get_editor_session_id());
+}
+
 void EditorFileSystem::scan_changes() {
 	if (first_scan || // Prevent a premature changes scan from inhibiting the first full scan
 			scanning || scanning_changes || thread.is_started()) {
@@ -1821,6 +1944,16 @@ void EditorFileSystem::scan_changes() {
 
 void EditorFileSystem::_notification(int p_what) {
 	switch (p_what) {
+		case NOTIFICATION_ENTER_TREE: {
+			if (EditorSessionPaths::get_singleton() && !session_timer) {
+				session_timer = memnew(Timer);
+				session_timer->set_wait_time(1.0);
+				session_timer->set_autostart(true);
+				session_timer->connect("timeout", callable_mp(this, &EditorFileSystem::_session_tick));
+				add_child(session_timer);
+			}
+		} break;
+
 		case NOTIFICATION_EXIT_TREE: {
 			Thread &active_thread = thread.is_started() ? thread : thread_sources;
 			if (use_threads && active_thread.is_started()) {
@@ -1873,6 +2006,7 @@ void EditorFileSystem::_notification(int p_what) {
 						scanning_changes = false;
 						done_importing = true;
 						ResourceImporter::load_on_startup = nullptr;
+						_reclaim_import_storage();
 						if (changed) {
 							emit_signal(SNAME("filesystem_changed"));
 						}
@@ -1894,6 +2028,9 @@ void EditorFileSystem::_notification(int p_what) {
 					// in editor_node to start the export if needed.
 					first_scan = false;
 					ResourceImporter::load_on_startup = nullptr;
+					// Reclaim once the project's state is known, so short-lived sessions also
+					// contribute instead of leaving everything to the periodic tick.
+					_reclaim_import_storage();
 					emit_signal(SNAME("filesystem_changed"));
 					emit_signal(SNAME("sources_changed"), sources_changed.size() > 0);
 				}
@@ -2694,6 +2831,10 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 	HashMap<String, HashMap<StringName, Variant>> source_file_options;
 	HashMap<String, ResourceUID::ID> uids;
 	HashMap<String, String> base_paths;
+	// Group importers get the same treatment as single-file ones: every file in the group is
+	// staged privately and the whole group becomes visible as one transaction.
+	HashMap<String, ImportTransaction> transactions;
+	String group_owner_file;
 	for (int i = 0; i < p_files.size(); i++) {
 		Ref<ConfigFile> config;
 		config.instantiate();
@@ -2742,14 +2883,21 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 			}
 		}
 
-		base_paths[p_files[i]] = ResourceFormatImporter::get_singleton()->get_import_base_path(p_files[i]);
+		base_paths[p_files[i]] = _begin_import_transaction(p_files[i], transactions[p_files[i]]);
+		if (transactions[p_files[i]].owns_group) {
+			group_owner_file = p_files[i];
+		}
 	}
 
 	if (importer_name == "keep" || importer_name == "skip") {
+		_abort_import_transactions(transactions, group_owner_file);
 		return OK; // (do nothing)
 	}
 
-	ERR_FAIL_COND_V(importer_name.is_empty(), ERR_UNCONFIGURED);
+	if (importer_name.is_empty()) {
+		_abort_import_transactions(transactions, group_owner_file);
+		ERR_FAIL_V(ERR_UNCONFIGURED);
+	}
 
 	Ref<ResourceImporter> importer = ResourceFormatImporter::get_singleton()->get_importer_by_name(importer_name);
 
@@ -2758,15 +2906,18 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 	//all went well, overwrite config files with proper remaps and md5s
 	for (const KeyValue<String, HashMap<StringName, Variant>> &E : source_file_options) {
 		const String &file = E.key;
-		String base_path = ResourceFormatImporter::get_singleton()->get_import_base_path(file);
-		// Group importers write straight into the shared legacy slot, so any published
-		// generation for these files must stop shadowing what was just written.
-		ImportGenerationStore::clear_selector(ImportGenerationStore::get_resource_key(file));
+		ImportTransaction &transaction = transactions[file];
+		const String base_path = transaction.active ? transaction.staging_path.path_join(transaction.resource_key) : transaction.logical_base_path;
+		const String &logical_base_path = transaction.logical_base_path;
 		Vector<String> dest_paths;
+		Vector<String> physical_dest_paths;
 		ResourceUID::ID uid = uids[file];
 		{
 			Ref<FileAccess> f = FileAccess::open(file + ".import", FileAccess::WRITE);
-			ERR_FAIL_COND_V_MSG(f.is_null(), ERR_FILE_CANT_OPEN, "Cannot open import file '" + file + ".import'.");
+			if (f.is_null()) {
+				_abort_import_transactions(transactions, group_owner_file);
+				ERR_FAIL_V_MSG(ERR_FILE_CANT_OPEN, "Cannot open import file '" + file + ".import'.");
+			}
 
 			//write manually, as order matters ([remap] has to go first for performance).
 			f->store_line("[remap]");
@@ -2783,13 +2934,15 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 			if (uid == ResourceUID::INVALID_ID) {
 				uid = ResourceUID::get_singleton()->create_id_for_path(file);
 			}
+			uids[file] = uid; // The group's owning transaction commits after this loop and needs it.
 
 			f->store_line("uid=\"" + ResourceUID::get_singleton()->id_to_text(uid) + "\""); // Store in readable format.
 
 			if (err == OK) {
-				String path = base_path + "." + importer->get_save_extension();
+				String path = logical_base_path + "." + importer->get_save_extension();
 				f->store_line("path=\"" + path + "\"");
 				dest_paths.push_back(path);
+				physical_dest_paths.push_back(base_path + "." + importer->get_save_extension());
 			}
 
 			f->store_line("group_file=" + Variant(p_group_file).get_construct_string());
@@ -2834,18 +2987,31 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 		// Store the md5's of the various files. These are stored separately so that the .import files can be version controlled.
 		{
 			Ref<FileAccess> md5s = FileAccess::open(base_path + ".md5", FileAccess::WRITE);
-			ERR_FAIL_COND_V_MSG(md5s.is_null(), ERR_FILE_CANT_OPEN, "Cannot open MD5 file '" + base_path + ".md5'.");
+			if (md5s.is_null()) {
+				_abort_import_transactions(transactions, group_owner_file);
+				ERR_FAIL_V_MSG(ERR_FILE_CANT_OPEN, "Cannot open MD5 file '" + base_path + ".md5'.");
+			}
 
 			md5s->store_line("source_md5=\"" + FileAccess::get_md5(file) + "\"");
-			if (dest_paths.size()) {
-				md5s->store_line("dest_md5=\"" + FileAccess::get_multiple_md5(dest_paths) + "\"\n");
+			if (physical_dest_paths.size()) {
+				md5s->store_line("dest_md5=\"" + FileAccess::get_multiple_md5(physical_dest_paths) + "\"\n");
 			}
+		}
+
+		// The transaction that owns the group publishes it, so it has to go last.
+		if (err != OK) {
+			_abort_import_transaction(transaction);
+		} else if (file != group_owner_file) {
+			_commit_import_transaction(file, transaction, uid);
 		}
 
 		EditorFileSystemDirectory *fs = nullptr;
 		int cpos = -1;
 		bool found = _find_file(file, &fs, cpos);
-		ERR_FAIL_COND_V_MSG(!found, ERR_UNCONFIGURED, vformat("Can't find file '%s' during group reimport.", file));
+		if (!found) {
+			_abort_import_transactions(transactions, group_owner_file);
+			ERR_FAIL_V_MSG(ERR_UNCONFIGURED, vformat("Can't find file '%s' during group reimport.", file));
+		}
 
 		//update modified times, to avoid reimport
 		fs->files[cpos]->modified_time = FileAccess::get_modified_time(file);
@@ -2882,6 +3048,15 @@ Error EditorFileSystem::_reimport_group(const String &p_group_file, const Vector
 		}
 
 		EditorResourcePreview::get_singleton()->check_for_invalidation(file);
+	}
+
+	if (!group_owner_file.is_empty() && transactions.has(group_owner_file)) {
+		ImportTransaction &owner = transactions[group_owner_file];
+		if (err == OK) {
+			_commit_import_transaction(group_owner_file, owner, uids[group_owner_file]);
+		} else {
+			_abort_import_transaction(owner);
+		}
 	}
 
 	return err;
@@ -2996,6 +3171,19 @@ void EditorFileSystem::_end_import_transaction_group() {
 	memdelete(group);
 }
 
+void EditorFileSystem::_abort_import_transactions(HashMap<String, ImportTransaction> &r_transactions, const String &p_group_owner) {
+	// The owner is aborted last: discarding it tears down the shared transaction the others
+	// are staged inside.
+	for (KeyValue<String, ImportTransaction> &E : r_transactions) {
+		if (!E.value.owns_group) {
+			_abort_import_transaction(E.value);
+		}
+	}
+	if (!p_group_owner.is_empty() && r_transactions.has(p_group_owner)) {
+		_abort_import_transaction(r_transactions[p_group_owner]);
+	}
+}
+
 Error EditorFileSystem::_commit_import_transaction(const String &p_file, ImportTransaction &r_transaction, ResourceUID::ID p_uid) {
 	if (!r_transaction.active) {
 		// Legacy in-place import. Drop any published generation so readers fall back to the
@@ -3038,6 +3226,10 @@ Error EditorFileSystem::_commit_import_transaction(const String &p_file, ImportT
 	// This happens per resource rather than at the end of the transaction because an importer
 	// that produced a nested resource — a glTF scene extracting its textures — has to be able
 	// to load it back immediately.
+	// Reclamation needs to know which source a resource key belongs to; the key is a one-way
+	// hash of the path, so the mapping is recorded next to the generations.
+	ImportGenerationStore::record_resource_source(r_transaction.resource_key, p_file);
+
 	ImportGenerationStore::Selector selector;
 	selector.resource_key = r_transaction.resource_key;
 	selector.generation_id = r_transaction.generation_id;
@@ -3126,6 +3318,10 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		const String resource_key = ImportGenerationStore::get_resource_key(p_file);
 		if (ImportGenerationStore::is_leased_by_peer(resource_key, ProjectSettings::get_singleton()->get_editor_session_id())) {
 			print_verbose(vformat("EditorFileSystem: \"%s\" is being imported by another editor session; deferring.", p_file));
+			{
+				MutexLock lock(deferred_imports_mutex);
+				deferred_imports.insert(p_file);
+			}
 			return ERR_BUSY;
 		}
 	}
@@ -3255,10 +3451,20 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 	const String base_path = _begin_import_transaction(p_file, transaction);
 	const String logical_base_path = transaction.logical_base_path;
 
+	// An importer or post-import script that writes to a hardcoded shared path instead of the
+	// save path it was given would silently corrupt other sessions, so watch the shared slot.
+	const String shared_import_path = logical_base_path.get_base_dir();
+	const int shared_files_before = transaction.active ? DirAccess::get_files_at(shared_import_path).size() : 0;
+
 	List<String> import_variants;
 	List<String> gen_files;
 	Variant meta;
 	Error err = importer->import(uid, p_file, base_path, params, &import_variants, &gen_files, &meta);
+
+	if (transaction.active && DirAccess::get_files_at(shared_import_path).size() != shared_files_before) {
+		WARN_PRINT(vformat("Importer \"%s\" wrote into the shared import directory '%s' while importing '%s' instead of the save path it was given. That directory is not isolated per editor session, so concurrent editors can overwrite each other's copy of those files.",
+				importer->get_importer_name(), shared_import_path, p_file));
+	}
 
 	// The importer wrote into this transaction's private staging directory. Everything recorded
 	// in `.import` uses the canonical logical path instead, so the sidecar is byte-identical no
@@ -3384,6 +3590,22 @@ Error EditorFileSystem::_reimport_file(const String &p_file, const HashMap<Strin
 		md5s->store_line("source_md5=\"" + FileAccess::get_md5(p_file) + "\"");
 		if (physical_dest_paths.size()) {
 			md5s->store_line("dest_md5=\"" + FileAccess::get_multiple_md5(physical_dest_paths) + "\"\n");
+		}
+	}
+
+	if (err == OK && transaction.active) {
+		Vector<String> missing;
+		for (const String &path : physical_dest_paths) {
+			if (!FileAccess::exists(path)) {
+				missing.push_back(path);
+			}
+		}
+		if (!missing.is_empty()) {
+			// Publishing now would hand other editors an incomplete generation. Aborting keeps
+			// the previously completed one visible instead.
+			ERR_PRINT(vformat("Importer \"%s\" declared %d output file(s) for '%s' that it never wrote to its save path, so the result was not published. First missing: '%s'. An importer that writes to a path of its own choosing cannot be isolated per editor session.",
+					importer->get_importer_name(), missing.size(), p_file, missing[0]));
+			err = ERR_FILE_MISSING_DEPENDENCIES;
 		}
 	}
 

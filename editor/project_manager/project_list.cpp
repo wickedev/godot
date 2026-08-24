@@ -901,7 +901,7 @@ ProjectList::Item ProjectList::load_project_data(const String &p_path, bool p_fa
 	const bool use_hidden_project_data_directory = cf->get_value("application", "config/use_hidden_project_data_directory", true);
 	const String project_data_dir = p_path.path_join((use_hidden_project_data_directory ? "." : "") + ProjectSettings::PROJECT_DATA_DIR_NAME_SUFFIX);
 	const String sessions_dir = project_data_dir.path_join("sessions");
-	for (const String &session : DirAccess::get_directories_at(sessions_dir)) {
+	for (const String &session : DirAccess::dir_exists_absolute(sessions_dir) ? DirAccess::get_directories_at(sessions_dir) : PackedStringArray()) {
 		if (FileAccess::exists(sessions_dir.path_join(session).path_join("recovery.lock"))) {
 			recovery_mode = true;
 			break;
