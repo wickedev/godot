@@ -132,6 +132,7 @@ public:
 	virtual bool editor_can_reload_from_file() override { return false; } // Reloading is handled in a special way.
 
 	static String get_extension_list_config_file();
+	static String get_extension_list_export_file();
 
 	const Ref<GDExtensionLoader> get_loader() const { return loader; }
 

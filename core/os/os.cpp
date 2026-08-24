@@ -365,12 +365,21 @@ String OS::expand_path(const String &p_path) const {
 	return p_path;
 }
 
+static String _get_recovery_lock_file_path() {
+#ifdef TOOLS_ENABLED
+	if (ProjectSettings::get_singleton() && ProjectSettings::get_singleton()->has_editor_session()) {
+		return ProjectSettings::get_singleton()->get_project_session_data_path().path_join("recovery.lock");
+	}
+#endif
+	return OS::get_singleton()->get_user_data_dir().path_join(".recovery_mode_lock");
+}
+
 void OS::create_lock_file() {
 	if (Engine::get_singleton()->is_recovery_mode_hint()) {
 		return;
 	}
 
-	String lock_file_path = get_user_data_dir().path_join(".recovery_mode_lock");
+	String lock_file_path = _get_recovery_lock_file_path();
 	Ref<FileAccess> lock_file = FileAccess::open(lock_file_path, FileAccess::WRITE);
 	if (lock_file.is_valid()) {
 		lock_file->close();
@@ -378,8 +387,7 @@ void OS::create_lock_file() {
 }
 
 void OS::remove_lock_file() {
-	String lock_file_path = get_user_data_dir().path_join(".recovery_mode_lock");
-	DirAccess::remove_absolute(lock_file_path);
+	DirAccess::remove_absolute(_get_recovery_lock_file_path());
 }
 
 Error OS::shell_open(const String &p_uri) {

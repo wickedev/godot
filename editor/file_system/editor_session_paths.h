@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  resource_uid.h                                                        */
+/*  editor_session_paths.h                                                */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -10,7 +10,7 @@
 /*                                                                        */
 /* Permission is hereby granted, free of charge, to any person obtaining  */
 /* a copy of this software and associated documentation files (the        */
-/* "Software"), to deal in the Software without restriction, including    */
+/* "Software"), to deal in the Software without restriction, including  */
 /* without limitation the rights to use, copy, modify, merge, publish,    */
 /* distribute, sublicense, and/or sell copies of the Software, and to     */
 /* permit persons to whom the Software is furnished to do so, subject to  */
@@ -30,72 +30,36 @@
 
 #pragma once
 
-#include "core/object/object.h"
 #include "core/string/ustring.h"
-#include "core/templates/hash_map.h"
+#include "core/typedefs.h"
 
-class FileAccess;
+class EditorSessionPaths {
+	static EditorSessionPaths *singleton;
 
-typedef void (*ResourceUIDScanForUIDOnStartup)();
+	bool lease_owner = false;
+	uint64_t last_heartbeat_usec = 0;
+	String session_data_dir;
+	String editor_data_dir;
+	String shader_cache_dir;
+	String staging_dir;
+	String lease_file;
 
-class ResourceUID : public Object {
-	GDCLASS(ResourceUID, Object)
-public:
-	typedef int64_t ID;
-	constexpr const static ID INVALID_ID = -1;
-
-	static String get_cache_file();
-	static String get_cache_export_file();
-
-private:
-	Mutex mutex;
-	struct Cache {
-		CharString cs;
-		bool saved_to_cache = false;
-	};
-
-	HashMap<ID, Cache> unique_ids; // Unique IDs and utf8 paths (less memory used).
-	bool use_reverse_cache = false;
-	HashMap<CharString, ID> reverse_cache; // Used at runtime.
-	static ResourceUID *singleton;
-
-	uint32_t cache_entries = 0;
-	bool changed = false;
-	bool cache_initialized = false;
-
-protected:
-	static void _bind_methods();
+	void _bootstrap_file(const String &p_file_name);
+	void _write_lease(uint64_t p_ticks_usec);
 
 public:
-	inline static ResourceUIDScanForUIDOnStartup scan_for_uid_on_startup = nullptr;
+	static void create(bool p_lease_owner);
+	static void free();
+	static EditorSessionPaths *get_singleton() { return singleton; }
 
-	String id_to_text(ID p_id) const;
-	ID text_to_id(const String &p_text) const;
+	void heartbeat(uint64_t p_ticks_usec);
 
-	ID create_id();
-	ID create_id_for_path(const String &p_path);
-	bool has_id(ID p_id) const;
-	void add_id(ID p_id, const String &p_path);
-	void set_id(ID p_id, const String &p_path);
-	String get_id_path(ID p_id) const;
-	ID get_path_id(const String &p_path) const;
-	HashMap<ID, String> get_id_map() const;
-	void remove_id(ID p_id);
+	String get_session_data_dir() const { return session_data_dir; }
+	String get_editor_data_dir() const { return editor_data_dir; }
+	String get_shader_cache_dir() const { return shader_cache_dir; }
+	String get_staging_dir() const { return staging_dir; }
+	String get_lease_file() const { return lease_file; }
 
-	static String uid_to_path(const String &p_uid);
-	static String path_to_uid(const String &p_path);
-	static String ensure_path(const String &p_uid_or_path);
-
-	Error load_from_cache(bool p_reset, const String &p_cache_file = String());
-	Error save_to_cache();
-	Error update_cache();
-	static String get_path_from_cache(Ref<FileAccess> &p_cache_file, const String &p_uid_string);
-	static Vector<uint8_t> encode_binary_cache(const Vector<Pair<ID, String>> &p_entries);
-
-	void enable_reverse_cache() { use_reverse_cache = true; }
-	void clear();
-
-	static ResourceUID *get_singleton() { return singleton; }
-
-	ResourceUID();
+	EditorSessionPaths(bool p_lease_owner);
+	~EditorSessionPaths();
 };

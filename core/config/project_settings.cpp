@@ -43,6 +43,7 @@
 #include "core/object/message_queue.h"
 #include "core/object/script_language.h"
 #include "core/os/os.h"
+#include "core/string/char_utils.h"
 #include "core/templates/rb_set.h"
 #include "core/variant/typed_array.h"
 #include "core/variant/variant_parser.h"
@@ -65,6 +66,42 @@ String ProjectSettings::get_project_data_dir_name() const {
 String ProjectSettings::get_project_data_path() const {
 	return "res://" + get_project_data_dir_name();
 }
+
+#ifdef TOOLS_ENABLED
+bool ProjectSettings::is_valid_editor_session_id(const String &p_session_id) {
+	if (p_session_id.is_empty() || p_session_id.length() > 64 || p_session_id == "." || p_session_id == "..") {
+		return false;
+	}
+
+	for (int i = 0; i < p_session_id.length(); i++) {
+		const char32_t c = p_session_id[i];
+		if (!is_ascii_alphanumeric_char(c) && c != '-' && c != '_') {
+			return false;
+		}
+	}
+	return true;
+}
+
+void ProjectSettings::set_editor_session_id(const String &p_session_id) {
+	ERR_FAIL_COND_MSG(!p_session_id.is_empty() && !is_valid_editor_session_id(p_session_id), "Invalid editor session ID.");
+	editor_session_id = p_session_id;
+}
+
+String ProjectSettings::get_editor_session_id() const {
+	return editor_session_id;
+}
+
+bool ProjectSettings::has_editor_session() const {
+	return !editor_session_id.is_empty();
+}
+
+String ProjectSettings::get_project_session_data_path() const {
+	if (!has_editor_session()) {
+		return get_project_data_path();
+	}
+	return get_project_data_path().path_join("sessions").path_join(editor_session_id);
+}
+#endif
 
 String ProjectSettings::get_resource_path() const {
 	return resource_path;
@@ -611,7 +648,7 @@ bool ProjectSettings::_load_resource_pack(const String &p_pack, bool p_replace_f
 		refresh_global_class_list();
 
 		// This pack may have defined new UIDs, make sure they are cached.
-		ResourceUID::get_singleton()->load_from_cache(false);
+		ResourceUID::get_singleton()->load_from_cache(false, ResourceUID::get_cache_export_file());
 	}
 
 	// If the data pack was found, all directory access will be from here.
@@ -1462,7 +1499,13 @@ TypedArray<Dictionary> ProjectSettings::get_global_class_list() {
 
 	Ref<ConfigFile> cf;
 	cf.instantiate();
-	if (cf->load(get_global_class_list_path()) == OK) {
+	Error load_err = cf->load(get_global_class_list_path());
+#ifdef TOOLS_ENABLED
+	if (load_err != OK && has_editor_session()) {
+		load_err = cf->load(get_global_class_list_export_path());
+	}
+#endif
+	if (load_err == OK) {
 		global_class_list = cf->get_value("", "list", Array());
 	} else {
 #ifndef TOOLS_ENABLED
@@ -1479,6 +1522,14 @@ TypedArray<Dictionary> ProjectSettings::get_global_class_list() {
 }
 
 String ProjectSettings::get_global_class_list_path() const {
+#ifdef TOOLS_ENABLED
+	return get_project_session_data_path().path_join("global_script_class_cache.cfg");
+#else
+	return get_global_class_list_export_path();
+#endif
+}
+
+String ProjectSettings::get_global_class_list_export_path() const {
 	return get_project_data_path().path_join("global_script_class_cache.cfg");
 }
 
@@ -1574,13 +1625,23 @@ void ProjectSettings::save_scene_groups_cache() {
 }
 
 String ProjectSettings::get_scene_groups_cache_path() const {
+#ifdef TOOLS_ENABLED
+	return get_project_session_data_path().path_join("scene_groups_cache.cfg");
+#else
 	return get_project_data_path().path_join("scene_groups_cache.cfg");
+#endif
 }
 
 void ProjectSettings::load_scene_groups_cache() {
 	Ref<ConfigFile> cf;
 	cf.instantiate();
-	if (cf->load(get_scene_groups_cache_path()) == OK) {
+	Error load_err = cf->load(get_scene_groups_cache_path());
+#ifdef TOOLS_ENABLED
+	if (load_err != OK && has_editor_session()) {
+		load_err = cf->load(get_project_data_path().path_join("scene_groups_cache.cfg"));
+	}
+#endif
+	if (load_err == OK) {
 		Vector<String> scene_paths = cf->get_sections();
 		for (const String &E : scene_paths) {
 			Array scene_groups = cf->get_value(E, "groups", Array());

@@ -6888,6 +6888,11 @@ void EditorNode::_restart_editor(bool p_goto_project_manager) {
 		args.push_back(ProjectSettings::get_singleton()->get_resource_path());
 
 		args.push_back("-e");
+
+		if (ProjectSettings::get_singleton()->has_editor_session()) {
+			args.push_back("--editor-session-id");
+			args.push_back(ProjectSettings::get_singleton()->get_editor_session_id());
+		}
 	}
 	if (!files_to_delete_on_exit.is_empty()) {
 		args.push_back("--clear-shader-cache");

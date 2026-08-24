@@ -53,6 +53,7 @@
 #include "editor/export/register_exporters.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/file_system/editor_session_paths.h"
 #include "editor/gui/editor_file_dialog.h"
 #include "editor/gui/editor_spin_slider.h"
 #include "editor/gui/editor_toaster.h"
@@ -347,6 +348,7 @@ void unregister_editor_types() {
 	if (EditorPaths::get_singleton()) {
 		EditorPaths::free();
 	}
+	EditorSessionPaths::free();
 	EditorStringNames::free();
 
 	OS::get_singleton()->benchmark_end_measure("Editor", "Unregister Types");

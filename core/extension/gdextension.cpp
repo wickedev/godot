@@ -43,6 +43,14 @@ extern GDExtensionInterfaceFunctionPtr gdextension_get_proc_address(const char *
 typedef GDExtensionBool (*GDExtensionLegacyInitializationFunction)(void *p_interface, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization);
 
 String GDExtension::get_extension_list_config_file() {
+#ifdef TOOLS_ENABLED
+	return ProjectSettings::get_singleton()->get_project_session_data_path().path_join("extension_list.cfg");
+#else
+	return get_extension_list_export_file();
+#endif
+}
+
+String GDExtension::get_extension_list_export_file() {
 	return ProjectSettings::get_singleton()->get_project_data_path().path_join("extension_list.cfg");
 }
 
