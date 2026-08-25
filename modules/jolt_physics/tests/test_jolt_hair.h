@@ -94,4 +94,44 @@ TEST_CASE("[Modules][Jolt] Hair solver collides against the scene") {
 			" without: ", without.tip_after);
 }
 
+TEST_CASE("[Modules][Jolt] Wind deflects hair") {
+	if (!JoltHairSmoke::is_available()) {
+		return;
+	}
+
+	// The property check first, because the failure this guards against is silent. Jolt has no wind
+	// input of its own -- upstream lists it as missing -- so wind reaches the solver only through
+	// the external-acceleration patch. If that stops being wired, everything still builds, still
+	// runs, and the hair simply ignores the weather.
+	const JoltHairSmoke::Result still = JoltHairSmoke::run(false, Vector3());
+	REQUIRE_MESSAGE(!still.skipped, still.skip_reason);
+
+	const JoltHairSmoke::Result windy = JoltHairSmoke::run(false, Vector3(20.0, 0.0, 0.0));
+	REQUIRE_MESSAGE(!windy.skipped, windy.skip_reason);
+
+	check_strand_fell(windy);
+
+	CHECK_MESSAGE(still.tip_after.distance_to(windy.tip_after) > 1.0e-3,
+			"Wind did not move the hair. Still: ", still.tip_after, " windy: ", windy.tip_after);
+
+	// Direction matters, not just magnitude: a sign error would deflect the strand upwind and
+	// nothing would complain.
+	CHECK_MESSAGE(windy.tip_after.x > still.tip_after.x,
+			"Hair should blow downwind (+X). Still x: ", still.tip_after.x,
+			" windy x: ", windy.tip_after.x);
+
+	// Reversing the wind has to mirror the deflection, which a magnitude-only bug would not.
+	const JoltHairSmoke::Result upwind = JoltHairSmoke::run(false, Vector3(-20.0, 0.0, 0.0));
+	REQUIRE_MESSAGE(!upwind.skipped, upwind.skip_reason);
+	CHECK_MESSAGE(upwind.tip_after.x < still.tip_after.x,
+			"Reversed wind should deflect the other way. Got x: ", upwind.tip_after.x);
+
+	// Stronger wind, further deflection. Guards against the acceleration being clamped or
+	// normalized away somewhere between the bus and the solver.
+	const JoltHairSmoke::Result gale = JoltHairSmoke::run(false, Vector3(60.0, 0.0, 0.0));
+	REQUIRE_MESSAGE(!gale.skipped, gale.skip_reason);
+	CHECK_MESSAGE(gale.tip_after.x > windy.tip_after.x,
+			"Stronger wind should deflect further. 20: ", windy.tip_after.x, " 60: ", gale.tip_after.x);
+}
+
 } // namespace TestJoltHair

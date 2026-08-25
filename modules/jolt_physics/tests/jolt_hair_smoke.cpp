@@ -107,8 +107,9 @@ bool is_available() {
 	return true;
 }
 
-Result run(bool p_with_collision) {
+Result run(bool p_with_collision, const Vector3 &p_wind_acceleration) {
 	Result result;
+	result.applied_acceleration = p_wind_acceleration;
 
 	JPH::ComputeSystemCPU compute_system;
 	JPH::HairRegisterShaders(&compute_system);
@@ -197,6 +198,11 @@ Result run(bool p_with_collision) {
 	JPH::Hair hair(settings, JPH::RVec3::sZero(), JPH::Quat::sIdentity(), hair_layer);
 	hair.Init(&compute_system);
 
+	// Upstream has no wind input -- Hair.h lists wind forces as missing -- so this rides in on the
+	// external acceleration the vendoring patch adds, which the solver folds into gravity.
+	hair.SetExternalAcceleration(JPH::Vec3(
+			float(p_wind_acceleration.x), float(p_wind_acceleration.y), float(p_wind_acceleration.z)));
+
 	const JPH::Mat44 joint_matrix = JPH::Mat44::sIdentity();
 	auto step = [&](float p_delta) {
 		hair.Update(p_delta, JPH::Mat44::sIdentity(), &joint_matrix, physics_system, shaders,
@@ -239,7 +245,7 @@ bool is_available() {
 	return false;
 }
 
-Result run(bool p_with_collision) {
+Result run(bool p_with_collision, const Vector3 &p_wind_acceleration) {
 	Result result;
 	result.skip_reason = "Built without a Jolt hair compute backend (jolt_hair_compute=none).";
 	return result;
