@@ -75,6 +75,7 @@ skip = [
 	"editor/project_converter_3_to_4.cpp",
 	"platform/android/java/lib/src/main/java/com/*",
 	"platform/web/package-lock.json",
+	"*thirdparty/*",
 ]
 ignore-words-list = [
 	"breaked",
