@@ -13,13 +13,13 @@
 |---|---|
 | Tier-1 어태치먼트 목록·포맷·채널 시맨틱 | 어태치먼트의 내부 생성 경로 (래스터 vs vis-buffer 리졸브) |
 | `gb_objectid` **24-bit** 네임스페이스 규약 (§3) | Tier-2 export 채널 추가 (게이트 플래그 뒤라 자유) |
-| 노멀 인코딩 (RG16 unorm octahedral) — 셰이딩·지오메트릭 공통 | Tier-3 라이팅 분해 write-out 목록 |
+| 노멀 인코딩 (oct 16:16/노멀, RGBA16 unorm에 셰이딩+지오 팩) | Tier-3 라이팅 분해 write-out 목록 |
 | depth 시맨틱 (R32F view-Z, `-vertex.z`) | 프리패스/컬링용 내부 버퍼 |
 | **히스토리 계약** (§4) — N-1 읽기 보장 채널 목록 | 히스토리의 구현 방식 (더블버퍼 vs 카피) |
 | **모션 규약** — NDC 단위 · **지터 제거(jitter-free)** | |
 | `RB_SCOPE_GBUFFER` 스코프 이름 | |
 
-## 2. Tier-1 스키마 (동결 제안, v1.2)
+## 2. Tier-1 스키마 (동결 제안, v1.3)
 
 | # | RB tex | 포맷 | 채널 | 소비자 |
 |---|--------|------|------|--------|
@@ -37,7 +37,7 @@
 - depth-motion(3채널째)은 **불요 확정** — 재투영 검증은 2D 모션 + 이전 프레임 `gb_depth` 비교로 성립.
 - shading-model-ID: 필요 시점(라이트맵/SH deferred 편입)에 **신규 R8_UINT**로 추가. objectid 비트 오염 금지. v1 미포함.
 
-## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.2 — 24-bit)
+## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.3 — 24-bit)
 
 **단일 24-bit 인스턴스 ID 공간** (가용 16,777,215). 근거: TLAS 경로의 하드 제약 —
 - `AccelerationStructureInstance::id`는 `uint32_t`(`rendering_device.h:1384`)이나, Vulkan 드라이버가 이를 `VkAccelerationStructureInstanceKHR::instanceCustomIndex`(**24-bit 비트필드**, `vulkan_core.h:16241`)에 무마스킹 대입(`rendering_device_driver_vulkan.cpp:6480`, `acceleration_structure_instance_write()` — v1.3 인용 정정). **D3D12도 동일**: `D3D12_RAYTRACING_INSTANCE_DESC.InstanceID : 24`(`d3d12.h:15545`) — 24-bit는 드라이버 결함이 아니라 **범용 RT API 계약**이다 → 32-bit ID는 **조용히 절단**된다.
@@ -51,15 +51,15 @@
 
 ## 4. 히스토리 계약 (동결, v1.2에서 4종으로 확장)
 
-**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal`(병합 — 셰이딩·지오 노멀 모두 포함) · `gb_objectid` **3텍스처**(보장 채널은 v1.2의 4종과 동일, 병합으로 텍스처 수만 감소 — 더블버퍼 대상 1개 절감). 리저버 기각(surface similarity)은 *현재*와 *재투영된 N-1* 서페이스를 비교하므로 지오메트릭 노멀도 N-1이 필요하다(RTXDI `RAB_GetGBufferSurface(previousFrame=true)`가 normal·geoNormal을 함께 반환하는 것과 동형). 히스토리 비용 +4 B/px. `gb_motion`은 현재 프레임만 보장. L1은 이 4종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
+**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal`(병합 — 셰이딩·지오 노멀 모두 포함) · `gb_objectid` **3텍스처**(보장 채널은 v1.2의 4종과 동일, 병합으로 텍스처 수만 감소 — 더블버퍼 대상 1개 절감). 리저버 기각(surface similarity)은 *현재*와 *재투영된 N-1* 서페이스를 비교하므로 지오메트릭 노멀도 N-1이 필요하다(RTXDI `RAB_GetGBufferSurface(previousFrame=true)`가 normal·geoNormal을 함께 반환하는 것과 동형). 히스토리 비용 +4 B/px. `gb_motion`은 현재 프레임만 보장. L1은 이 3종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
 
 ### 4.1 Nanite 모션·히스토리의 LOD 전환 계약 (v1.2 신설, 동결)
 
-Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터 LOD 오차의 화면 투영으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다. §4의 N-1 `gb_normal`/`gb_geo_normal` 보장도 같은 캐비엇과 같은 상한을 받는다.
+Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터 LOD 오차의 화면 투영으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다. §4의 N-1 `gb_normal`(.xy 셰이딩/.zw 지오 양쪽) 보장도 같은 캐비엇과 같은 상한을 받는다.
 
 ### 4.2 G2 파급 요구 (v1.2 신설 — G2 계약에 위임하되 여기 기록)
 
-Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸브는 히트 지점 머티리얼 평가를 요구한다 → **지오 풀은 정점당 노멀 + UV를 보유해야 한다.** **탄젠트는 저장하지 않는다** — vis-buffer 리졸브는 트라이앵글 3정점의 위치+UV에서 탄젠트 프레임을 해석적으로 계산한다(정점 탄젠트도 화면공간 미분도 불요). 현 S1 DAG는 위치만 보존하므로 G2 확정 시 확장한다(L2).
+Tier-1 7채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸브는 히트 지점 머티리얼 평가를 요구한다 → **지오 풀은 정점당 노멀 + UV를 보유해야 한다.** **탄젠트는 저장하지 않는다** — vis-buffer 리졸브는 트라이앵글 3정점의 위치+UV에서 탄젠트 프레임을 해석적으로 계산한다(정점 탄젠트도 화면공간 미분도 불요). 현 S1 DAG는 위치만 보존하므로 G2 확정 시 확장한다(L2).
 
 ## 5. 동결 전제 검증 항목 (서명 전 필수)
 
@@ -85,7 +85,7 @@ Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸�
 
 | 레인 | 담당 | 판정 | 비고 |
 |---|---|---|---|
-| L1 (리졸브·FB 배선) | C1 | 🟡 조건부(v1.2 §2 MRT 포화) → **v1.3 반영으로 서명 요청** | §5 해소 확인·§3 승인 완료, §2 병합안 채택됨 |
+| L1 (리졸브·FB 배선) | C1 | ✅ **승인/서명 (2026-08-25, v1.3)** | Tier-1 7포맷 전부 Metal 실측(COLOR_ATTACHMENT+STORAGE 7/7) 후 서명. tlas_build 검증·emission.a 배선 L1 접수 |
 | L2 (vis-buffer → 리졸브) | C2 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 — 리졸브 기록 채널 7종·바이트 동일) | 27b/7b 정합 빌더 테스트 확인 |
 | L3-대행 (ReSTIR/RT 입력) | C3 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 + §5.1-(i) 확정 — 본인 권고안) | v1.0 🔴 → v1.1 🟡 → v1.2 ✅ |
 | 메인테이너 | ✅ 제안 | | |
