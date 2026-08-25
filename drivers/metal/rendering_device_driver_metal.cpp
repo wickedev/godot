@@ -2516,6 +2516,13 @@ uint64_t RenderingDeviceDriverMetal::get_resource_native_handle(DriverResource p
 			MDRenderPipeline *pipeline = (MDRenderPipeline *)(p_driver_id.id);
 			return (uint64_t)(uintptr_t)pipeline->state.get();
 		}
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			// MDCommandBufferBase exposes no native handle, and the concrete MDCommandBuffer lives
+			// behind the Metal 3 objects header. Adding a virtual accessor to the shared base would
+			// only serve a consumer that does not exist yet: GPU profiler zones are Vulkan and
+			// Direct3D 12 for now, and Metal timing is tracked separately.
+			return 0;
+		}
 		default: {
 			return 0;
 		}
@@ -2650,6 +2657,10 @@ uint64_t RenderingDeviceDriverMetal::limit_get(Limit p_limit) {
 			return limits.maxBufferLength;
 		case LIMIT_MAX_UNIFORM_BUFFER_SIZE:
 			return limits.maxBufferLength;
+		case LIMIT_MAX_STORAGE_BUFFER_SIZE:
+			// Metal draws no distinction between uniform and storage buffers; both are bound as
+			// plain buffers and share the device's maximum buffer length.
+			return limits.maxBufferLength;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTE_OFFSET:
 			return limits.maxVertexDescriptorLayoutStride;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTES:
@@ -2727,6 +2738,16 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return device_properties->features.supports_gpu_address;
+		case SUPPORTS_DESCRIPTOR_INDEXING:
+			// Tier 2 argument buffers can be indexed with arbitrary per-invocation values without a
+			// qualifier. Confirmed end to end on an Apple M2 Pro: a compute shader using an unsized
+			// sampler array and nonuniformEXT compiles through to a usable backend shader.
+			return device_properties->features.argument_buffers_tier >= MTL::ArgumentBuffersTier2;
+		case SUPPORTS_DRAW_INDIRECT_COUNT:
+			// Metal has no direct equivalent of vkCmdDrawIndirectCount. Consuming a GPU-provided
+			// draw count requires MTLIndirectCommandBuffer, which this driver does not implement yet,
+			// so MDCommandBuffer::render_draw_indirect_count is still a stub.
+			return false;
 		case SUPPORTS_METALFX_SPATIAL:
 			return device_properties->features.metal_fx_spatial;
 		case SUPPORTS_METALFX_TEMPORAL:
@@ -2735,6 +2756,14 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 			return device_properties->features.supports_native_image_atomics;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			// The hardware gates (features.supports_image_atomic_64_bit and
+			// features.supports_native_image_atomics) can both be true, but Metal has no 64-bit
+			// single-channel pixel format: R64_UINT maps to Invalid in pixel_formats.cpp. There is no
+			// storage image for the atomics to act on, so reporting support would promise a path that
+			// cannot be built. Revisit if a 64-bit-wide storage image route (for example RG32_UINT
+			// viewed as 64-bit) is implemented for this driver.
+			return false;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return true;
 		case SUPPORTS_POINT_SIZE:

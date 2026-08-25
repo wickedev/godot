@@ -578,6 +578,10 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, false);
+	// Only needed below Vulkan 1.2; from 1.2 onwards descriptor indexing is core.
+	_register_requested_device_extension(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, false);
@@ -915,12 +919,13 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDevice16BitStorageFeaturesKHR storage_feature = {};
 		VkPhysicalDeviceMultiviewFeatures multiview_features = {};
 		VkPhysicalDevicePipelineCreationCacheControlFeatures pipeline_cache_control_features = {};
-		VkPhysicalDeviceVulkanMemoryModelFeatures memory_model_features = {};
 		VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features = {};
 		VkPhysicalDeviceRayTracingPipelineFeaturesKHR raytracing_pipeline_features = {};
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+		VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT image_atomic_int64_features = {};
+		VkPhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_features = {};
 
 		const bool use_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 		if (use_1_2_features) {
@@ -942,6 +947,11 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 				vulkan_memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR;
 				vulkan_memory_model_features.pNext = next_features;
 				next_features = &vulkan_memory_model_features;
+			}
+			if (enabled_device_extension_names.has(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)) {
+				descriptor_indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+				descriptor_indexing_features.pNext = next_features;
+				next_features = &descriptor_indexing_features;
 			}
 		}
 
@@ -981,12 +991,6 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &pipeline_cache_control_features;
 		}
 
-		if (enabled_device_extension_names.has(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
-			memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES;
-			memory_model_features.pNext = next_features;
-			next_features = &memory_model_features;
-		}
-
 		if (enabled_device_extension_names.has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)) {
 			acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
 			acceleration_structure_features.pNext = next_features;
@@ -1017,6 +1021,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			next_features = &ray_query_features;
 		}
 
+		if (enabled_device_extension_names.has(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)) {
+			image_atomic_int64_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT;
+			image_atomic_int64_features.pNext = next_features;
+			next_features = &image_atomic_int64_features;
+		}
+
 		VkPhysicalDeviceFeatures2 device_features_2 = {};
 		device_features_2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
 		device_features_2.pNext = next_features;
@@ -1026,17 +1036,20 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 #ifdef MACOS_ENABLED
 			ERR_FAIL_COND_V_MSG(!device_features_vk_1_2.shaderSampledImageArrayNonUniformIndexing, ERR_CANT_CREATE, "Your GPU doesn't support shaderSampledImageArrayNonUniformIndexing which is required to use the Vulkan-based renderers in Godot.");
 #endif
-			if (enabled_device_extension_names.has(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME)) {
-				shader_capabilities.shader_float16_is_supported = device_features_vk_1_2.shaderFloat16;
-				shader_capabilities.shader_int8_is_supported = device_features_vk_1_2.shaderInt8;
-			}
-			if (enabled_device_extension_names.has(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)) {
-				buffer_device_address_support = device_features_vk_1_2.bufferDeviceAddress;
-			}
-			if (enabled_device_extension_names.has(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME)) {
-				vulkan_memory_model_support = device_features_vk_1_2.vulkanMemoryModel;
-				vulkan_memory_model_device_scope_support = device_features_vk_1_2.vulkanMemoryModelDeviceScope;
-			}
+			// These are core from Vulkan 1.2 onwards. A driver is not obliged to keep advertising the
+			// promoted extension, so reading them must not be gated on the extension name.
+			shader_capabilities.shader_float16_is_supported = device_features_vk_1_2.shaderFloat16;
+			shader_capabilities.shader_int8_is_supported = device_features_vk_1_2.shaderInt8;
+			buffer_device_address_support = device_features_vk_1_2.bufferDeviceAddress;
+			vulkan_memory_model_support = device_features_vk_1_2.vulkanMemoryModel;
+			vulkan_memory_model_device_scope_support = device_features_vk_1_2.vulkanMemoryModelDeviceScope;
+			draw_indirect_count_support = device_features_vk_1_2.drawIndirectCount;
+			draw_indirect_count_is_core = draw_indirect_count_support;
+			descriptor_indexing_capabilities.sampled_image_non_uniform_indexing = device_features_vk_1_2.shaderSampledImageArrayNonUniformIndexing;
+			descriptor_indexing_capabilities.storage_buffer_non_uniform_indexing = device_features_vk_1_2.shaderStorageBufferArrayNonUniformIndexing;
+			descriptor_indexing_capabilities.storage_image_non_uniform_indexing = device_features_vk_1_2.shaderStorageImageArrayNonUniformIndexing;
+			descriptor_indexing_capabilities.runtime_descriptor_array = device_features_vk_1_2.runtimeDescriptorArray;
+			descriptor_indexing_capabilities.partially_bound = device_features_vk_1_2.descriptorBindingPartiallyBound;
 		} else {
 			if (enabled_device_extension_names.has(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME)) {
 				shader_capabilities.shader_float16_is_supported = shader_features.shaderFloat16;
@@ -1049,6 +1062,16 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 				vulkan_memory_model_support = vulkan_memory_model_features.vulkanMemoryModel;
 				vulkan_memory_model_device_scope_support = vulkan_memory_model_features.vulkanMemoryModelDeviceScope;
 			}
+			if (enabled_device_extension_names.has(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)) {
+				descriptor_indexing_capabilities.sampled_image_non_uniform_indexing = descriptor_indexing_features.shaderSampledImageArrayNonUniformIndexing;
+				descriptor_indexing_capabilities.storage_buffer_non_uniform_indexing = descriptor_indexing_features.shaderStorageBufferArrayNonUniformIndexing;
+				descriptor_indexing_capabilities.storage_image_non_uniform_indexing = descriptor_indexing_features.shaderStorageImageArrayNonUniformIndexing;
+				descriptor_indexing_capabilities.runtime_descriptor_array = descriptor_indexing_features.runtimeDescriptorArray;
+				descriptor_indexing_capabilities.partially_bound = descriptor_indexing_features.descriptorBindingPartiallyBound;
+			}
+			// Below 1.2 the only route is the KHR extension, which has its own entry points.
+			draw_indirect_count_support = enabled_device_extension_names.has(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+			draw_indirect_count_is_core = false;
 		}
 
 		if (enabled_device_extension_names.has(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME)) {
@@ -1108,6 +1131,17 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 
 		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
 			ray_query_support = ray_query_features.rayQuery;
+		}
+
+		if (enabled_device_extension_names.has(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)) {
+			// Three separate things have to hold: the atomics feature, the 64-bit integer type in
+			// shaders to express them, and a storage image format that actually accepts them. A device
+			// can report the first two while R64_UINT is unusable, which would make the capability a
+			// promise we cannot keep.
+			VkFormatProperties r64_properties = {};
+			vkGetPhysicalDeviceFormatProperties(physical_device, RD_TO_VK_FORMAT[DATA_FORMAT_R64_UINT], &r64_properties);
+			const bool r64_atomics_usable = (r64_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT) != 0;
+			image_atomic_int64_support = image_atomic_int64_features.shaderImageInt64Atomics && physical_device_features.shaderInt64 && r64_atomics_usable;
 		}
 	}
 
@@ -1352,29 +1386,13 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 	}
 
 	void *create_info_next = nullptr;
+	// ShaderFloat16Int8, BufferDeviceAddress and VulkanMemoryModel are all folded into
+	// VkPhysicalDeviceVulkan12Features, and the spec forbids having both in the same chain.
+	// They are therefore only added on the pre-1.2 path, further down.
 	VkPhysicalDeviceShaderFloat16Int8FeaturesKHR shader_features = {};
-	shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR;
-	shader_features.pNext = create_info_next;
-	shader_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
-	shader_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
-	create_info_next = &shader_features;
-
 	VkPhysicalDeviceBufferDeviceAddressFeaturesKHR buffer_device_address_features = {};
-	if (buffer_device_address_support) {
-		buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
-		buffer_device_address_features.pNext = create_info_next;
-		buffer_device_address_features.bufferDeviceAddress = buffer_device_address_support;
-		create_info_next = &buffer_device_address_features;
-	}
-
 	VkPhysicalDeviceVulkanMemoryModelFeaturesKHR vulkan_memory_model_features = {};
-	if (vulkan_memory_model_support && vulkan_memory_model_device_scope_support) {
-		vulkan_memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR;
-		vulkan_memory_model_features.pNext = create_info_next;
-		vulkan_memory_model_features.vulkanMemoryModel = vulkan_memory_model_support;
-		vulkan_memory_model_features.vulkanMemoryModelDeviceScope = vulkan_memory_model_device_scope_support;
-		create_info_next = &vulkan_memory_model_features;
-	}
+	VkPhysicalDeviceDescriptorIndexingFeatures descriptor_indexing_features = {};
 
 	VkPhysicalDeviceFragmentShadingRateFeaturesKHR fsr_features = {};
 	if (fsr_capabilities.pipeline_supported || fsr_capabilities.primitive_supported || fsr_capabilities.attachment_supported) {
@@ -1464,11 +1482,35 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &ray_query_features;
 	}
 
+	VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT image_atomic_int64_features = {};
+	if (image_atomic_int64_support) {
+		image_atomic_int64_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT;
+		image_atomic_int64_features.pNext = create_info_next;
+		image_atomic_int64_features.shaderImageInt64Atomics = image_atomic_int64_support;
+		create_info_next = &image_atomic_int64_features;
+	}
+
 	VkPhysicalDeviceVulkan11Features vulkan_1_1_features = {};
+	VkPhysicalDeviceVulkan12Features vulkan_1_2_features = {};
 	VkPhysicalDevice16BitStorageFeaturesKHR storage_features = {};
 	VkPhysicalDeviceMultiviewFeatures multiview_features = {};
 	const bool enable_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 	if (enable_1_2_features) {
+		vulkan_1_2_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+		vulkan_1_2_features.pNext = create_info_next;
+		vulkan_1_2_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
+		vulkan_1_2_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
+		vulkan_1_2_features.bufferDeviceAddress = buffer_device_address_support;
+		vulkan_1_2_features.vulkanMemoryModel = vulkan_memory_model_support && vulkan_memory_model_device_scope_support;
+		vulkan_1_2_features.vulkanMemoryModelDeviceScope = vulkan_memory_model_support && vulkan_memory_model_device_scope_support;
+		vulkan_1_2_features.drawIndirectCount = draw_indirect_count_support;
+		vulkan_1_2_features.shaderSampledImageArrayNonUniformIndexing = descriptor_indexing_capabilities.sampled_image_non_uniform_indexing;
+		vulkan_1_2_features.shaderStorageBufferArrayNonUniformIndexing = descriptor_indexing_capabilities.storage_buffer_non_uniform_indexing;
+		vulkan_1_2_features.shaderStorageImageArrayNonUniformIndexing = descriptor_indexing_capabilities.storage_image_non_uniform_indexing;
+		vulkan_1_2_features.runtimeDescriptorArray = descriptor_indexing_capabilities.runtime_descriptor_array;
+		vulkan_1_2_features.descriptorBindingPartiallyBound = descriptor_indexing_capabilities.partially_bound;
+		create_info_next = &vulkan_1_2_features;
+
 		// In Vulkan 1.2 and newer we use a newer struct to enable various features.
 		vulkan_1_1_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
 		vulkan_1_1_features.pNext = create_info_next;
@@ -1487,6 +1529,38 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		create_info_next = &vulkan_1_1_features;
 	} else {
 		// On Vulkan 1.0 and 1.1 we use our older structs to initialize these features.
+		shader_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR;
+		shader_features.pNext = create_info_next;
+		shader_features.shaderFloat16 = shader_capabilities.shader_float16_is_supported;
+		shader_features.shaderInt8 = shader_capabilities.shader_int8_is_supported;
+		create_info_next = &shader_features;
+
+		if (buffer_device_address_support) {
+			buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+			buffer_device_address_features.pNext = create_info_next;
+			buffer_device_address_features.bufferDeviceAddress = buffer_device_address_support;
+			create_info_next = &buffer_device_address_features;
+		}
+
+		if (vulkan_memory_model_support && vulkan_memory_model_device_scope_support) {
+			vulkan_memory_model_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR;
+			vulkan_memory_model_features.pNext = create_info_next;
+			vulkan_memory_model_features.vulkanMemoryModel = vulkan_memory_model_support;
+			vulkan_memory_model_features.vulkanMemoryModelDeviceScope = vulkan_memory_model_device_scope_support;
+			create_info_next = &vulkan_memory_model_features;
+		}
+
+		if (descriptor_indexing_capabilities.is_supported()) {
+			descriptor_indexing_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+			descriptor_indexing_features.pNext = create_info_next;
+			descriptor_indexing_features.shaderSampledImageArrayNonUniformIndexing = descriptor_indexing_capabilities.sampled_image_non_uniform_indexing;
+			descriptor_indexing_features.shaderStorageBufferArrayNonUniformIndexing = descriptor_indexing_capabilities.storage_buffer_non_uniform_indexing;
+			descriptor_indexing_features.shaderStorageImageArrayNonUniformIndexing = descriptor_indexing_capabilities.storage_image_non_uniform_indexing;
+			descriptor_indexing_features.runtimeDescriptorArray = descriptor_indexing_capabilities.runtime_descriptor_array;
+			descriptor_indexing_features.descriptorBindingPartiallyBound = descriptor_indexing_capabilities.partially_bound;
+			create_info_next = &descriptor_indexing_features;
+		}
+
 		storage_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES_KHR;
 		storage_features.pNext = create_info_next;
 		storage_features.storageBuffer16BitAccess = storage_buffer_capabilities.storage_buffer_16_bit_access_is_supported;
@@ -5796,10 +5870,15 @@ void RenderingDeviceDriverVulkan::command_render_draw_indexed_indirect(CommandBu
 }
 
 void RenderingDeviceDriverVulkan::command_render_draw_indexed_indirect_count(CommandBufferID p_cmd_buffer, BufferID p_indirect_buffer, uint64_t p_offset, BufferID p_count_buffer, uint64_t p_count_buffer_offset, uint32_t p_max_draw_count, uint32_t p_stride) {
+	ERR_FAIL_COND_MSG(!draw_indirect_count_support, "Indirect draws with a GPU-provided count are not supported by this device. Check SUPPORTS_DRAW_INDIRECT_COUNT before calling.");
 	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
 	const BufferInfo *indirect_buf_info = (const BufferInfo *)p_indirect_buffer.id;
 	const BufferInfo *count_buf_info = (const BufferInfo *)p_count_buffer.id;
-	vkCmdDrawIndexedIndirectCount(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	if (draw_indirect_count_is_core) {
+		vkCmdDrawIndexedIndirectCount(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	} else {
+		vkCmdDrawIndexedIndirectCountKHR(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	}
 }
 
 void RenderingDeviceDriverVulkan::command_render_draw_indirect(CommandBufferID p_cmd_buffer, BufferID p_indirect_buffer, uint64_t p_offset, uint32_t p_draw_count, uint32_t p_stride) {
@@ -5809,10 +5888,15 @@ void RenderingDeviceDriverVulkan::command_render_draw_indirect(CommandBufferID p
 }
 
 void RenderingDeviceDriverVulkan::command_render_draw_indirect_count(CommandBufferID p_cmd_buffer, BufferID p_indirect_buffer, uint64_t p_offset, BufferID p_count_buffer, uint64_t p_count_buffer_offset, uint32_t p_max_draw_count, uint32_t p_stride) {
+	ERR_FAIL_COND_MSG(!draw_indirect_count_support, "Indirect draws with a GPU-provided count are not supported by this device. Check SUPPORTS_DRAW_INDIRECT_COUNT before calling.");
 	const CommandBufferInfo *command_buffer = (const CommandBufferInfo *)p_cmd_buffer.id;
 	const BufferInfo *indirect_buf_info = (const BufferInfo *)p_indirect_buffer.id;
 	const BufferInfo *count_buf_info = (const BufferInfo *)p_count_buffer.id;
-	vkCmdDrawIndirectCount(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	if (draw_indirect_count_is_core) {
+		vkCmdDrawIndirectCount(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	} else {
+		vkCmdDrawIndirectCountKHR(command_buffer->vk_command_buffer, indirect_buf_info->vk_buffer, p_offset, count_buf_info->vk_buffer, p_count_buffer_offset, p_max_draw_count, p_stride);
+	}
 }
 
 void RenderingDeviceDriverVulkan::command_render_bind_vertex_buffers(CommandBufferID p_cmd_buffer, uint32_t p_binding_count, const BufferID *p_buffers, const uint64_t *p_offsets, uint64_t p_dynamic_offsets) {
@@ -7286,6 +7370,10 @@ uint64_t RenderingDeviceDriverVulkan::get_resource_native_handle(DriverResource 
 			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
 			return (uint64_t)tex_info->vk_view_create_info.format;
 		}
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_driver_id.id;
+			return (uint64_t)cmd_buf_info->vk_command_buffer;
+		}
 		case DRIVER_RESOURCE_SAMPLER:
 		case DRIVER_RESOURCE_UNIFORM_SET:
 		case DRIVER_RESOURCE_BUFFER:
@@ -7366,6 +7454,8 @@ uint64_t RenderingDeviceDriverVulkan::limit_get(Limit p_limit) {
 			return limits.maxPushConstantsSize;
 		case LIMIT_MAX_UNIFORM_BUFFER_SIZE:
 			return limits.maxUniformBufferRange;
+		case LIMIT_MAX_STORAGE_BUFFER_SIZE:
+			return limits.maxStorageBufferRange;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTE_OFFSET:
 			return limits.maxVertexInputAttributeOffset;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTES:
@@ -7446,6 +7536,12 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return buffer_device_address_support;
+		case SUPPORTS_DRAW_INDIRECT_COUNT:
+			return draw_indirect_count_support;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			return image_atomic_int64_support;
+		case SUPPORTS_DESCRIPTOR_INDEXING:
+			return descriptor_indexing_capabilities.is_supported();
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 #if (defined(MACOS_ENABLED) || defined(APPLE_EMBEDDED_ENABLED))
 			// MoltenVK has previously had issues with 32-bit atomics on images.

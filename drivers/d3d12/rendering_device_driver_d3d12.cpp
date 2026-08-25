@@ -5779,6 +5779,10 @@ uint64_t RenderingDeviceDriverD3D12::get_resource_native_handle(DriverResource p
 			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
 			return (uint64_t)tex_info->resource;
 		} break;
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_driver_id.id;
+			return (uint64_t)cmd_buf_info->cmd_list.Get();
+		}
 		case DRIVER_RESOURCE_COMPUTE_PIPELINE:
 		case DRIVER_RESOURCE_RENDER_PIPELINE: {
 			return p_driver_id.id;
@@ -5820,6 +5824,11 @@ uint64_t RenderingDeviceDriverD3D12::limit_get(Limit p_limit) {
 			return device_limits.max_srvs_per_shader_stage;
 		case LIMIT_MAX_UNIFORM_BUFFER_SIZE:
 			return 65536;
+		case LIMIT_MAX_STORAGE_BUFFER_SIZE:
+			// D3D12 has no direct equivalent of maxStorageBufferRange. A buffer view is bounded by
+			// D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP texels; for a raw (R32_TYPELESS) view,
+			// which is how storage buffers are addressed, each texel is 4 bytes.
+			return ((uint64_t)1 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP) * 4;
 		case LIMIT_MAX_VIEWPORT_DIMENSIONS_X:
 		case LIMIT_MAX_VIEWPORT_DIMENSIONS_Y:
 			return 16384; // Based on max. texture size. Maybe not correct.
@@ -5891,8 +5900,25 @@ bool RenderingDeviceDriverD3D12::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return true;
+		case SUPPORTS_DESCRIPTOR_INDEXING:
+			// Not a hardware question. The SPIR-V to DXIL translation has no handling for the
+			// non-uniform qualifier, and nir_to_dxil is pinned to REQUIRED_SHADER_MODEL (6.2), so no
+			// shader carrying it can be produced regardless of the resource binding tier. Gating on
+			// shader_capabilities.shader_model would report the device's maximum rather than what we
+			// compile against, which is a false positive on any recent GPU.
+			return false;
+		case SUPPORTS_DRAW_INDIRECT_COUNT:
+			// ExecuteIndirect takes an optional count buffer, so this is always available.
+			return true;
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 			return true;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			// Blocked on two things unrelated to the hardware. Shaders are compiled against a fixed
+			// Shader Model 6.2 (RenderingShaderContainerD3D12::REQUIRED_SHADER_MODEL) while 64-bit
+			// typed atomics need 6.6, and DATA_FORMAT_R64_UINT has no DXGI mapping so the storage
+			// image cannot be created either. Until both land this stays false, whatever
+			// OPTIONS9.AtomicInt64OnTypedResourceSupported and OPTIONS1.Int64ShaderOps report.
+			return false;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return false;
 		case SUPPORTS_POINT_SIZE:

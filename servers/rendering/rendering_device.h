@@ -1508,6 +1508,9 @@ private:
 
 	void _draw_list_start(const Rect2i &p_viewport);
 	void _draw_list_end(Rect2i *r_last_viewport = nullptr);
+	// Shared by draw_list_draw_indirect() and draw_list_draw_indirect_count(); a null p_count_buffer
+	// selects the plain indirect path where the draw count comes from the CPU.
+	void _draw_list_draw_indirect_impl(DrawListID p_list, bool p_use_indices, RID p_buffer, uint32_t p_offset, RID p_count_buffer, uint32_t p_count_buffer_offset, uint32_t p_draw_count, uint32_t p_stride);
 
 public:
 	enum DrawFlags {
@@ -1561,6 +1564,10 @@ public:
 
 	void draw_list_draw(DrawListID p_list, bool p_use_indices, uint32_t p_instances = 1, uint32_t p_procedural_vertices = 0);
 	void draw_list_draw_indirect(DrawListID p_list, bool p_use_indices, RID p_buffer, uint32_t p_offset = 0, uint32_t p_draw_count = 1, uint32_t p_stride = 0);
+	// Takes the draw count from p_count_buffer on the GPU, capped to p_max_draw_count. Requires the
+	// SUPPORTS_DRAW_INDIRECT_COUNT feature; check has_feature() first and fall back to
+	// draw_list_draw_indirect() with a conservative count when it's unavailable.
+	void draw_list_draw_indirect_count(DrawListID p_list, bool p_use_indices, RID p_buffer, uint32_t p_offset, RID p_count_buffer, uint32_t p_count_buffer_offset = 0, uint32_t p_max_draw_count = 1, uint32_t p_stride = 0);
 
 	void draw_list_set_viewport(DrawListID p_list, const Rect2i &p_rect);
 	void draw_list_enable_scissor(DrawListID p_list, const Rect2 &p_rect);

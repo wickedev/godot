@@ -391,6 +391,22 @@
 				Submits [param draw_list] for rendering on the GPU with the given parameters stored in the [param buffer] at [param offset]. Parameters being integers: vertex count, instance count, first vertex, first instance. And when using indices: index count, instance count, first index, vertex offset, first instance. Buffer must have been created with [constant STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT] flag.
 			</description>
 		</method>
+		<method name="draw_list_draw_indirect_count">
+			<return type="void" />
+			<param index="0" name="draw_list" type="int" />
+			<param index="1" name="use_indices" type="bool" />
+			<param index="2" name="buffer" type="RID" />
+			<param index="3" name="offset" type="int" />
+			<param index="4" name="count_buffer" type="RID" />
+			<param index="5" name="count_buffer_offset" type="int" default="0" />
+			<param index="6" name="max_draw_count" type="int" default="1" />
+			<param index="7" name="stride" type="int" default="0" />
+			<description>
+				Same as [method draw_list_draw_indirect], except the number of draws is read by the GPU from [param count_buffer] at [param count_buffer_offset] instead of being supplied by the CPU. The value read is a single 32-bit unsigned integer and is clamped to [param max_draw_count]. This allows a compute shader to decide how much to draw without a readback to the CPU, which is the basis of GPU-driven culling.
+				Both [param buffer] and [param count_buffer] must have been created with the [constant STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT] flag, and [param count_buffer_offset] must be a multiple of 4.
+				[b]Note:[/b] You must check that the GPU supports this functionality by calling [method has_feature] with [constant SUPPORTS_DRAW_INDIRECT_COUNT] as a parameter. When it is unsupported, fall back to [method draw_list_draw_indirect] with a conservative draw count.
+			</description>
+		</method>
 		<method name="draw_list_enable_scissor">
 			<return type="void" />
 			<param index="0" name="draw_list" type="int" />
@@ -1442,6 +1458,11 @@
 		<constant name="DRIVER_RESOURCE_RENDER_PIPELINE" value="12" enum="DriverResource">
 			- Vulkan: [code]VkPipeline[/code].
 			- Metal: [code]MTLRenderPipelineState[/code].
+		</constant>
+		<constant name="DRIVER_RESOURCE_COMMAND_BUFFER" value="13" enum="DriverResource">
+			Command buffer object ([code]VkCommandBuffer[/code] on Vulkan, [code]ID3D12GraphicsCommandList[/code] on Direct3D 12). Returns [code]0[/code] on Metal, which exposes no native handle for it.
+			The [param rid] and [param index] arguments are ignored. The value returned is the [b]initial[/b] primary command buffer of the current frame slot, not whichever buffer is being recorded into at the moment of the call: graph scheduling and driver workarounds may end that buffer and continue on further primary buffers of the rendering graph's own, with ordering preserved by semaphores. Those additional primary buffers are not exposed here, nor are the separately pooled secondary ones, so that a frame-level caller is given one stable handle rather than whichever buffer the graph is momentarily recording into.
+			The handle is only valid within the frame's recording lifetime and [b]must not be cached[/b] across frames or used outside it.
 		</constant>
 		<constant name="DRIVER_RESOURCE_VULKAN_DEVICE" value="0" enum="DriverResource" deprecated="Use [constant DRIVER_RESOURCE_LOGICAL_DEVICE] instead.">
 		</constant>
@@ -2850,6 +2871,18 @@
 		<constant name="SUPPORTS_RASTERIZATION_RATE_MAP" value="14" enum="Features">
 			Support for rasterization rate maps. The current implementation targets Metal on Apple platforms. This allows for foveated rendering, which is used by the visionOS XR module.
 		</constant>
+		<constant name="SUPPORTS_DRAW_INDIRECT_COUNT" value="16" enum="Features">
+			Support for indirect draws that read their draw count from a GPU buffer, via [method draw_list_draw_indirect_count].
+			[b]Note:[/b] This is not supported on Metal. On Vulkan it comes from the core 1.2 feature of the same name, falling back to the [code]VK_KHR_draw_indirect_count[/code] extension on older devices; MoltenVK provides neither. Always check this feature before calling [method draw_list_draw_indirect_count].
+		</constant>
+		<constant name="SUPPORTS_IMAGE_ATOMIC_64_BIT" value="17" enum="Features">
+			Support for 64-bit image atomic operations. This allows a shader to pack a depth value and an identifier into a single [constant DATA_FORMAT_R64_UINT] texel and resolve visibility with one atomic operation.
+			[b]Note:[/b] This reports whether the operations are actually usable, not merely whether the hardware advertises them. It is currently only available on Vulkan, and only when [constant DATA_FORMAT_R64_UINT] can be used as a storage image with atomics. Metal and Direct3D 12 have no 64-bit single-channel texture format, so they report [code]false[/code] regardless of hardware.
+		</constant>
+		<constant name="SUPPORTS_DESCRIPTOR_INDEXING" value="18" enum="Features">
+			Support for indexing a descriptor array with a value that varies per shader invocation. A visibility buffer resolve needs this, because the material it looks up is chosen per pixel rather than per draw.
+			[b]Note:[/b] This reports whether such a shader can actually be built, not what the hardware allows. Direct3D 12 reports [code]false[/code]: its shader translation has no handling for the non-uniform qualifier and targets a fixed Shader Model 6.2.
+		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
 		</constant>
@@ -2915,6 +2948,9 @@
 		</constant>
 		<constant name="LIMIT_MAX_UNIFORM_BUFFER_SIZE" value="21" enum="Limit">
 			Maximum size of a uniform buffer.
+		</constant>
+		<constant name="LIMIT_MAX_STORAGE_BUFFER_SIZE" value="49" enum="Limit">
+			Maximum size of a storage buffer, in bytes, as seen by a shader through a single binding. A buffer may be allocated larger than this, but no single binding can expose more than this many bytes to a shader.
 		</constant>
 		<constant name="LIMIT_MAX_VERTEX_INPUT_ATTRIBUTE_OFFSET" value="22" enum="Limit">
 			Maximum vertex input attribute offset.

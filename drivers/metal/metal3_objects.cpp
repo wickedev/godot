@@ -1308,7 +1308,9 @@ void MDCommandBuffer::render_draw_indexed_indirect(RDD::BufferID p_indirect_buff
 }
 
 void MDCommandBuffer::render_draw_indexed_indirect_count(RDD::BufferID p_indirect_buffer, uint64_t p_offset, RDD::BufferID p_count_buffer, uint64_t p_count_buffer_offset, uint32_t p_max_draw_count, uint32_t p_stride) {
-	ERR_FAIL_MSG("not implemented");
+	// Needs MTLIndirectCommandBuffer to consume a GPU-provided draw count; not implemented yet.
+	// SUPPORTS_DRAW_INDIRECT_COUNT reports false on Metal, so callers should never reach this.
+	ERR_FAIL_MSG("Indirect draws with a GPU-provided count are not implemented on Metal. Check SUPPORTS_DRAW_INDIRECT_COUNT before calling.");
 }
 
 void MDCommandBuffer::render_draw_indirect(RDD::BufferID p_indirect_buffer, uint64_t p_offset, uint32_t p_draw_count, uint32_t p_stride) {
@@ -1329,7 +1331,9 @@ void MDCommandBuffer::render_draw_indirect(RDD::BufferID p_indirect_buffer, uint
 }
 
 void MDCommandBuffer::render_draw_indirect_count(RDD::BufferID p_indirect_buffer, uint64_t p_offset, RDD::BufferID p_count_buffer, uint64_t p_count_buffer_offset, uint32_t p_max_draw_count, uint32_t p_stride) {
-	ERR_FAIL_MSG("not implemented");
+	// Needs MTLIndirectCommandBuffer to consume a GPU-provided draw count; not implemented yet.
+	// SUPPORTS_DRAW_INDIRECT_COUNT reports false on Metal, so callers should never reach this.
+	ERR_FAIL_MSG("Indirect draws with a GPU-provided count are not implemented on Metal. Check SUPPORTS_DRAW_INDIRECT_COUNT before calling.");
 }
 
 void MDCommandBuffer::render_end_pass() {

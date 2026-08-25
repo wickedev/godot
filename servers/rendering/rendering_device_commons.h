@@ -955,6 +955,9 @@ public:
 		DRIVER_RESOURCE_BUFFER,
 		DRIVER_RESOURCE_COMPUTE_PIPELINE,
 		DRIVER_RESOURCE_RENDER_PIPELINE,
+		// The backend's command buffer object, needed to emit GPU profiler zones against the
+		// same command stream the renderer is recording into.
+		DRIVER_RESOURCE_COMMAND_BUFFER,
 #ifndef DISABLE_DEPRECATED
 		DRIVER_RESOURCE_VULKAN_DEVICE = DRIVER_RESOURCE_LOGICAL_DEVICE,
 		DRIVER_RESOURCE_VULKAN_PHYSICAL_DEVICE = DRIVER_RESOURCE_PHYSICAL_DEVICE,
@@ -1018,6 +1021,10 @@ public:
 		LIMIT_METALFX_TEMPORAL_SCALER_MIN_SCALE = 46,
 		LIMIT_METALFX_TEMPORAL_SCALER_MAX_SCALE,
 		LIMIT_MAX_SHADER_VARYINGS,
+		// Largest range of a single storage buffer that a shader may access. Distinct from the
+		// buffer's allocation size: a buffer may be larger than this, but no single binding can
+		// expose more than this many bytes to a shader.
+		LIMIT_MAX_STORAGE_BUFFER_SIZE,
 	};
 
 	enum Features {
@@ -1038,6 +1045,15 @@ public:
 		SUPPORTS_HDR_OUTPUT,
 		SUPPORTS_RASTERIZATION_RATE_MAP,
 		SUPPORTS_GPU_MAPPABLE_BUFFER,
+		// Indirect draws that read their draw count from a GPU buffer, rather than taking it from
+		// the CPU at record time. Required to submit a GPU culling result without a readback.
+		SUPPORTS_DRAW_INDIRECT_COUNT,
+		// 64-bit atomic operations on storage images. Required to build a visibility buffer that
+		// packs depth and an identifier into a single R64_UINT texel resolved with one atomic min/max.
+		SUPPORTS_IMAGE_ATOMIC_64_BIT,
+		// Descriptor arrays may be indexed with a value that varies per invocation. A visibility
+		// buffer resolve needs this because the material index it looks up is per-pixel.
+		SUPPORTS_DESCRIPTOR_INDEXING,
 	};
 
 	enum SubgroupOperations {

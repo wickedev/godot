@@ -160,6 +160,26 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 	StorageBufferCapabilities storage_buffer_capabilities;
 	RenderingShaderContainerFormatVulkan shader_container_format;
 	bool buffer_device_address_support = false;
+	bool draw_indirect_count_support = false;
+	// True when drawIndirectCount comes from Vulkan 1.2 core rather than VK_KHR_draw_indirect_count.
+	// The two have separate entry points and only the enabled route is guaranteed to be loaded.
+	bool draw_indirect_count_is_core = false;
+	bool image_atomic_int64_support = false;
+
+	// Minimum set needed to index material and geometry descriptor arrays with a value that
+	// varies per invocation, which a visibility buffer resolve does by construction.
+	struct DescriptorIndexingCapabilities {
+		bool sampled_image_non_uniform_indexing = false;
+		bool storage_buffer_non_uniform_indexing = false;
+		bool storage_image_non_uniform_indexing = false;
+		bool runtime_descriptor_array = false;
+		bool partially_bound = false;
+
+		bool is_supported() const {
+			return sampled_image_non_uniform_indexing && storage_buffer_non_uniform_indexing && runtime_descriptor_array;
+		}
+	};
+	DescriptorIndexingCapabilities descriptor_indexing_capabilities;
 	bool vulkan_memory_model_support = false;
 	bool vulkan_memory_model_device_scope_support = false;
 	AccelerationStructureCapabilities acceleration_structure_capabilities;
