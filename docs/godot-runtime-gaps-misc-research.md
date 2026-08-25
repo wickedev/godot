@@ -426,7 +426,8 @@ class RendererSceneOcclusionCull {
 
 번들: `thirdparty/libbacktrace/`.
 
-⇒ **"크래시 나면 심볼 붙은 스택이 stderr에 찍힌다"까지는 이미 된다.** 로드 주소를 함께 찍는 건 ASLR 하에서 사후 심볼화를 가능케 하는 좋은 설계다. **없는 건 "그 출력을 서버로 모으는 것"뿐이다.**
+⇒ ~~**"크래시 나면 심볼 붙은 스택이 stderr에 찍힌다"까지는 이미 된다.** 로드 주소를 함께 찍는 건 ASLR 하에서 사후 심볼화를 가능케 하는 좋은 설계다. **없는 건 "그 출력을 서버로 모으는 것"뿐이다.**~~
+⛔ **[2026-08-25 정정, C3 실측 — 빌드 타깃 조건 누락]** 위 결론은 **에디터/`template_debug` 한정**이다. 크래시 핸들러 4종 전부가 `DEBUG_ENABLED` 게이트 안에 있고(`crash_handler_linuxbsd.cpp:42-44` · `crash_handler_macos.mm:45-46` · `crash_handler_windows.h:36-37`), `SConstruct:535,551-554`가 `DEBUG_ENABLED`를 editor/template_debug에만 정의한다. **즉 `template_release` = 플레이어 출하 빌드에는 크래시 핸들러가 아예 없다 — 출하 빌드의 크래시 진단 수단은 0이다.** 함의: ① §9의 "Sentry를 §1보다 먼저" 판정은 더 강해진다 ② Sentry init 실패 시 폴백이 없으므로 게임측 배선에서 초기화 실패를 반드시 가시화해야 한다 ③ 출하 빌드엔 Godot 핸들러가 없어 sentry-native가 시그널 핸들러를 단독 소유한다(충돌 없음 — "코어 수정 0" 판정 유지). 상세: `docs/l9-sentry-integration.md` §1(c3/l9-sentry 브랜치).
 
 ### (c) 경계
 | 목표 | 코어 수정 | 방법 |
