@@ -36,7 +36,7 @@
 
 - 대역폭(1080p): 4+8+4+8+4+4+4 = **36 B/px ≈ 75 MB**, 4K ≈ 299 MB — v1.2와 바이트 동일, 슬롯만 8→7. 지오 노멀 유지 근거(depth-미분 재구성의 에지 노이즈 회피)는 불변.
 - depth-motion(3채널째)은 **불요 확정** — 재투영 검증은 2D 모션 + 이전 프레임 `gb_depth` 비교로 성립.
-- shading-model-ID: 필요 시점(라이트맵/SH deferred 편입)에 **신규 R8_UINT**로 추가. objectid 비트 오염 금지. v1 미포함.
+- shading-model-ID: 필요 시점(라이트맵/SH deferred 편입 — [deferred 스코핑](./deferred-transition-impact-scoping.md) §2가 그 시점을 확정)에 **8번째 슬롯의 `gb_shading_control` RG32_UINT**(.x = ID 8b|라이트맵 슬롯 8b|플래그 16b, .y = UV2 16:16)로 추가한다 — ~~신규 R8_UINT~~ 는 UV2 동반 요구를 수용 못 해 스코핑 v1.1에서 정정(전망 주석의 텍스트 정정, Tier-1 표 불변 — 스키마 재합의 불요). `gb_objectid` 상위 비트 오염 금지. v1은 미포함.
 
 ## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.3 — 24-bit)
 
