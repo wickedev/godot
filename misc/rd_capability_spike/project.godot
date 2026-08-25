@@ -1,0 +1,22 @@
+; Minimal project for the Wave 0 RD capability spike (docs/rd-capability-spike-report.md).
+; Run with a real rendering driver -- `--headless` uses the dummy driver and has no
+; RenderingDevice, so the measurements below cannot run there.
+;
+;   bin/godot.macos.editor.arm64 --path misc/rd_capability_spike
+
+config_version=5
+
+[application]
+
+config/name="RD Capability Spike"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7")
+
+[rendering]
+
+renderer/rendering_method="forward_plus"
+
+[display]
+
+# Frame-time probes are meaningless under vsync: every frame reads 16.67 ms.
+window/vsync/vsync_mode=0
