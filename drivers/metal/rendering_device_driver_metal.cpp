@@ -2739,7 +2739,9 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return device_properties->features.supports_gpu_address;
 		case SUPPORTS_DESCRIPTOR_INDEXING:
-			// Argument buffers are indexed with arbitrary per-invocation values by design.
+			// Tier 2 argument buffers can be indexed with arbitrary per-invocation values without a
+			// qualifier. Confirmed end to end on an Apple M2 Pro: a compute shader using an unsized
+			// sampler array and nonuniformEXT compiles through to a usable backend shader.
 			return device_properties->features.argument_buffers_tier >= MTL::ArgumentBuffersTier2;
 		case SUPPORTS_DRAW_INDIRECT_COUNT:
 			// Metal has no direct equivalent of vkCmdDrawIndirectCount. Consuming a GPU-provided

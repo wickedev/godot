@@ -754,7 +754,13 @@ Error RenderingContextDriverVulkan::_initialize_instance() {
 #endif
 
 	// Physical device.
-	if (enabled_instance_extension_names.has(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
+	// From Vulkan 1.1 these are core entry points. An implementation is not obliged to keep
+	// advertising the promoted extension, and gating the load on its name would leave the
+	// pointers null there. That is not a local failure: the whole feature query in
+	// RenderingDeviceDriverVulkan::_check_device_capabilities() is skipped when
+	// GetPhysicalDeviceFeatures2 is null, so every capability behind it silently reads as
+	// unsupported and the required-feature check is never reached.
+	if (instance_api_version >= VK_API_VERSION_1_1 || enabled_instance_extension_names.has(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)) {
 		functions.GetPhysicalDeviceFeatures2 = PFN_vkGetPhysicalDeviceFeatures2(vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceFeatures2"));
 		functions.GetPhysicalDeviceProperties2 = PFN_vkGetPhysicalDeviceProperties2(vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceProperties2"));
 

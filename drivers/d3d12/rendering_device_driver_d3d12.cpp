@@ -5901,8 +5901,12 @@ bool RenderingDeviceDriverD3D12::has_feature(Features p_feature) {
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return true;
 		case SUPPORTS_DESCRIPTOR_INDEXING:
-			// Dynamic resource indexing is available from Shader Model 6.6.
-			return shader_capabilities.shader_model >= D3D_SHADER_MODEL_6_6;
+			// Not a hardware question. The SPIR-V to DXIL translation has no handling for the
+			// non-uniform qualifier, and nir_to_dxil is pinned to REQUIRED_SHADER_MODEL (6.2), so no
+			// shader carrying it can be produced regardless of the resource binding tier. Gating on
+			// shader_capabilities.shader_model would report the device's maximum rather than what we
+			// compile against, which is a false positive on any recent GPU.
+			return false;
 		case SUPPORTS_DRAW_INDIRECT_COUNT:
 			// ExecuteIndirect takes an optional count buffer, so this is always available.
 			return true;

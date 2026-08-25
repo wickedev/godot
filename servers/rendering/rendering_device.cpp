@@ -8825,6 +8825,14 @@ uint64_t RenderingDevice::get_driver_resource(DriverResource p_resource, RID p_r
 		case DRIVER_RESOURCE_COMMAND_QUEUE:
 			driver_id = main_queue.id;
 			break;
+		case DRIVER_RESOURCE_COMMAND_BUFFER:
+			// The current frame's primary command buffer, which is what the render graph records
+			// into and submits. The graph may split work across secondary buffers, and those are
+			// deliberately not reachable here: a caller asking for frame-level scope would otherwise
+			// receive whichever buffer happened to be current. Only meaningful between frame begin
+			// and end.
+			driver_id = frames[frame].command_buffer.id;
+			break;
 		case DRIVER_RESOURCE_QUEUE_FAMILY:
 			driver_id = main_queue_family.id;
 			break;
