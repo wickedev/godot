@@ -1,0 +1,571 @@
+name: 🛰️ Release Templates + Symbol Upload
+on:
+  push:
+    # This fork keeps upstream Godot's tag convention (`4.7.1-stable`); there are no
+    # `v*` tags. Confirmed with the maintainer as the fork's tag policy.
+    tags: ["*-stable"]
+  workflow_dispatch:
+    inputs:
+      sentry-release:
+        description: Sentry release identifier. Defaults to the current commit SHA.
+        required: false
+        type: string
+      upload:
+        description: Upload debug information files to Sentry. Disable for a build-only dry run.
+        required: false
+        default: true
+        type: boolean
+
+# Global Settings
+#
+# Unlike the PR validation workflows, this one builds *shippable* export templates and
+# keeps their debug information. `debug_symbols=yes separate_debug_symbols=yes` strips
+# the shipped binary and writes debug info to a sidecar, so players get a normal-sized
+# binary while Sentry still gets a symbolizable stack.
+#
+# This is intentionally NOT folded into linux/windows/macos_builds.yml: those run on
+# every PR, and linux_builds.yml already documents hitting the 14 GB runner limit with
+# debug symbols enabled. Release symbol builds run on release tags only.
+env:
+  SCONS_FLAGS: >-
+    production=yes
+    debug_symbols=yes
+    separate_debug_symbols=yes
+    module_text_server_fb_enabled=yes
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.name }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux template (release)
+            runner: ubuntu-22.04
+            platform: linuxbsd
+            target: template_release
+            cache-name: relsym-linux-template-release
+          - name: Linux template (debug)
+            runner: ubuntu-22.04
+            platform: linuxbsd
+            target: template_debug
+            cache-name: relsym-linux-template-debug
+          - name: Windows template (release)
+            runner: windows-latest
+            platform: windows
+            target: template_release
+            cache-name: relsym-windows-template-release
+          - name: Windows template (debug)
+            runner: windows-latest
+            platform: windows
+            target: template_debug
+            cache-name: relsym-windows-template-debug
+          - name: macOS template (release)
+            runner: macos-26
+            platform: macos
+            target: template_release
+            cache-name: relsym-macos-template-release
+          - name: macOS template (debug)
+            runner: macos-26
+            platform: macos
+            target: template_debug
+            cache-name: relsym-macos-template-debug
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          # sentry-cli derives release/commit association from git history.
+          fetch-depth: 0
+
+      # Runner preparation below mirrors the per-platform PR workflows. The symbols we
+      # upload must come from a binary built with the same feature set as the shipped
+      # one, so these steps have to stay in sync with linux/windows/macos_builds.yml.
+      - name: Setup dependencies (Linux)
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          sudo apt-get update
+          sudo apt-get install libwayland-bin
+
+      - name: Free disk space on runner (Linux)
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          echo "Disk usage before:" && df -h
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk usage after:" && df -h
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: ${{ matrix.cache-name }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download Direct3D 12 SDK components
+        if: matrix.platform == 'windows'
+        shell: sh
+        id: d3d12-sdk
+        run: |
+          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
+            echo "D3D12_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Windows: Direct3D 12 SDK installation failed, building without Direct3D 12 support."
+            echo "D3D12_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Download pre-built ANGLE
+        if: matrix.platform == 'windows' || matrix.platform == 'macos'
+        shell: sh
+        id: angle-sdk
+        run: |
+          if python ./misc/scripts/install_angle.py; then
+            echo "ANGLE_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANGLE SDK installation failed, building without ANGLE support."
+            echo "ANGLE_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download pre-built AccessKit
+        shell: sh
+        id: accesskit-sdk
+        run: |
+          if python ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Vulkan SDK (macOS)
+        if: matrix.platform == 'macos'
+        id: vulkan-sdk
+        run: |
+          if sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "VULKAN_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS: Vulkan SDK installation failed, building without Vulkan support."
+            echo "VULKAN_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Compilation (Linux)
+        if: matrix.platform == 'linuxbsd'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }}
+          platform: linuxbsd
+          target: ${{ matrix.target }}
+
+      - name: Compilation (Windows)
+        if: matrix.platform == 'windows'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: windows
+          target: ${{ matrix.target }}
+
+      # macOS ships a universal binary. `dsymutil` runs per-arch, so both slices must be
+      # built for the dSYM set to cover the shipped binary.
+      - name: Compilation (macOS x86_64)
+        if: matrix.platform == 'macos'
+        uses: ./.github/actions/godot-build
+        with:
+          # Silence warning about Metal not being supported in x86_64 builds using `metal=no`.
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 metal=no vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: macos
+          target: ${{ matrix.target }}
+
+      - name: Compilation (macOS arm64)
+        if: matrix.platform == 'macos'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: macos
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: ${{ matrix.cache-name }}
+        continue-on-error: true
+
+      # Installed before verification: the Windows check reads the PDB's debug id
+      # through it. continue-on-error so an npm outage cannot fail a build-only dry
+      # run; the upload step below fails hard if it is actually needed.
+      - name: Install sentry-cli
+        run: npm install -g @sentry/cli@2
+        shell: bash
+        continue-on-error: true
+
+      # Verification asserts that each shipped binary and its sidecar carry the SAME
+      # debug identifier -- not merely that both files exist. A mismatched pair uploads
+      # cleanly and then fails silently at the first field crash, which is the exact
+      # failure runtime-misc section 7(e) warns about.
+      #
+      # Each step also stages the real products into dist/ and records a checksum line.
+      # bin/ additionally holds bin/build_deps (the ANGLE/AccessKit/D3D12 SDKs), which
+      # must reach neither Sentry nor the published artifact.
+      - name: Verify and stage (Linux)
+        if: matrix.platform == 'linuxbsd'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+          checked=0
+          for bin in bin/godot.linuxbsd.*; do
+            case "$bin" in *.debugsymbols) continue ;; esac
+            file "$bin" | grep -q ELF || continue
+            sym="$bin.debugsymbols"
+            if [ ! -f "$sym" ]; then
+              echo "::error::$bin has no matching .debugsymbols sidecar."
+              exit 1
+            fi
+            bin_id=$(readelf -n "$bin" | awk '/Build ID/ {print $NF}')
+            sym_id=$(readelf -n "$sym" | awk '/Build ID/ {print $NF}')
+            if [ -z "$bin_id" ]; then
+              echo "::error::$bin has no GNU build ID; Sentry cannot match its symbols."
+              exit 1
+            fi
+            if [ "$bin_id" != "$sym_id" ]; then
+              echo "::error::build ID mismatch: $bin=$bin_id vs $sym=$sym_id"
+              exit 1
+            fi
+            cp "$bin" "$sym" dist/
+            echo "OK $(basename "$bin") <-> $(basename "$sym")  debug-id=$bin_id"
+            checked=$((checked + 1))
+          done
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::No Linux binaries verified; the build produced nothing to symbolicate."
+            exit 1
+          fi
+
+      # lipo preserves per-slice Mach-O UUIDs, so a per-arch dSYM stays valid for the
+      # universal binary. Build it here and prove that rather than assume it.
+      - name: Verify and stage (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist
+          prefix="bin/godot.macos.${{ matrix.target }}"
+          arch_bins=()
+          for a in x86_64 arm64; do
+            [ -f "$prefix.$a" ] && arch_bins+=("$prefix.$a")
+          done
+          if [ ${#arch_bins[@]} -lt 2 ]; then
+            echo "::error::Expected both macOS arch slices; found ${#arch_bins[@]}."
+            exit 1
+          fi
+          lipo -create "${arch_bins[@]}" -output "$prefix.universal"
+
+          dsyms=("$prefix".*.dSYM)
+          if [ ${#dsyms[@]} -eq 0 ]; then
+            echo "::error::No .dSYM produced; separate_debug_symbols did not run."
+            exit 1
+          fi
+          dsym_uuids=$(for d in "${dsyms[@]}"; do dwarfdump --uuid "$d"; done | awk '{print $2}' | sort -u)
+
+          while read -r uuid; do
+            [ -n "$uuid" ] || continue
+            if ! grep -qx "$uuid" <<<"$dsym_uuids"; then
+              echo "::error::Universal binary slice UUID $uuid has no matching dSYM."
+              exit 1
+            fi
+            echo "OK slice $uuid covered by a dSYM"
+          done < <(dwarfdump --uuid "$prefix.universal" | awk '{print $2}')
+
+          # The universal binary is the shipped artifact; the dSYMs are its symbols.
+          cp "$prefix.universal" dist/
+          for d in "${dsyms[@]}"; do cp -R "$d" dist/; done
+
+      # MSVC always emits a separate .pdb. Pairing by filename is not sufficient: the
+      # PE's CodeView record carries a GUID+age that must equal the PDB's, and a stale
+      # PDB with the right name uploads to Sentry perfectly happily under its own debug
+      # id. So parse the PE debug directory and compare identifiers directly.
+      - name: Verify and stage (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          function Get-PeCodeView([string]$Path) {
+            $b = [System.IO.File]::ReadAllBytes($Path)
+            $peOff = [BitConverter]::ToInt32($b, 0x3C)
+            if ([BitConverter]::ToUInt32($b, $peOff) -ne 0x00004550) { throw "$Path is not a PE image" }
+            $coff = $peOff + 4
+            $optOff = $coff + 20
+            $magic = [BitConverter]::ToUInt16($b, $optOff)
+            # Data directories start after the optional header: 96 bytes for PE32,
+            # 112 for PE32+ (the extra 16 come from four widened 64-bit fields).
+            $ddOff = if ($magic -eq 0x20b) { $optOff + 112 } elseif ($magic -eq 0x10b) { $optOff + 96 } else { throw "unknown optional header magic $magic" }
+            $dbgRva  = [BitConverter]::ToUInt32($b, $ddOff + 6*8)      # directory 6 = Debug
+            $dbgSize = [BitConverter]::ToUInt32($b, $ddOff + 6*8 + 4)
+            if ($dbgRva -eq 0) { throw "$Path has no debug directory" }
+            # The directory is an array of 28-byte entries; a size that is not a
+            # multiple of 28 means a truncated trailing entry, which would be walked
+            # as though it were whole.
+            if ($dbgSize -eq 0 -or ($dbgSize % 28) -ne 0) { throw "$Path debug directory size $dbgSize is not a whole number of 28-byte entries" }
+
+            # Map the debug directory RVA through the section table to a file offset.
+            $nSections = [BitConverter]::ToUInt16($b, $coff + 2)
+            $optSize   = [BitConverter]::ToUInt16($b, $coff + 16)
+            $secOff    = $optOff + $optSize
+            $dbgFileOff = 0
+            for ($i = 0; $i -lt $nSections; $i++) {
+              $s = $secOff + $i*40
+              $va   = [BitConverter]::ToUInt32($b, $s + 12)
+              $rawSz= [BitConverter]::ToUInt32($b, $s + 16)
+              $raw  = [BitConverter]::ToUInt32($b, $s + 20)
+              # The whole directory, not just its first byte, must lie inside the section.
+              if ($dbgRva -ge $va -and ($dbgRva + $dbgSize) -le ($va + $rawSz)) { $dbgFileOff = $raw + ($dbgRva - $va); break }
+            }
+            if ($dbgFileOff -eq 0) { throw "could not map debug directory of $Path (RVA $dbgRva size $dbgSize is not contained in any section)" }
+            if (($dbgFileOff + $dbgSize) -gt $b.Length) { throw "$Path debug directory runs past end of file" }
+
+            for ($e = 0; $e -lt [int]($dbgSize / 28); $e++) {
+              $ent  = $dbgFileOff + $e*28
+              $type = [BitConverter]::ToUInt32($b, $ent + 12)
+              if ($type -ne 2) { continue }        # 2 = IMAGE_DEBUG_TYPE_CODEVIEW
+              $size = [BitConverter]::ToUInt32($b, $ent + 16)   # SizeOfData
+              $ptr  = [BitConverter]::ToUInt32($b, $ent + 24)   # PointerToRawData
+              # An RSDS record is 4 (sig) + 16 (GUID) + 4 (age) + at least 1 NUL. A
+              # truncated or zero SizeOfData means the entry does not describe a whole
+              # record, and reading past it yields a plausible-looking GUID from
+              # whatever follows in the file.
+              if ($size -lt 25) { throw "$Path CodeView entry has SizeOfData=$size, too small for an RSDS record" }
+              if (($ptr + $size) -gt $b.Length) { throw "$Path CodeView record runs past end of file" }
+              if ([System.Text.Encoding]::ASCII.GetString($b, $ptr, 4) -ne "RSDS") { continue }
+              # Explicit [byte[]] cast: $b[range] returns Object[], which does not bind
+              # the Guid(byte[]) overload. Without the cast PowerShell selects
+              # Guid(string) and throws "Guid should contain 32 digits" on a perfectly
+              # valid PE. A Python mirror of this parse cannot catch that -- it is a
+              # PowerShell overload-resolution defect, not an algorithm defect.
+              $guid = [Guid]::new([byte[]]$b[($ptr+4)..($ptr+19)])
+              $age  = [BitConverter]::ToUInt32($b, $ptr + 20)
+              # Name must be NUL-terminated inside the record, not merely somewhere later.
+              $end  = $ptr + 24
+              $limit = $ptr + $size
+              while ($end -lt $limit -and $b[$end] -ne 0) { $end++ }
+              if ($end -ge $limit) { throw "$Path CodeView PDB name is not NUL-terminated within SizeOfData" }
+              $pdb  = [System.Text.Encoding]::UTF8.GetString($b, $ptr + 24, $end - ($ptr + 24))
+              # Sentry's debug id form: GUID with age appended, uppercase, no dashes.
+              return @{ Id = ($guid.ToString("N").ToUpper() + $age.ToString("X")); Pdb = $pdb; Guid = $guid; Age = $age }
+            }
+            throw "$Path has no CodeView (RSDS) debug entry"
+          }
+
+          # sentry-cli renders a PE/PDB debug id as GUID + age; strip separators, drop
+          # leading zeros from the age field so "...0007" and "...7" compare equal.
+          function _NormaliseDebugId([string]$id) {
+            $flat = ($id -replace '[-{}]', '').ToUpper()
+            if ($flat.Length -le 32) { return $flat }
+            $guidPart = $flat.Substring(0, 32)
+            $agePart = $flat.Substring(32).TrimStart('0')
+            if ($agePart -eq "") { $agePart = "0" }
+            return $guidPart + $agePart
+          }
+
+          function Get-DebugId([string]$f) {
+            $out = & sentry-cli debug-files check $f 2>$null | Out-String
+            $m = [regex]::Match($out, '(?i)\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(-[0-9a-f]+)?)\b')
+            if (-not $m.Success) { return $null }
+            return ($m.Groups[1].Value -replace '-', '').ToUpper()
+          }
+
+          $bins = Get-ChildItem bin/godot.windows.*.exe -ErrorAction SilentlyContinue
+          if (-not $bins) { Write-Output "::error::No .exe produced."; exit 1 }
+          foreach ($b in $bins) {
+            $cv = Get-PeCodeView $b.FullName
+            $pdbPath = [System.IO.Path]::ChangeExtension($b.FullName, ".pdb")
+            if (-not (Test-Path $pdbPath)) {
+              Write-Output "::error::$($b.Name) has no matching .pdb (PE references '$($cv.Pdb)')."
+              exit 1
+            }
+            # The PDB's own GUID+age live in the PDB Info stream. Rather than parse MSF
+            # here, compare against the name the linker recorded and let sentry-cli
+            # report the PDB's debug id for the equality check.
+            $refName = Split-Path $cv.Pdb -Leaf
+            if ($refName -ne (Split-Path $pdbPath -Leaf)) {
+              Write-Output "::error::$($b.Name) references PDB '$refName' but we shipped '$(Split-Path $pdbPath -Leaf)'."
+              exit 1
+            }
+            # Extract both files' debug ids and compare them to each other and to the
+            # GUID parsed out of the PE above. A stale PDB carrying the right filename
+            # fails here; it would not fail on filename pairing alone.
+            $exeId = Get-DebugId $b.FullName
+            $pdbId = Get-DebugId $pdbPath
+            if (-not $exeId -or -not $pdbId) {
+              Write-Output "::error::Could not read debug ids (exe='$exeId' pdb='$pdbId'); is sentry-cli present?"
+              exit 1
+            }
+            # Compare the WHOLE debug id, GUID *and* age. An earlier revision compared
+            # only the 32-hex GUID prefix, which let a rebuilt PDB carrying the same
+            # GUID but a bumped age pass -- exactly the stale-PDB case this step exists
+            # to catch. Ages are normalized because tools render them differently
+            # (sentry-cli emits lowercase hex without padding).
+            $cvId = ($cv.Guid.ToString("N") + $cv.Age.ToString("x")).ToUpper()
+            $exeIdNorm = _NormaliseDebugId $exeId
+            $pdbIdNorm = _NormaliseDebugId $pdbId
+            if ($exeIdNorm -ne $cvId) {
+              Write-Output "::error::$($b.Name): sentry-cli reports $exeIdNorm but its PE CodeView record says $cvId (GUID+age)"
+              exit 1
+            }
+            if ($pdbIdNorm -ne $cvId) {
+              Write-Output "::error::debug id mismatch: $($b.Name) is built against $cvId but the shipped PDB is $pdbIdNorm"
+              exit 1
+            }
+            Write-Output "OK $($b.Name) <-> $refName  codeview=$($cv.Id)"
+            Copy-Item $b.FullName dist/
+            Copy-Item $pdbPath dist/
+          }
+
+          # Runtime dependencies that ship beside the binary. platform/windows/SCsub
+          # copies them to bin/ (or bin/<arch>/ for multiarch builds), so only those two
+          # locations are build output.
+          #
+          # Deliberately NOT recursive: bin/build_deps holds the downloaded Agility and
+          # PIX SDKs, and a recursive copy republished them into dist/, undoing the very
+          # contamination this staging step was introduced to remove. It also picked up
+          # a WinPixEventRuntime.dll from the SDK on builds where use_pix was false.
+          # Only this build's own output locations. Scanning every child directory
+          # meant an unrelated or leftover arch directory could supply a D3D12Core.dll,
+          # satisfy the presence check, and hide that the arch we are actually shipping
+          # has no runtime at all. The arch comes from the binary we just verified,
+          # e.g. godot.windows.template_release.x86_64.console.exe -> x86_64.
+          $binRoot = (Resolve-Path bin).Path
+          $arch = ($bins[0].Name -split '\.')[3]
+          if (-not $arch) {
+            Write-Output "::error::Could not determine architecture from $($bins[0].Name)."
+            exit 1
+          }
+          $searchDirs = @($binRoot)
+          $archDir = Join-Path $binRoot $arch
+          if (Test-Path $archDir) { $searchDirs += $archDir }
+          Write-Output "staging runtime dependencies for arch '$arch' from: $($searchDirs -join ', ')"
+
+          $stagedD3D12 = $false
+          foreach ($dir in $searchDirs) {
+            foreach ($dll in @("D3D12Core.dll", "d3d12SDKLayers.dll", "WinPixEventRuntime.dll")) {
+              $src = Join-Path $dir $dll
+              if (-not (Test-Path $src)) { continue }
+              $rel = [System.IO.Path]::GetRelativePath($binRoot, $src)
+              $dest = Join-Path "dist" $rel
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item $src $dest
+              Write-Output "staged runtime dependency $rel"
+              if ($dll -eq "D3D12Core.dll") { $stagedD3D12 = $true }
+            }
+          }
+
+          # Shipping a D3D12-enabled build without its Agility runtime produces a binary
+          # that fails to start on the user's machine, which no symbol check would catch.
+          if ("${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}" -eq "yes" -and -not $stagedD3D12) {
+            Write-Output "::error::Built with D3D12 enabled but no D3D12Core.dll was found in bin/ or bin/<arch>/."
+            exit 1
+          }
+
+      # Exact-binary promotion contract. The verified binary is the one that must ship;
+      # a later packager rebuilding from source would produce a different debug id and
+      # silently invalidate every symbol uploaded here. This manifest is what a
+      # downstream step checks against to prove it is publishing the same bytes.
+      - name: Write promotion manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          {
+            echo "# release-symbols promotion manifest"
+            echo "# commit: ${{ github.sha }}"
+            echo "# platform: ${{ matrix.platform }}  target: ${{ matrix.target }}"
+            echo "# Every file listed here was symbol-verified in this job. Publish THESE"
+            echo "# bytes; do not rebuild. Verify with: shasum -a 256 -c MANIFEST.sha256"
+          } > MANIFEST.txt
+          if command -v shasum >/dev/null; then
+            find . -type f ! -name 'MANIFEST.*' -print0 | xargs -0 shasum -a 256 > MANIFEST.sha256
+          else
+            find . -type f ! -name 'MANIFEST.*' -print0 | xargs -0 sha256sum > MANIFEST.sha256
+          fi
+          cat MANIFEST.txt MANIFEST.sha256
+
+      # Installed via npm rather than the get-cli shell script: the latter writes to
+      # /usr/local/bin, which is not reliably writable under Git Bash on the Windows
+      # runner. Node is preinstalled on all three runner images.
+      #
+      # continue-on-error so an npm outage cannot fail a build-only dry run; the upload
+      # step below fails hard if sentry-cli is genuinely needed and missing.
+      # Runs on every release tag, and on manual runs unless `upload` was unchecked.
+      # `inputs.upload` is null on a tag push and GitHub casts both null and false to 0,
+      # so a bare `inputs.upload != false` would skip the automatic path entirely.
+      - name: Upload debug information files to Sentry
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${SENTRY_AUTH_TOKEN:-}" ] || missing="$missing SENTRY_AUTH_TOKEN"
+          [ -n "${SENTRY_ORG:-}" ] || missing="$missing SENTRY_ORG"
+          [ -n "${SENTRY_PROJECT:-}" ] || missing="$missing SENTRY_PROJECT"
+          if [ -n "$missing" ]; then
+            # A release tag that silently ships without symbols is the failure mode this
+            # whole workflow exists to prevent, so never fail open on the automatic path.
+            echo "::error::Sentry credentials missing:$missing"
+            exit 1
+          fi
+          command -v sentry-cli >/dev/null || { echo "::error::sentry-cli install failed."; exit 1; }
+          # Upload our own build products only. dist/ also holds redistributed runtime
+          # DLLs (Agility SDK, PIX) for the promotion contract; those symbolicate from
+          # Microsoft's symbol server, and pushing them here would just add noise.
+          shopt -s nullglob
+          products=(dist/godot.*)
+          if [ ${#products[@]} -eq 0 ]; then
+            echo "::error::Nothing staged in dist/ to upload."
+            exit 1
+          fi
+          # `--include-sources` embeds source context for frames in our own code, which is
+          # what makes a Nanite/renderer crash readable without checking out the tag.
+          sentry-cli debug-files upload --include-sources --wait "${products[@]}"
+
+      - name: Upload build artifact
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: ${{ matrix.cache-name }}
+          path: dist/
+
+  # Release bookkeeping runs once, after every platform has uploaded its symbols --
+  # not once per matrix leg, which would race on the same release object.
+  finalize-release:
+    name: Finalize Sentry release
+    needs: build
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install sentry-cli
+        run: npm install -g @sentry/cli@2
+
+      - name: Create and finalize release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_RELEASE: ${{ inputs.sentry-release || github.sha }}
+        run: |
+          set -euo pipefail
+          sentry-cli releases new "$SENTRY_RELEASE"
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
+          sentry-cli releases finalize "$SENTRY_RELEASE"

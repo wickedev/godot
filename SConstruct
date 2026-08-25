@@ -848,6 +848,13 @@ else:
             # Remap absolute paths to relative paths for debug symbols.
             project_path = Dir("#").abspath
             env.AppendUnique(CCFLAGS=[f"-ffile-prefix-map={project_path}=."])
+        if env["platform"] == "linuxbsd":
+            # Force a GNU build ID on ELF targets. `separate_debug_symbols` strips the
+            # shipped binary, so the build ID is the only thing left that ties a crash
+            # address back to the extracted `.debugsymbols` file. Whether the linker
+            # emits one by default varies by toolchain (distro GCC specs usually do,
+            # lld/mold do not always), so pin it rather than inherit it.
+            env.AppendUnique(LINKFLAGS=["-Wl,--build-id=sha1"])
     else:
         if methods.is_apple_clang(env):
             # Apple Clang, its linker doesn't like -s.
