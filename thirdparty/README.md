@@ -1059,6 +1059,30 @@ Patches:
 - `0002-spirv-headers.patch` ([GH-111452](https://github.com/godotengine/godot/pull/111452))
 
 
+## steam_audio
+
+- Upstream: https://github.com/ValveSoftware/steam-audio
+- Version: 4.8.1 (480dd64, 2026)
+- License: Apache 2.0
+
+Files extracted from upstream source:
+
+- `core/src/core/` as `src/` (including `src/sh/`), except `CMakeLists.txt`.
+  `src/phonon_version.h` is generated from `phonon_version.h.in` with version 4.8.1.
+  The 13 `*.fbs.h` headers are pre-generated from the `.fbs` schemas with
+  flatc 25.12.19 (`flatc --cpp --scoped-enums --filename-suffix .fbs`).
+- `LICENSE.md`
+
+Bundled dependencies (see their own directories for licenses):
+
+- `flatbuffers/`: FlatBuffers runtime headers 25.12.19 (matching the flatc above).
+- `pffft/`: PFFFT from https://github.com/marton78/pffft (a4b0359) — pffft.{c,h},
+  pffft_common.c, pffft_priv_impl.h, fmv.h, sse2neon.h, simd/.
+- `mysofa/`: libmysofa from https://github.com/hoene/libmysofa (90531bd) —
+  `src/hrtf`, `src/hdf`, `src/resampler`. `hrtf/config.h` and
+  `hrtf/mysofa_export.h` are hand-generated replacements for the CMake
+  configure output.
+
 ## swappy-frame-pacing
 
 - Upstream: https://android.googlesource.com/platform/frameworks/opt/gamesdk/ via https://github.com/godotengine/godot-swappy

@@ -1,0 +1,87 @@
+#!/usr/bin/env python
+from misc.utility.scons_hints import *
+
+import os
+
+Import("env")
+Import("env_modules")
+
+env_steam = env_modules.Clone()
+
+thirdparty_dir = "#thirdparty/steam_audio/"
+thirdparty_abs = os.path.join(Dir("#").abspath, "thirdparty", "steam_audio")
+
+# Steam Audio core: compile everything except backends we do not vendor
+# (IPP/FFTS/vDSP FFT, Embree, RadeonRays, TrueAudioNext) and the AVX
+# float8 kernels (x86-only; re-enable behind an arch gate later).
+excluded = {
+    "ipp_fft.cpp",
+    "ipp_array_math.cpp",
+    "ffts_fft.cpp",
+    "vdsp_fft.cpp",
+    "float8_iir.cpp",
+    "float8_delay.cpp",
+    "float8_reverb_effect.cpp",
+    # Orphaned upstream: not in the CMake source list and its octree.h
+    # header does not exist in the tree.
+    "octree_probes.cpp",
+    # Apple vDSP array math backend: only used with the IPP build config upstream.
+    "vdsp_array_math.cpp",
+}
+excluded_prefixes = ("embree_", "radeonrays_", "tan_")
+
+core_sources = []
+for f in sorted(os.listdir(os.path.join(thirdparty_abs, "src"))):
+    if not f.endswith(".cpp"):
+        continue
+    if f in excluded or f.startswith(excluded_prefixes):
+        continue
+    core_sources.append(thirdparty_dir + "src/" + f)
+
+# Google spherical-harmonics library, vendored by upstream under src/sh/
+# (note the .cc extension, missed by the .cpp glob above).
+core_sources.append(thirdparty_dir + "src/sh/spherical_harmonics.cc")
+
+# Dependencies: PFFFT (single-precision FFT backend) and libmysofa (SOFA
+# HRTF loader; uses Godot's bundled zlib).
+dep_sources = [thirdparty_dir + "pffft/pffft.c", thirdparty_dir + "pffft/pffft_common.c"]
+for sub in ("mysofa/hrtf", "mysofa/hdf", "mysofa/resampler"):
+    for f in sorted(os.listdir(os.path.join(thirdparty_abs, *sub.split("/")))):
+        if f.endswith(".c"):
+            dep_sources.append(thirdparty_dir + sub + "/" + f)
+
+env_steam.Prepend(
+    CPPPATH=[
+        thirdparty_dir + "src",
+        thirdparty_dir,  # flatbuffers/... includes
+        thirdparty_dir + "pffft",
+        thirdparty_dir + "mysofa/hrtf",
+        thirdparty_dir + "mysofa/hdf",
+    ]
+)
+if env["builtin_zlib"]:
+    env_steam.Prepend(CPPPATH=["#thirdparty/zlib"])
+
+env_thirdparty = env_steam.Clone()
+env_thirdparty.disable_warnings()
+# Steam Audio's CMake uses a precompiled header; SCons builds force-include it.
+# The library also uses C++ exceptions internally; every phonon C API entry
+# point catches at the boundary (api_*.cpp), so exceptions never cross into
+# the engine and can stay enabled for these TUs only.
+if env.msvc:
+    env_thirdparty.Append(CCFLAGS=["/FI", "pch.h"])
+    env_thirdparty.Append(CXXFLAGS=["/EHsc"])
+else:
+    env_thirdparty.Append(CCFLAGS=["-include", "pch.h"])
+    env_thirdparty.Append(CXXFLAGS=["-fexceptions"])
+
+thirdparty_obj = []
+env_thirdparty.add_source_files(thirdparty_obj, core_sources)
+env_thirdparty.add_source_files(thirdparty_obj, dep_sources)
+env.modules_sources += thirdparty_obj
+
+module_obj = []
+env_steam.add_source_files(module_obj, "*.cpp")
+env.modules_sources += module_obj
+
+env.Depends(module_obj, thirdparty_obj)
