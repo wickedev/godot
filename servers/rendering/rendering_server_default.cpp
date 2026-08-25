@@ -142,6 +142,11 @@ void RenderingServerDefault::_draw(bool p_swap_buffers, double frame_step) {
 
 		uint64_t base_cpu = RSG::utilities->get_captured_timestamp_cpu_time(0);
 		uint64_t base_gpu = RSG::utilities->get_captured_timestamp_gpu_time(0);
+		// Timestamps arrive in command-record order, so the ">"/"<" markers form a
+		// balanced stack here regardless of how the render graph later reorders
+		// execution. Resolving nesting at this point keeps it correct; trying to infer
+		// it from GPU completion order would not be.
+		LocalVector<int32_t> area_stack;
 		for (uint32_t i = 0; i < RSG::utilities->get_captured_timestamps_count(); i++) {
 			uint64_t time_cpu = RSG::utilities->get_captured_timestamp_cpu_time(i);
 			uint64_t time_gpu = RSG::utilities->get_captured_timestamp_gpu_time(i);
@@ -155,7 +160,18 @@ void RenderingServerDefault::_draw(bool p_swap_buffers, double frame_step) {
 			if (RSG::utilities->capturing_timestamps) {
 				new_profile.write[i].gpu_msec = double((time_gpu - base_gpu) / 1000) / 1000.0;
 				new_profile.write[i].cpu_msec = double(time_cpu - base_cpu) / 1000.0;
-				new_profile.write[i].name = RSG::utilities->get_captured_timestamp_name(i);
+				new_profile.write[i].name = name;
+
+				// A "<" closes the innermost scope, so it reports at the depth of the
+				// ">" it matches, not one level deeper.
+				if (name.begins_with("<") && !area_stack.is_empty()) {
+					area_stack.remove_at(area_stack.size() - 1);
+				}
+				new_profile.write[i].parent = area_stack.is_empty() ? -1 : area_stack[area_stack.size() - 1];
+				new_profile.write[i].depth = area_stack.size();
+				if (name.begins_with(">")) {
+					area_stack.push_back(int32_t(i));
+				}
 			}
 		}
 

@@ -157,11 +157,13 @@ bool ServersDebugger::ServersProfilerFrame::deserialize(const Array &p_arr) {
 }
 
 Array ServersDebugger::VisualProfilerFrame::serialize() {
-	Array arr = { frame_number, areas.size() * 3 };
+	Array arr = { frame_number, areas.size() * 5 };
 	for (int i = 0; i < areas.size(); i++) {
 		arr.push_back(areas[i].name);
 		arr.push_back(areas[i].cpu_msec);
 		arr.push_back(areas[i].gpu_msec);
+		arr.push_back(areas[i].depth);
+		arr.push_back(areas[i].parent);
 	}
 	return arr;
 }
@@ -172,13 +174,15 @@ bool ServersDebugger::VisualProfilerFrame::deserialize(const Array &p_arr) {
 	int size = p_arr[1];
 	CHECK_SIZE(p_arr, size, "VisualProfilerFrame");
 	int idx = 2;
-	areas.resize(size / 3);
+	areas.resize(size / 5);
 	RenderingServerTypes::FrameProfileArea *w = areas.ptrw();
-	for (int i = 0; i < size / 3; i++) {
+	for (int i = 0; i < size / 5; i++) {
 		w[i].name = p_arr[idx];
 		w[i].cpu_msec = p_arr[idx + 1];
 		w[i].gpu_msec = p_arr[idx + 2];
-		idx += 3;
+		w[i].depth = p_arr[idx + 3];
+		w[i].parent = p_arr[idx + 4];
+		idx += 5;
 	}
 	CHECK_END(p_arr, idx, "VisualProfilerFrame");
 	return true;

@@ -128,6 +128,11 @@ struct FrameProfileArea {
 	String name;
 	double gpu_msec;
 	double cpu_msec;
+	// Nesting, derived from the ">"/"<" markers in `name` at capture time rather than
+	// re-parsed by each consumer. Depth is 0 for a top-level area; parent is the index
+	// of the enclosing ">" marker, or -1 at the top level.
+	int32_t depth = 0;
+	int32_t parent = -1;
 };
 
 /* COMPOSITOR */

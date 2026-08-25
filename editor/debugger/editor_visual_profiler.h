@@ -57,6 +57,9 @@ public:
 			StringName fullpath_cache;
 			float cpu_time = 0;
 			float gpu_time = 0;
+			// Resolved by the server at capture time; see FrameProfileArea.
+			int32_t depth = 0;
+			int32_t parent = -1;
 		};
 
 		Vector<Area> areas;

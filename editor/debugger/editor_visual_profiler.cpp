@@ -373,6 +373,14 @@ void EditorVisualProfiler::_update_frame(bool p_focus_selected) {
 		}
 
 		if (name.begins_with(">")) {
+			// `depth` is authoritative for nesting (resolved server-side at capture
+			// time). Trust it over the local stack so a dropped or unbalanced marker
+			// cannot desynchronise the tree for the rest of the frame.
+			while (stack.size() > m.areas[i].depth) {
+				stack.pop_back();
+			}
+			parent = stack.size() ? stack.back()->get() : root;
+
 			TreeItem *category = variables->create_item(parent);
 
 			stack.push_back(category);
@@ -392,7 +400,9 @@ void EditorVisualProfiler::_update_frame(bool p_focus_selected) {
 		}
 
 		if (name.begins_with("<")) {
-			stack.pop_back();
+			while (stack.size() > m.areas[i].depth) {
+				stack.pop_back();
+			}
 			continue;
 		}
 		TreeItem *category = variables->create_item(parent);

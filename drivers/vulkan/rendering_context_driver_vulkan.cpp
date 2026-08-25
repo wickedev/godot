@@ -451,7 +451,10 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 	// End users would get spammed with messages of varying verbosity due to the
 	// mess that thirdparty layers/extensions and drivers seem to leave in their
 	// wake, making the Windows registry a bottomless pit of broken layer JSON.
-#ifdef DEV_ENABLED
+#if defined(DEV_ENABLED) || defined(GODOT_USE_TRACY)
+	// GODOT_USE_TRACY: a profiler-enabled build exists to be measured, and GPU debug
+	// labels are what make the capture readable. Without this, a profiling build that
+	// is neither DEV nor verbose silently drops every draw_command_begin_label.
 	bool want_debug_utils = true;
 #else
 	bool want_debug_utils = OS::get_singleton()->is_stdout_verbose();

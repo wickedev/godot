@@ -622,6 +622,8 @@ void ScriptEditorDebugger::_msg_visual_profile_frame(uint64_t p_thread_id, const
 			areas_ptr[i].name = frame.areas[i].name;
 			areas_ptr[i].cpu_time = frame.areas[i].cpu_msec;
 			areas_ptr[i].gpu_time = frame.areas[i].gpu_msec;
+			areas_ptr[i].depth = frame.areas[i].depth;
+			areas_ptr[i].parent = frame.areas[i].parent;
 		}
 	}
 	visual_profiler->add_frame_metric(metric);
