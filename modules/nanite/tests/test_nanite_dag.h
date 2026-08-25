@@ -1053,28 +1053,24 @@ TEST_CASE("[Nanite] The importer stops serving a DAG once the option is off") {
 }
 #endif // TOOLS_ENABLED
 
-TEST_CASE("[Nanite] Artifact size per triangle stays put for each fixture") {
-	// Per fixture, not one universal ceiling. Bytes per triangle is dominated
-	// by the vertex-to-triangle ratio, and that is a property of the mesh
-	// rather than of the format: a seam-free grid and a seam-heavy one differ
-	// by more than any single number can cover. A universal bound tight enough
-	// to catch regressions on the grid would reject seamed geometry that is
-	// perfectly correct, and one loose enough to admit seamed geometry would
-	// catch nothing.
-	//
-	// So each fixture carries its own bound, sized just above what it measures.
-	// The point is to notice drift -- an earlier revision serialized 8-bit
-	// indices as words and doubled the figure -- not to assert a portable
-	// constant.
+TEST_CASE("[Nanite] Artifact size does not drift") {
+	// Drift detection, not a contract check. The contract is that a pool
+	// buffer's serialized byte count fits the device's storage buffer limit,
+	// and bytes are exactly knowable when writing them -- there is nothing to
+	// estimate. Per-triangle figures cannot stand in for that: bytes per
+	// triangle is driven by the vertex-to-triangle ratio, which is a property
+	// of the mesh, and admitting unreferenced vertices removes any finite bound
+	// on it altogether. So each fixture gets a byte ceiling of its own, sized
+	// just above what it measures, purely to notice when something doubles.
 	struct Fixture {
 		const char *name;
 		int kind; // 0 grid, 1 sphere, 2 seamed grid.
-		double ceiling;
+		uint64_t ceiling_bytes;
 	};
 	const Fixture fixtures[] = {
-		{ "seam-free grid", 0, 24.0 },
-		{ "sphere", 1, 25.0 },
-		{ "seam-heavy grid", 2, 42.0 },
+		{ "seam-free grid", 0, 1'250'000 },
+		{ "sphere", 1, 400'000 },
+		{ "seam-heavy grid", 2, 2'250'000 },
 	};
 
 	for (const Fixture &fixture : fixtures) {
@@ -1097,29 +1093,48 @@ TEST_CASE("[Nanite] Artifact size per triangle stays put for each fixture") {
 		ERR_PRINT_ON;
 		REQUIRE(dag.is_valid());
 
-		const uint64_t source_triangles = mesh.indices.size() / 3;
 		const PackedByteArray serialized = dag->get("data");
-		const double bytes_per_triangle = (double)serialized.size() / (double)source_triangles;
-		const double vertex_ratio = (double)mesh.vertex_count / (double)source_triangles;
+		CHECK_MESSAGE((uint64_t)serialized.size() <= fixture.ceiling_bytes,
+				vformat("%s serialized to %d bytes, past its %d ceiling.",
+						fixture.name, serialized.size(), (int)fixture.ceiling_bytes));
 
-		CHECK_MESSAGE(bytes_per_triangle <= fixture.ceiling,
-				vformat("%s: %.2f bytes per source triangle at a vertex ratio of %.3f, past its %.1f ceiling.",
-						fixture.name, bytes_per_triangle, vertex_ratio, fixture.ceiling));
-
-		// The components have to add up to the file, or the accounting the
-		// budget is derived from describes something other than what is stored.
+		// The component accounting has to add up to the file, or a byte
+		// ceiling is guarding something other than what gets written.
 		const uint64_t vertex_bytes = (uint64_t)dag->vertex_count * (12 + 4 + 4);
 		const uint64_t slice_bytes = (uint64_t)dag->cluster_vertices.size() * 4;
 		const uint64_t local_bytes = (uint64_t)dag->cluster_indices.size();
 		const uint64_t cluster_bytes = (uint64_t)dag->clusters.size() * 18 * 4;
 		uint64_t group_bytes = 0;
 		for (const NaniteDAG::Group &group : dag->groups) {
-			group_bytes += 8 * 4 + (uint64_t)(group.children.size() + group.produced.size()) * 4;
+			group_bytes += 9 * 4 + (uint64_t)(group.children.size() + group.produced.size()) * 4;
 		}
 		const uint64_t components = vertex_bytes + slice_bytes + local_bytes + cluster_bytes + group_bytes;
 		CHECK((uint64_t)serialized.size() >= components);
 		CHECK((uint64_t)serialized.size() - components < 1024);
 	}
+}
+
+TEST_CASE("[Nanite] An artifact built by a different algorithm is refused") {
+	// The format version covers the layout; this one covers the algorithm. A
+	// DAG whose errors were measured a different way is readable and wrong,
+	// which is worse than unreadable: nothing about it looks broken.
+	const TestMesh mesh = make_displaced_grid(16);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	REQUIRE(dag.is_valid());
+	const PackedByteArray good = dag->get("data");
+
+	ERR_PRINT_OFF;
+	PackedByteArray stale = good.duplicate();
+	poke_u32(stale, 4, NaniteDAG::BUILDER_VERSION - 1); // Builder version sits after the format version.
+
+	Ref<NaniteDAG> loaded;
+	loaded.instantiate();
+	loaded->set("data", stale);
+	ERR_PRINT_ON;
+
+	CHECK_MESSAGE(loaded->get_cluster_count() == 0, "An artifact from an older builder must not load.");
+	CHECK(!loaded->validate().is_empty());
 }
 
 TEST_CASE("[Nanite] DAG builder is deterministic") {

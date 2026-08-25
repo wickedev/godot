@@ -101,6 +101,12 @@ float NaniteDAG::get_cluster_error(uint32_t p_cluster) const {
 	return source == NO_GROUP ? 0.0f : groups[source].error;
 }
 
+float NaniteDAG::get_cluster_analytic_error(uint32_t p_cluster) const {
+	ERR_FAIL_COND_V(p_cluster >= clusters.size(), 0.0f);
+	const uint32_t source = clusters[p_cluster].source_group;
+	return source == NO_GROUP ? 0.0f : groups[source].analytic_error;
+}
+
 float NaniteDAG::get_cluster_parent_error(uint32_t p_cluster) const {
 	ERR_FAIL_COND_V(p_cluster >= clusters.size(), 0.0f);
 	const uint32_t parent = clusters[p_cluster].parent_group;
@@ -350,6 +356,13 @@ Vector<String> NaniteDAG::validate() const {
 		if (!Math::is_finite(g.error) || g.error < 0.0f) {
 			errors.push_back(at + vformat("error %f is negative or not finite.", g.error));
 		}
+		if (!Math::is_finite(g.analytic_error) || g.analytic_error < 0.0f) {
+			errors.push_back(at + vformat("analytic error %f is negative or not finite.", g.analytic_error));
+		}
+		// The bound has to actually bound the thing it is a bound for.
+		if (!(g.analytic_error >= g.error)) {
+			errors.push_back(at + vformat("analytic error %f is below the measured error %f it is supposed to bound.", g.analytic_error, g.error));
+		}
 		if (!Math::is_finite(g.lod_bounds.radius) || g.lod_bounds.radius < 0.0f) {
 			errors.push_back(at + "has a non-finite or negative LOD sphere.");
 		}
@@ -505,7 +518,7 @@ namespace {
 // Word counts per record, used to bound a count read from the payload before
 // it is allowed to size an allocation.
 constexpr size_t CLUSTER_WORDS = 18;
-constexpr size_t GROUP_MIN_WORDS = 8;
+constexpr size_t GROUP_MIN_WORDS = 9;
 
 void write_u32(PackedByteArray &r_data, uint32_t p_value) {
 	r_data.append_array(PackedByteArray{ (uint8_t)(p_value & 0xFF), (uint8_t)((p_value >> 8) & 0xFF),
@@ -679,6 +692,7 @@ PackedByteArray NaniteDAG::_serialize() const {
 	for (const Group &group : groups) {
 		write_u32(data, group.level);
 		write_f32(data, group.error);
+		write_f32(data, group.analytic_error);
 		write_sphere(data, group.lod_bounds);
 		write_u32(data, group.children.size());
 		for (const uint32_t child : group.children) {
@@ -778,6 +792,7 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 		Group &group = parsed->groups[i];
 		group.level = reader.u32();
 		group.error = reader.f32();
+		group.analytic_error = reader.f32();
 		group.lod_bounds = reader.sphere();
 		group.children.resize(reader.count(sizeof(uint32_t)));
 		for (uint32_t k = 0; k < group.children.size(); k++) {
@@ -914,6 +929,7 @@ void NaniteDAG::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_level_max_error", "level"), &NaniteDAG::get_level_max_error);
 	ClassDB::bind_method(D_METHOD("get_cluster_error", "cluster"), &NaniteDAG::get_cluster_error);
 	ClassDB::bind_method(D_METHOD("get_cluster_parent_error", "cluster"), &NaniteDAG::get_cluster_parent_error);
+	ClassDB::bind_method(D_METHOD("get_cluster_analytic_error", "cluster"), &NaniteDAG::get_cluster_analytic_error);
 	ClassDB::bind_method(D_METHOD("get_cluster_vertex_count", "cluster"), &NaniteDAG::get_cluster_vertex_count);
 	ClassDB::bind_method(D_METHOD("get_level_vertex_slice_total", "level"), &NaniteDAG::get_level_vertex_slice_total);
 	ClassDB::bind_method(D_METHOD("get_level_distinct_vertex_count", "level"), &NaniteDAG::get_level_distinct_vertex_count);

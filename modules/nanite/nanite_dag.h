@@ -67,12 +67,15 @@ public:
 	static constexpr uint32_t NO_GROUP = 0xFFFFFFFFu;
 
 	// On-disk layout. Bumped when the serialized structure changes.
-	static constexpr uint32_t FORMAT_VERSION = 3;
+	static constexpr uint32_t FORMAT_VERSION = 4;
 	// The algorithm. Bumped when the same input would now produce a different
 	// DAG -- a change that leaves the layout untouched but makes every stored
 	// artifact stale. Keeping this separate from the format version is what
 	// stops an algorithm improvement from silently serving old results.
-	static constexpr uint32_t BUILDER_VERSION = 1;
+	// 2: deviation is sampled in both directions. Version 1 measured only the
+	// original's removed vertices against the result, so its errors describe a
+	// different quantity and its artifacts must not be reused.
+	static constexpr uint32_t BUILDER_VERSION = 2;
 
 	// Per-cluster ceilings, frozen by the geometry pool contract: 7 bits of
 	// triangle index in the visibility buffer, 8 bits of local vertex index.
@@ -114,7 +117,17 @@ public:
 
 	struct Group {
 		uint32_t level = 0;
+		// The largest deviation found at the recorded sampling density. This is
+		// what the runtime cut orders by, because it tracks how far the surface
+		// actually moved.
 		float error = 0.0f; // Absolute, in mesh units.
+		// A deviation this simplification provably cannot exceed, from a
+		// Lipschitz argument rather than sampling. Measured on real geometry it
+		// runs one to two orders of magnitude above `error`, because it assumes
+		// a flat triangle departs from the surface by its own radius. Kept so a
+		// consumer that needs a guarantee has one, and so the ratio between the
+		// two is visible at runtime rather than only in a build log.
+		float analytic_error = 0.0f;
 		Sphere lod_bounds;
 		LocalVector<uint32_t> children; // Clusters at `level`.
 		LocalVector<uint32_t> produced; // Clusters at `level + 1`.
@@ -167,6 +180,7 @@ public:
 	// LOD quantities resolved through the owning groups.
 	float get_cluster_error(uint32_t p_cluster) const;
 	float get_cluster_parent_error(uint32_t p_cluster) const;
+	float get_cluster_analytic_error(uint32_t p_cluster) const;
 	Sphere get_cluster_lod_bounds(uint32_t p_cluster) const;
 	Sphere get_cluster_parent_lod_bounds(uint32_t p_cluster) const;
 

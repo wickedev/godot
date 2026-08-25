@@ -725,10 +725,12 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 			LocalVector<uint32_t> merged;
 			LocalVector<NaniteDAG::Sphere> child_bounds;
 			float max_child_error = 0.0f;
+			float max_child_analytic = 0.0f;
 			for (uint32_t cluster_id : group_members) {
 				append_cluster_indices(**dag, cluster_id, merged);
 				child_bounds.push_back(dag->get_cluster_lod_bounds(cluster_id));
 				max_child_error = MAX(max_child_error, dag->get_cluster_error(cluster_id));
+				max_child_analytic = MAX(max_child_analytic, dag->get_cluster_analytic_error(cluster_id));
 			}
 
 			uint32_t target_index_count = (uint32_t)(merged.size() * p_settings.simplify_ratio);
@@ -774,6 +776,19 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 						level, g, deviation.vertex_measure, deviation.sampled, deviation.analytic));
 			}
 
+			// Checked first, and fatally. Ordering matters: the "not a distance"
+			// test below is written as a negated comparison, so a NaN or an
+			// infinity satisfies it and would be quietly routed to the
+			// discard-and-continue path -- which is a silent clamp wearing a
+			// different hat. A deviation that is not a finite non-negative
+			// number means the measurement is broken, and that is fatal.
+			if (!Math::is_finite(step_error) || step_error < 0.0f) {
+				FAIL(vformat("measured a deviation of %f, which is not a distance. The measurement is broken.", step_error));
+			}
+			if (!Math::is_finite(deviation.analytic) || deviation.analytic < step_error) {
+				FAIL(vformat("the analytic bound %f does not bound the measured deviation %f.", deviation.analytic, step_error));
+			}
+
 			const uint32_t progress_ceiling = (uint32_t)(merged.size() * MIN(p_settings.min_progress_ratio, 1.0f));
 			const NaniteDAG::Sphere merged_bounds = sphere_from_indices(ctx.positions, merged.ptr(), merged.size());
 			const bool stalled = simplified_count < 3 || simplified_count > progress_ceiling;
@@ -810,14 +825,8 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 			group.level = level;
 			// Monotonic by construction: a group's error is its worst child's
 			// error plus the distance this simplification moved the surface.
-			// Flooring a negative step at zero would be exactly the silent
-			// clamp this must not do: a deviation is a distance, so a negative
-			// or non-finite one means the measurement is wrong, and pressing it
-			// to zero destroys the only evidence of that.
-			if (!Math::is_finite(step_error) || step_error < 0.0f) {
-				FAIL(vformat("measured a deviation of %f, which is not a distance. The measurement is broken, so no edge is installed.", step_error));
-			}
 			group.error = max_child_error + step_error;
+			group.analytic_error = max_child_analytic + deviation.analytic;
 			group.lod_bounds = enclose_spheres(child_bounds);
 			group.children = group_members;
 
