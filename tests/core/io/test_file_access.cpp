@@ -40,7 +40,7 @@ namespace TestFileAccess {
 
 TEST_CASE("[FileAccess] CSV read") {
 	Ref<FileAccess> f = FileAccess::open(TestUtils::get_data_path("testdata.csv"), FileAccess::READ);
-	REQUIRE(f.is_valid());
+	REQUIRE_OR_RETURN(f.is_valid());
 
 	Vector<String> header = f->get_csv_line(); // Default delimiter: ",".
 	REQUIRE(header.size() == 4);
@@ -86,7 +86,7 @@ TEST_CASE("[FileAccess] CSV read") {
 TEST_CASE("[FileAccess] Get as UTF-8 String") {
 	SUBCASE("Newline == \\n (Unix)") {
 		Ref<FileAccess> f_lf = FileAccess::open(TestUtils::get_data_path("line_endings_lf.test.txt"), FileAccess::READ);
-		REQUIRE(f_lf.is_valid());
+		REQUIRE_OR_RETURN(f_lf.is_valid());
 		String s_lf = f_lf->get_as_utf8_string();
 		CHECK(s_lf == "Hello darkness\nMy old friend\nI've come to talk\nWith you again\n");
 		f_lf->seek(0);
@@ -99,7 +99,7 @@ TEST_CASE("[FileAccess] Get as UTF-8 String") {
 
 	SUBCASE("Newline == \\r\\n (Windows)") {
 		Ref<FileAccess> f_crlf = FileAccess::open(TestUtils::get_data_path("line_endings_crlf.test.txt"), FileAccess::READ);
-		REQUIRE(f_crlf.is_valid());
+		REQUIRE_OR_RETURN(f_crlf.is_valid());
 		String s_crlf = f_crlf->get_as_utf8_string();
 		CHECK(s_crlf == "Hello darkness\r\nMy old friend\r\nI've come to talk\r\nWith you again\r\n");
 		f_crlf->seek(0);
@@ -112,7 +112,7 @@ TEST_CASE("[FileAccess] Get as UTF-8 String") {
 
 	SUBCASE("Newline == \\r (Legacy macOS)") {
 		Ref<FileAccess> f_cr = FileAccess::open(TestUtils::get_data_path("line_endings_cr.test.txt"), FileAccess::READ);
-		REQUIRE(f_cr.is_valid());
+		REQUIRE_OR_RETURN(f_cr.is_valid());
 		String s_cr = f_cr->get_as_utf8_string();
 		CHECK(s_cr == "Hello darkness\rMy old friend\rI've come to talk\rWith you again\r");
 		f_cr->seek(0);
@@ -125,7 +125,7 @@ TEST_CASE("[FileAccess] Get as UTF-8 String") {
 
 	SUBCASE("Newline == Mixed") {
 		Ref<FileAccess> f_mix = FileAccess::open(TestUtils::get_data_path("line_endings_mixed.test.txt"), FileAccess::READ);
-		REQUIRE(f_mix.is_valid());
+		REQUIRE_OR_RETURN(f_mix.is_valid());
 		String s_mix = f_mix->get_as_utf8_string();
 		CHECK(s_mix == "Hello darkness\nMy old friend\r\nI've come to talk\rWith you again");
 		f_mix->seek(0);
@@ -147,11 +147,11 @@ TEST_CASE("[FileAccess] Get/Store floating point values") {
 		const String file_path_new = TestUtils::get_data_path("floating_point_little_endian_new.bin");
 
 		Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::READ);
-		REQUIRE(f.is_valid());
+		REQUIRE_OR_RETURN(f.is_valid());
 		CHECK_EQ(f->get_float(), value);
 
 		Ref<FileAccess> fw = FileAccess::open(file_path_new, FileAccess::WRITE);
-		REQUIRE(fw.is_valid());
+		REQUIRE_OR_RETURN(fw.is_valid());
 		fw->store_float(value);
 		fw->close();
 
@@ -165,12 +165,12 @@ TEST_CASE("[FileAccess] Get/Store floating point values") {
 		const String file_path_new = TestUtils::get_data_path("floating_point_big_endian_new.bin");
 
 		Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::READ);
-		REQUIRE(f.is_valid());
+		REQUIRE_OR_RETURN(f.is_valid());
 		f->set_big_endian(true);
 		CHECK_EQ(f->get_float(), value);
 
 		Ref<FileAccess> fw = FileAccess::open(file_path_new, FileAccess::WRITE);
-		REQUIRE(fw.is_valid());
+		REQUIRE_OR_RETURN(fw.is_valid());
 		fw->set_big_endian(true);
 		fw->store_float(value);
 		fw->close();
@@ -194,11 +194,11 @@ TEST_CASE("[FileAccess] Get/Store floating point half precision values") {
 		const String file_path_new = TestUtils::get_data_path("half_precision_floating_point_little_endian_new.bin");
 
 		Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::READ);
-		REQUIRE(f.is_valid());
+		REQUIRE_OR_RETURN(f.is_valid());
 		CHECK_EQ(f->get_half(), value);
 
 		Ref<FileAccess> fw = FileAccess::open(file_path_new, FileAccess::WRITE);
-		REQUIRE(fw.is_valid());
+		REQUIRE_OR_RETURN(fw.is_valid());
 		fw->store_half(value);
 		fw->close();
 
@@ -212,12 +212,12 @@ TEST_CASE("[FileAccess] Get/Store floating point half precision values") {
 		const String file_path_new = TestUtils::get_data_path("half_precision_floating_point_big_endian_new.bin");
 
 		Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::READ);
-		REQUIRE(f.is_valid());
+		REQUIRE_OR_RETURN(f.is_valid());
 		f->set_big_endian(true);
 		CHECK_EQ(f->get_half(), value);
 
 		Ref<FileAccess> fw = FileAccess::open(file_path_new, FileAccess::WRITE);
-		REQUIRE(fw.is_valid());
+		REQUIRE_OR_RETURN(fw.is_valid());
 		fw->set_big_endian(true);
 		fw->store_half(value);
 		fw->close();
@@ -252,7 +252,7 @@ TEST_CASE("[FileAccess] Get/Store floating point half precision values") {
 
 TEST_CASE("[FileAccess] Cursor positioning") {
 	Ref<FileAccess> f = FileAccess::open(TestUtils::get_data_path("line_endings_lf.test.txt"), FileAccess::READ);
-	REQUIRE(f.is_valid());
+	REQUIRE_OR_RETURN(f.is_valid());
 
 	String full = f->get_as_utf8_string();
 	int64_t len = full.length();

@@ -61,6 +61,32 @@
 // The test case is marked as failed, but does not fail the entire test run.
 #define TEST_CASE_MAY_FAIL(name) TEST_CASE(name *doctest::may_fail())
 
+// Asserts and, on failure, LEAVES THE TEST CASE.
+//
+// Plain REQUIRE does not do this here. Godot compiles with -fno-exceptions, so
+// the DOCTEST_CONFIG_NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS mode selected above
+// applies: with no exception to throw, doctest reports the failure and then
+// carries on to the next line. Any code that dereferences, indexes, or
+// otherwise relies on what REQUIRE just checked will still run, turning a
+// failed assertion into a crash that takes down the whole run.
+//
+// Use this wherever the following code depends on the condition holding:
+//
+//   Ref<FileAccess> f = FileAccess::open(path, FileAccess::READ);
+//   REQUIRE_OR_RETURN(f.is_valid());
+//   CHECK(f->get_length() == expected);  // Safe: unreachable if the open failed.
+//
+// The condition is evaluated exactly once, so it may not have side effects that
+// the rest of the test depends on. Only usable in a void-returning scope.
+#define REQUIRE_OR_RETURN(m_cond)                        \
+	do {                                                 \
+		const bool _require_ok = bool(m_cond);           \
+		REQUIRE_MESSAGE(_require_ok, "Failed: " #m_cond); \
+		if (!_require_ok) {                              \
+			return;                                      \
+		}                                                \
+	} while (false)
+
 // Provide aliases to conform with Godot naming conventions (see error macros).
 #define TEST_COND(cond, ...) DOCTEST_CHECK_FALSE_MESSAGE(cond, __VA_ARGS__)
 #define TEST_FAIL(cond, ...) DOCTEST_FAIL(cond, __VA_ARGS__)
