@@ -77,15 +77,25 @@
 //   CHECK(f->get_length() == expected);  // Safe: unreachable if the open failed.
 //
 // The condition is evaluated exactly once, so it may not have side effects that
-// the rest of the test depends on. Only usable in a void-returning scope.
-#define REQUIRE_OR_RETURN(m_cond)                        \
-	do {                                                 \
-		const bool _require_ok = bool(m_cond);           \
-		REQUIRE_MESSAGE(_require_ok, "Failed: " #m_cond); \
-		if (!_require_ok) {                              \
-			return;                                      \
-		}                                                \
+// the rest of the test depends on. Only usable in a void-returning scope; a
+// value-returning helper needs its own sentinel return.
+//
+// The control flow is separated from the reporting so that the control flow can
+// be tested without producing a real assertion failure -- see
+// tests/core/test_macros_guard.cpp. Pass a different reporter to
+// REQUIRE_OR_RETURN_WITH and the same branch runs, silently.
+#define REQUIRE_OR_RETURN_WITH(m_cond, m_reporter)         \
+	do {                                                   \
+		const bool _require_ok = bool(m_cond);             \
+		m_reporter(_require_ok, "Failed: " #m_cond);       \
+		if (!_require_ok) {                                \
+			return;                                        \
+		}                                                  \
 	} while (false)
+
+#define _REQUIRE_OR_RETURN_DOCTEST_REPORT(m_ok, m_msg) REQUIRE_MESSAGE(m_ok, m_msg)
+
+#define REQUIRE_OR_RETURN(m_cond) REQUIRE_OR_RETURN_WITH(m_cond, _REQUIRE_OR_RETURN_DOCTEST_REPORT)
 
 // Provide aliases to conform with Godot naming conventions (see error macros).
 #define TEST_COND(cond, ...) DOCTEST_CHECK_FALSE_MESSAGE(cond, __VA_ARGS__)

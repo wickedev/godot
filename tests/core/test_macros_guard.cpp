@@ -35,48 +35,74 @@ TEST_FORCE_LINK(test_macros_guard)
 namespace TestMacrosGuard {
 
 // REQUIRE_OR_RETURN exists because a failed REQUIRE does NOT leave the test
-// case in this build. These tests pin the three properties that makes it
-// depend on, so a future change to the macro (or to doctest's exception mode)
-// cannot silently take them away.
+// case in this build. These tests pin the behaviour it depends on, so a later
+// change to the macro -- or to doctest's exception mode -- cannot quietly take
+// it away.
+//
+// They drive the macro through a FAKE reporter, so the failure path runs
+// without producing a real assertion failure. That is what makes them a hard
+// gate: a regression fails the run rather than showing up as an extra line in
+// a test that is allowed to fail.
 
-static int side_effect_count = 0;
-static bool _counting_condition(bool p_result) {
-	side_effect_count++;
+static int fake_failures = 0;
+static int condition_evaluations = 0;
+
+static void _fake_report(bool p_ok, const char *p_message) {
+	if (!p_ok) {
+		fake_failures++;
+	}
+}
+
+#define FAKE_REPORT(m_ok, m_msg) _fake_report(m_ok, m_msg)
+
+static bool _counted(bool p_result) {
+	condition_evaluations++;
 	return p_result;
 }
 
-// Separate function, not a subcase: the macro returns, and what has to be
-// observed is that the caller's later statements did not run.
-static void _run_until_guard(bool p_condition, bool *r_reached_end) {
+// Separate function because the macro returns: what has to be observed is that
+// the statements after the guard did not run.
+static void _run_guard(bool p_condition, bool *r_reached_end) {
 	*r_reached_end = false;
-	REQUIRE_OR_RETURN(p_condition);
+	REQUIRE_OR_RETURN_WITH(_counted(p_condition), FAKE_REPORT);
 	*r_reached_end = true;
 }
 
-// MAY_FAIL because exercising the false branch necessarily trips the macro's
-// own REQUIRE, and there is no way to assert on a guard's failure path without
-// producing that failure. Expect EXACTLY ONE failed assertion here, the
-// deliberate one. If the macro ever stops returning, the CHECK_FALSE below
-// fails as well and the case reports TWO -- that is the regression signal, and
-// it is a signal to read rather than a gate that goes red on its own.
-TEST_CASE_MAY_FAIL("[TestMacros] REQUIRE_OR_RETURN stops the case on failure") {
+TEST_CASE("[TestMacros] REQUIRE_OR_RETURN returns on a false condition") {
+	fake_failures = 0;
+	condition_evaluations = 0;
 	bool reached_end = true;
-	_run_until_guard(false, &reached_end);
+
+	_run_guard(false, &reached_end);
+
 	CHECK_FALSE_MESSAGE(reached_end, "A false condition must skip everything after the guard.");
+	CHECK_MESSAGE(fake_failures == 1, "The failure must be reported exactly once.");
+	CHECK_MESSAGE(condition_evaluations == 1, "The condition must be evaluated exactly once.");
 }
 
-TEST_CASE("[TestMacros] REQUIRE_OR_RETURN continues on success") {
+TEST_CASE("[TestMacros] REQUIRE_OR_RETURN falls through on a true condition") {
+	fake_failures = 0;
+	condition_evaluations = 0;
 	bool reached_end = false;
-	_run_until_guard(true, &reached_end);
+
+	_run_guard(true, &reached_end);
+
 	CHECK_MESSAGE(reached_end, "A true condition must fall through to the next statement.");
+	CHECK_MESSAGE(fake_failures == 0, "Nothing must be reported on success.");
+	CHECK_MESSAGE(condition_evaluations == 1, "The condition must be evaluated exactly once.");
 }
 
-TEST_CASE("[TestMacros] REQUIRE_OR_RETURN evaluates its condition exactly once") {
-	side_effect_count = 0;
-	bool unused = false;
-	// True case: falls through, so the count is the only thing under test.
-	_run_until_guard(_counting_condition(true), &unused);
-	CHECK_MESSAGE(side_effect_count == 1, "The condition must not be evaluated twice.");
+TEST_CASE("[TestMacros] REQUIRE_OR_RETURN is a single statement") {
+	// Would not compile if the macro were not do/while-wrapped.
+	bool reached_end = false;
+	if (true) {
+		_run_guard(true, &reached_end);
+	} else {
+		reached_end = false;
+	}
+	CHECK(reached_end);
 }
+
+#undef FAKE_REPORT
 
 } // namespace TestMacrosGuard
