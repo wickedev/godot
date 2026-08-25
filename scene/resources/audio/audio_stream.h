@@ -103,6 +103,12 @@ public:
 
 	virtual void tag_used_streams();
 
+	// Whether the AudioServer may stop calling mix() entirely while this playback is inaudible
+	// (see `audio/general/suspend_inaudible_playbacks`). Only plain file decoders should opt in;
+	// generators, microphones and composite streams must keep mixing so their internal state
+	// machines and ring buffers stay live.
+	virtual bool is_inaudible_suspension_safe() const { return false; }
+
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
 

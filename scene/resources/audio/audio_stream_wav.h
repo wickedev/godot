@@ -85,6 +85,8 @@ public:
 
 	virtual void tag_used_streams() override;
 
+	virtual bool is_inaudible_suspension_safe() const override { return true; }
+
 	virtual void set_is_sample(bool p_is_sample) override;
 	virtual bool get_is_sample() const override;
 	virtual Ref<AudioSamplePlayback> get_sample_playback() const override;

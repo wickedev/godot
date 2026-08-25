@@ -493,9 +493,10 @@
 		<member name="audio/general/ios/session_category" type="int" setter="" getter="" default="0" keywords="ambient, play, record, solo">
 			Sets the [url=https://developer.apple.com/documentation/avfaudio/avaudiosessioncategory]AVAudioSessionCategory[/url] on iOS. Use the [code]Playback[/code] category to get sound output, even if the phone is in silent mode.
 		</member>
-		<member name="audio/general/skip_silent_playback_decode" type="bool" setter="" getter="" default="false">
-			If [code]true[/code], audio stream playbacks whose bus volumes have all stayed below [member audio/buses/channel_disable_threshold_db] for longer than [member audio/buses/channel_disable_time] stop decoding entirely until they become audible again. This greatly reduces the mixing cost of distant or muted 3D sound sources in large scenes.
-			[b]Note:[/b] While a playback is skipped its position does not advance; when it becomes audible again it resumes from where decoding stopped. Leave this disabled if inaudible streams must stay time-synchronized with other playbacks.
+		<member name="audio/general/suspend_inaudible_playbacks" type="bool" setter="" getter="" default="false">
+			If [code]true[/code], stream playbacks whose bus volumes have all been exactly zero for longer than [member audio/buses/channel_disable_time] are suspended entirely — their [code]mix()[/code] is no longer called — until they become audible again. This greatly reduces the mixing cost of distant or muted 3D sound sources in large scenes.
+			Only playbacks of plain file decoders ([AudioStreamWAV], Ogg Vorbis, MP3) are suspended. Generators, microphone streams and composite streams (interactive, playlist, polyphonic) always keep mixing so their internal state stays live.
+			[b]Note:[/b] While a playback is suspended its position does not advance; when it becomes audible again it resumes from where it stopped. Leave this disabled if inaudible streams must stay time-synchronized with other playbacks.
 		</member>
 		<member name="audio/general/text_to_speech" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], text-to-speech support is enabled on startup, otherwise it is enabled the first time any TTS method is used. See also [method DisplayServer.tts_get_voices] and [method DisplayServer.tts_speak].
@@ -1138,6 +1139,14 @@
 			The maximum width to use when importing textures as an atlas. The value will be rounded to the nearest power of two when used. Use this to prevent imported textures from growing too large in the other direction.
 		</member>
 		<member name="editor/import/reimport_missing_imported_files" type="bool" setter="" getter="" default="true">
+		</member>
+		<member name="editor/import/session/events_before_compaction" type="int" setter="" getter="" default="256">
+		</member>
+		<member name="editor/import/session/generation_storage_limit_mb" type="int" setter="" getter="" default="0">
+		</member>
+		<member name="editor/import/session/kept_generations_per_resource" type="int" setter="" getter="" default="1">
+		</member>
+		<member name="editor/import/session/reclaim_grace_seconds" type="int" setter="" getter="" default="600">
 		</member>
 		<member name="editor/import/use_multiple_threads" type="bool" setter="" getter="" default="true">
 			If [code]true[/code] importing of resources is run on multiple threads.

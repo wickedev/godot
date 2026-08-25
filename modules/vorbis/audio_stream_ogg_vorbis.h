@@ -100,6 +100,8 @@ public:
 
 	virtual void tag_used_streams() override;
 
+	virtual bool is_inaudible_suspension_safe() const override { return true; }
+
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value) override;
 	virtual Variant get_parameter(const StringName &p_name) const override;
 
