@@ -497,6 +497,7 @@
 			If [code]true[/code], stream playbacks whose bus volumes have all been exactly zero for longer than [member audio/buses/channel_disable_time] are suspended entirely — their [code]mix()[/code] is no longer called — until they become audible again. This greatly reduces the mixing cost of distant or muted 3D sound sources in large scenes.
 			Only playbacks of plain file decoders ([AudioStreamWAV], Ogg Vorbis, MP3) are suspended. Generators, microphone streams and composite streams (interactive, playlist, polyphonic) always keep mixing so their internal state stays live.
 			[b]Note:[/b] While a playback is suspended its position does not advance; when it becomes audible again it resumes from where it stopped. Leave this disabled if inaudible streams must stay time-synchronized with other playbacks.
+			[b]Note:[/b] Only the playback's own routing volumes are observed. Muting or soloing a bus does not suspend the playbacks routed to it.
 		</member>
 		<member name="audio/general/text_to_speech" type="bool" setter="" getter="" default="false">
 			If [code]true[/code], text-to-speech support is enabled on startup, otherwise it is enabled the first time any TTS method is used. See also [method DisplayServer.tts_get_voices] and [method DisplayServer.tts_speak].

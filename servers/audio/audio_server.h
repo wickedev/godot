@@ -159,8 +159,13 @@ private:
 		AudioStreamPlaybackBusDetails *prev_bus_details = nullptr;
 		// The next few samples are stored here so we have some time to fade audio out if it ends abruptly at the beginning of the next mix.
 		AudioFrame lookahead[AuSC::LOOKAHEAD_BUFFER_SIZE];
-		// Number of consecutive mix blocks during which every active bus volume for this playback was exactly zero (saturating). Should only be accessed on the audio thread.
+		// Inaudible-playback suspension state. All of these should only be accessed on the audio thread.
+		// Number of consecutive mix blocks during which every active bus volume for this playback was exactly zero (saturating).
 		uint32_t silent_mix_blocks = 0;
+		// Whether mixing is currently suspended (see `audio/general/suspend_inaudible_playbacks`).
+		bool suspended = false;
+		// Stream position captured when suspension began; used to detect seeks that invalidate the retained lookahead.
+		double suspend_position = 0.0;
 	};
 
 	SafeList<AudioStreamPlaybackListNode *> playback_list;

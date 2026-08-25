@@ -195,16 +195,23 @@ void AudioServer::_mix_step() {
 		// Only playbacks that declare themselves safe opt in (plain file decoders) — generators, microphones
 		// and composite streams keep mixing so their internal state machines and ring buffers stay live.
 		// The exact-zero test makes the gate immune to downstream bus amplification: zero stays zero
-		// through any bus gain or effect chain.
-		if (suspend_inaudible_playbacks && !fading_out && playback->stream_playback->is_inaudible_suspension_safe()) {
-			// This snapshot is only used for the suspension decision; the mixing path below takes its own
+		// through any bus gain or effect chain. Note this only observes the playback's own route
+		// coefficients — bus-level mute/solo is applied further downstream and does not trigger suspension.
+		// A playback stopped through its public API must NOT be suspended: it has to reach mix() below so
+		// the zero-frame result walks it through the regular fade-out/deletion cleanup path.
+		bool waking_from_suspension = false;
+		if (suspend_inaudible_playbacks && !fading_out && playback->stream_playback->is_inaudible_suspension_safe() && playback->stream_playback->is_playing()) {
+			// Value copy of the atomic snapshot: the main thread may swap and reclaim the pointed-to
+			// details while this thread is preempted, so the pointer must not be re-dereferenced.
+			// This copy is only used for the suspension decision; the mixing path below takes its own
 			// snapshot after mix() as before, so the default-off behavior is untouched.
 			AudioStreamPlaybackBusDetails *gate_details_ptr = playback->bus_details.load();
 			ERR_FAIL_NULL(gate_details_ptr);
+			AudioStreamPlaybackBusDetails gate_details = *gate_details_ptr;
 			bool audible = false;
 			for (int idx = 0; idx < AuSC::MAX_BUSES_PER_PLAYBACK && !audible; idx++) {
 				for (int channel_idx = 0; channel_idx < channel_count && !audible; channel_idx++) {
-					if (gate_details_ptr->bus_active[idx] && (gate_details_ptr->volume[idx][channel_idx].left != 0.0f || gate_details_ptr->volume[idx][channel_idx].right != 0.0f)) {
+					if (gate_details.bus_active[idx] && (gate_details.volume[idx][channel_idx].left != 0.0f || gate_details.volume[idx][channel_idx].right != 0.0f)) {
 						audible = true;
 					}
 					if (playback->prev_bus_details->bus_active[idx] && (playback->prev_bus_details->volume[idx][channel_idx].left != 0.0f || playback->prev_bus_details->volume[idx][channel_idx].right != 0.0f)) {
@@ -214,18 +221,35 @@ void AudioServer::_mix_step() {
 			}
 			if (audible) {
 				playback->silent_mix_blocks = 0;
+				if (playback->suspended) {
+					playback->suspended = false;
+					// Resume ramps from silence even for buses with no previous entry (see below).
+					waking_from_suspension = true;
+					// If the stream was seeked or restarted while suspended, the retained lookahead
+					// holds frames from the old position — drop it instead of playing stale audio.
+					// (File decoder position getters are simple offset reads, safe from this thread.)
+					if (!Math::is_equal_approx(playback->stream_playback->get_playback_position(), playback->suspend_position)) {
+						for (int i = 0; i < AuSC::LOOKAHEAD_BUFFER_SIZE; i++) {
+							playback->lookahead[i] = AudioFrame(0, 0);
+						}
+					}
+				}
 			} else {
 				if (playback->silent_mix_blocks != UINT32_MAX) {
 					playback->silent_mix_blocks++;
 				}
 				if (playback->silent_mix_blocks > playback_disable_blocks) {
+					if (!playback->suspended) {
+						playback->suspended = true;
+						playback->suspend_position = playback->stream_playback->get_playback_position();
+					}
 					// The lookahead buffer is deliberately left untouched: it holds already-decoded frames
 					// that will play back (ramped up from silence) on resume, so no samples are lost.
 					if (tag_used_audio_streams && playback->stream_playback->is_playing()) {
 						playback->stream_playback->tag_used_streams();
 					}
 					// Keep the volume ramp state consistent for when the playback becomes audible again.
-					*playback->prev_bus_details = *gate_details_ptr;
+					*playback->prev_bus_details = gate_details;
 					continue;
 				}
 			}
@@ -309,6 +333,11 @@ void AudioServer::_mix_step() {
 				// If this bus was active in the previous mix step, we need to interpolate between the previous volume and the current volume to avoid pops. Set `prev_channel_volume` accordingly.
 				if (prev_bus_idx != -1) {
 					prev_channel_vol = playback->prev_bus_details->volume[prev_bus_idx][channel_idx];
+				} else if (waking_from_suspension) {
+					// A playback waking from inaudible suspension is resuming mid-stream, not starting a
+					// new sound: if it was suspended with an empty bus map (e.g. a 3D source beyond
+					// max_distance), ramp up from silence instead of jumping to full volume.
+					prev_channel_vol = AudioFrame(0, 0);
 				}
 				_mix_step_for_channel(channel_buf, buf, prev_channel_vol, channel_vol, playback->attenuation_filter_cutoff_hz.get(), playback->highshelf_gain.get(), &playback->filter_process[channel_idx * 2], &playback->filter_process[channel_idx * 2 + 1]);
 			}
