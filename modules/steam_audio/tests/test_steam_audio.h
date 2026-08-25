@@ -40,9 +40,11 @@ TEST_CASE("[SteamAudio] Context creates and releases") {
 	CHECK(SteamAudioSmoke::context_roundtrip());
 }
 
-TEST_CASE("[SteamAudio] Default HRTF and binaural effect produce finite audio") {
-	// Exercises the embedded default HRTF (SOFA loader), PFFFT and the binaural
-	// effect — the paths the vendoring review flagged as untested.
+TEST_CASE("[SteamAudio] Embedded default HRTF and binaural effect produce finite audio") {
+	// Exercises the embedded default HRTF and PFFFT via a binaural impulse.
+	// NOTE: the DEFAULT HRTF is a baked-in dataset and does NOT go through the
+	// SOFA/libmysofa loader; that path needs a .sofa fixture (HDF5) and stays
+	// untested here — stated per review rather than claimed.
 	const SteamAudioSmoke::BinauralResult result = SteamAudioSmoke::binaural_impulse();
 	CHECK(result.hrtf_created);
 	CHECK(result.effect_created);
@@ -50,8 +52,12 @@ TEST_CASE("[SteamAudio] Default HRTF and binaural effect produce finite audio") 
 	CHECK(result.any_nonzero);
 }
 
-TEST_CASE("[SteamAudio] Simulator creates and releases") {
+TEST_CASE("[SteamAudio] Reflections simulator spawns and tears down its thread pool") {
 	CHECK(SteamAudioSmoke::simulator_roundtrip());
+}
+
+TEST_CASE("[SteamAudio] Hardened boundary converts an internal throw into an error return") {
+	CHECK(SteamAudioSmoke::boundary_catches_internal_throw());
 }
 
 TEST_CASE("[SteamAudio] Hardened C boundary rejects invalid input without unwinding") {

@@ -46,5 +46,6 @@ bool context_roundtrip();
 BinauralResult binaural_impulse();
 bool simulator_roundtrip();
 bool boundary_rejects_invalid();
+bool boundary_catches_internal_throw();
 
 } // namespace SteamAudioSmoke

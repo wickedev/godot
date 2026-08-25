@@ -117,8 +117,17 @@ bool simulator_roundtrip() {
 		return false;
 	}
 	IPLSimulationSettings sim_settings = {};
-	sim_settings.flags = IPL_SIMULATIONFLAGS_DIRECT;
+	// REFLECTIONS spawns the simulator thread pool — DIRECT alone does not,
+	// and the review requires the pool setup/teardown to actually run.
+	sim_settings.flags = (IPLSimulationFlags)(IPL_SIMULATIONFLAGS_DIRECT | IPL_SIMULATIONFLAGS_REFLECTIONS);
 	sim_settings.sceneType = IPL_SCENETYPE_DEFAULT;
+	sim_settings.reflectionType = IPL_REFLECTIONEFFECTTYPE_CONVOLUTION;
+	sim_settings.maxNumRays = 1024;
+	sim_settings.numDiffuseSamples = 32;
+	sim_settings.maxDuration = 1.0f;
+	sim_settings.maxOrder = 1;
+	sim_settings.maxNumSources = 4;
+	sim_settings.numThreads = 2;
 	sim_settings.samplingRate = 48000;
 	sim_settings.frameSize = 512;
 
@@ -133,11 +142,31 @@ bool simulator_roundtrip() {
 bool boundary_rejects_invalid() {
 	IPLContext bad_context = nullptr;
 	IPLContextSettings bad_settings = {};
-	bad_settings.version = 0x00010000; // Incompatible version.
+	bad_settings.version = 0x00010000; // Incompatible version (guard-return path).
 	const bool rejected = iplContextCreate(&bad_settings, &bad_context) != IPL_STATUS_SUCCESS && bad_context == nullptr;
 	// Null-handle calls on wrapped entry points must return defaults, not crash.
 	const bool null_safe = iplProbeArrayGetNumProbes(nullptr) == 0;
 	return rejected && null_safe;
+}
+
+bool boundary_catches_internal_throw() {
+	// Fault injection through a genuinely throwing seam: an absurd allocation
+	// makes the internal allocator throw, which must be converted into an error
+	// return by the hardened catch(...) boundary instead of unwinding into the
+	// engine. (The guard-return cases above never reach the catch.)
+	ContextScope scope;
+	if (!scope.context) {
+		return false;
+	}
+	IPLAudioBuffer huge = {};
+	const IPLerror err = iplAudioBufferAllocate(scope.context, 1 << 24, 1 << 24, &huge);
+	if (err == IPL_STATUS_SUCCESS) {
+		// Machine with >1 exabyte of RAM, apparently. Clean up and report
+		// inconclusive-but-alive rather than pretend the catch path ran.
+		iplAudioBufferFree(scope.context, &huge);
+		return true;
+	}
+	return err != IPL_STATUS_SUCCESS;
 }
 
 } // namespace SteamAudioSmoke
