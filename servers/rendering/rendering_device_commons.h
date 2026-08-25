@@ -1038,6 +1038,9 @@ public:
 		SUPPORTS_HDR_OUTPUT,
 		SUPPORTS_RASTERIZATION_RATE_MAP,
 		SUPPORTS_GPU_MAPPABLE_BUFFER,
+		// Indirect draws that read their draw count from a GPU buffer, rather than taking it from
+		// the CPU at record time. Required to submit a GPU culling result without a readback.
+		SUPPORTS_DRAW_INDIRECT_COUNT,
 	};
 
 	enum SubgroupOperations {

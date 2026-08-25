@@ -391,6 +391,22 @@
 				Submits [param draw_list] for rendering on the GPU with the given parameters stored in the [param buffer] at [param offset]. Parameters being integers: vertex count, instance count, first vertex, first instance. And when using indices: index count, instance count, first index, vertex offset, first instance. Buffer must have been created with [constant STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT] flag.
 			</description>
 		</method>
+		<method name="draw_list_draw_indirect_count">
+			<return type="void" />
+			<param index="0" name="draw_list" type="int" />
+			<param index="1" name="use_indices" type="bool" />
+			<param index="2" name="buffer" type="RID" />
+			<param index="3" name="offset" type="int" />
+			<param index="4" name="count_buffer" type="RID" />
+			<param index="5" name="count_buffer_offset" type="int" default="0" />
+			<param index="6" name="max_draw_count" type="int" default="1" />
+			<param index="7" name="stride" type="int" default="0" />
+			<description>
+				Same as [method draw_list_draw_indirect], except the number of draws is read by the GPU from [param count_buffer] at [param count_buffer_offset] instead of being supplied by the CPU. The value read is a single 32-bit unsigned integer and is clamped to [param max_draw_count]. This allows a compute shader to decide how much to draw without a readback to the CPU, which is the basis of GPU-driven culling.
+				Both [param buffer] and [param count_buffer] must have been created with the [constant STORAGE_BUFFER_USAGE_DISPATCH_INDIRECT] flag, and [param count_buffer_offset] must be a multiple of 4.
+				[b]Note:[/b] You must check that the GPU supports this functionality by calling [method has_feature] with [constant SUPPORTS_DRAW_INDIRECT_COUNT] as a parameter. When it is unsupported, fall back to [method draw_list_draw_indirect] with a conservative draw count.
+			</description>
+		</method>
 		<method name="draw_list_enable_scissor">
 			<return type="void" />
 			<param index="0" name="draw_list" type="int" />
@@ -2849,6 +2865,10 @@
 		</constant>
 		<constant name="SUPPORTS_RASTERIZATION_RATE_MAP" value="14" enum="Features">
 			Support for rasterization rate maps. The current implementation targets Metal on Apple platforms. This allows for foveated rendering, which is used by the visionOS XR module.
+		</constant>
+		<constant name="SUPPORTS_DRAW_INDIRECT_COUNT" value="16" enum="Features">
+			Support for indirect draws that read their draw count from a GPU buffer, via [method draw_list_draw_indirect_count].
+			[b]Note:[/b] This is not supported on Metal, and requires the [code]VK_KHR_draw_indirect_count[/code] extension when using Vulkan (which MoltenVK does not provide). Always check this feature before calling [method draw_list_draw_indirect_count].
 		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
