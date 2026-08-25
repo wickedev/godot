@@ -4,6 +4,7 @@
 > 근거 정본: [unified-gbuffer 리서치](./godot-unified-gbuffer-aov-research.md) §2 Tier 모델.
 > **의견 수렴: C1(L1 리졸브) · C2(L2 vis-buffer) · C3(L3-대행, ReSTIR 소비자 관점 — Task #5 담당 자격) — 3인 서명 후 G1 동결.**
 > v1.0→v1.1 델타: ① objectid 24-bit 축소(TLAS `instanceCustomIndex:24` 절단 — C3 블로커) ② `gb_geo_normal` 추가 ③ 히스토리 계약·지터 규약 신설 ④ Metal 성립성 검증을 동결 전제로 추가(C1) ⑤ 인용 정정.
+> v1.1→v1.2 델타 (C2·C3 조건부 승인 반영): ⑥ 히스토리 계약을 4종으로(`gb_geo_normal` 포함 — C3-A안: 리저버 기각은 N-1 지오노멀 필요, RTXDI `previousFrame` surface 동형) ⑦ Nanite 모션의 LOD 전환 계약 신설(C2) ⑧ G2 파급 요구 명시: 지오 풀 정점당 **노멀+UV**, 탄젠트는 리졸브 해석적 유도로 저장 불요(C2) ⑨ §3 Nanite 경로 문구 정정: vis-buffer에 instance 필드 없음 — 클러스터 ID → 가시 클러스터 레코드 **역참조**(C2).
 
 ## 1. 동결되는 것 / 동결되지 않는 것
 
@@ -41,14 +42,22 @@
 
 규약:
 - 저장은 R32_UINT, **상위 8비트는 계약상 reserved-zero.**
-- 소비자: 비-Nanite opaque(`InstanceData.object_id` 신설) · Nanite vis-buffer 리졸브 · TLAS `AccelerationStructureInstance::id` — 셋이 **동일 값**.
+- 소비자: 비-Nanite opaque(`InstanceData.object_id` 신설) · **Nanite: vis-buffer의 클러스터 ID → 가시 클러스터 레코드 역참조로 얻은 instance ID를 리졸브가 기록**(vis-buffer 페이로드 34b는 클러스터 27b+트라이앵글 7b로 소진 — instance 필드를 넣을 자리도, 필요도 없음) · TLAS `AccelerationStructureInstance::id` — 셋이 **동일 값**. **설계 노트: objectid를 인스턴스 단위로 잡은 것은 LOD 전환에 불변이라 의도된 선택이다.**
 - 센티넬: **`0x00FFFFFF`** = "no object" (sky/클리어). ~~0xFFFFFFFF~~는 24-bit 절단 시 최대 유효 ID와 충돌하므로 폐기.
 - **무음 절단 금지:** ID 발급기는 2²⁴-2 초과 시 에러, 드라이버 대입부에는 `DEV_ASSERT((id & 0xFF000000) == 0)` 추가를 L1 배선 요구사항으로 동결.
 - `AccelerationStructureInstance::mask`(8-bit, `:1385`)는 L3의 RT 가시성 클래스 용도로 자유 — objectid와 무관.
 
-## 4. 히스토리 계약 (신설, 동결)
+## 4. 히스토리 계약 (동결, v1.2에서 4종으로 확장)
 
-**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal` · `gb_objectid` 3종 (ReSTIR 시간적 재사용 최소 요구). `gb_motion`은 현재 프레임만 보장. L1은 이 3종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
+**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal` · **`gb_geo_normal`** · `gb_objectid` **4종**. 리저버 기각(surface similarity)은 *현재*와 *재투영된 N-1* 서페이스를 비교하므로 지오메트릭 노멀도 N-1이 필요하다(RTXDI `RAB_GetGBufferSurface(previousFrame=true)`가 normal·geoNormal을 함께 반환하는 것과 동형). 히스토리 비용 +4 B/px. `gb_motion`은 현재 프레임만 보장. L1은 이 4종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
+
+### 4.1 Nanite 모션·히스토리의 LOD 전환 계약 (v1.2 신설, 동결)
+
+Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터 LOD 오차의 화면 투영으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다. §4의 N-1 `gb_normal`/`gb_geo_normal` 보장도 같은 캐비엇과 같은 상한을 받는다.
+
+## 4.2 G2 파급 요구 (v1.2 신설 — G2 계약에 위임하되 여기 기록)
+
+Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸브는 히트 지점 머티리얼 평가를 요구한다 → **지오 풀은 정점당 노멀 + UV를 보유해야 한다.** **탄젠트는 저장하지 않는다** — vis-buffer 리졸브는 트라이앵글 3정점의 위치+UV에서 탄젠트 프레임을 해석적으로 계산한다(정점 탄젠트도 화면공간 미분도 불요). 현 S1 DAG는 위치만 보존하므로 G2 확정 시 확장한다(L2).
 
 ## 5. 동결 전제 검증 항목 (서명 전 필수)
 
@@ -69,8 +78,8 @@
 | 레인 | 담당 | 판정 | 비고 |
 |---|---|---|---|
 | L1 (리졸브·FB 배선) | C1 | ⬜ 대기 | §5 Metal 성립성 확인 포함 |
-| L2 (vis-buffer → 리졸브) | C2 | ⬜ 대기 | |
-| L3-대행 (ReSTIR/RT 입력) | C3 | 🟡 조건부 — v1.1 반영으로 재판정 요청 | v1.0에 🔴(24-bit 블로커·geo-normal·히스토리) → 전건 반영됨 |
+| L2 (vis-buffer → 리졸브) | C2 | 🟡 조건부(v1.1) → **v1.2 반영으로 서명 요청** | 요구 ③(LOD-모션 계약)·④(G2 노멀+UV)·①(역참조 문구) 전건 반영 |
+| L3-대행 (ReSTIR/RT 입력) | C3 | 🟡 조건부(v1.1) → **v1.2 반영으로 서명 요청** | §4 히스토리 4종(A안) 반영 |
 | 메인테이너 | ✅ 제안 | | |
 
 3인 승인 시 이 문서가 **G1 동결본**이 되고, 이후 변경은 4레인 합의 + 로드맵 개정을 요구한다.
