@@ -94,10 +94,16 @@ int test_main(int argc, char *argv[]) {
 	WorkerThreadPool::get_singleton()->init();
 
 	{
+		// This run works in its own unique root (see TestUtils::get_temp_path), so stale
+		// state cannot leak in; sweeping leftovers of previous crashed runs is best-effort.
+		const String temp_base = OS::get_singleton()->get_cache_path().path_join("godot_test");
+		Ref<DirAccess> da = DirAccess::open(temp_base);
+		if (da.is_valid()) {
+			da->erase_contents_recursive();
+		}
 		const String test_path = TestUtils::get_temp_path("");
-		Ref<DirAccess> da = DirAccess::open(test_path); // get_temp_path() automatically creates the folder.
-		ERR_FAIL_COND_V(da.is_null(), 0);
-		ERR_FAIL_COND_V_MSG(da->erase_contents_recursive() != OK, 0, "Failed to delete files");
+		Ref<DirAccess> run_da = DirAccess::open(test_path); // get_temp_path() automatically creates the folder.
+		ERR_FAIL_COND_V(run_da.is_null(), 0);
 	}
 
 	// Run custom test tools.
@@ -148,7 +154,19 @@ int test_main(int argc, char *argv[]) {
 		delete[] doctest_args;
 	}
 
-	return test_context.run();
+	const int test_res = test_context.run();
+
+	{
+		// Remove this run's unique temp root (best-effort; a crashed run's root is
+		// swept by the next run's startup sweep above).
+		const String test_path = TestUtils::get_temp_path("");
+		Ref<DirAccess> da = DirAccess::open(test_path);
+		if (da.is_valid() && da->erase_contents_recursive() == OK) {
+			DirAccess::remove_absolute(test_path);
+		}
+	}
+
+	return test_res;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

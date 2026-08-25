@@ -44,9 +44,17 @@ String TestUtils::get_executable_dir() {
 }
 
 String TestUtils::get_temp_path(const String &p_suffix) {
-	const String temp_base = OS::get_singleton()->get_cache_path().path_join("godot_test");
-	DirAccess::make_dir_absolute(temp_base); // Ensure the directory exists.
-	return temp_base.path_join(p_suffix);
+	// Each run gets a unique root: leftovers from a previous run (or a crashed run
+	// that never reached cleanup) must never be observable, and two test binaries
+	// running concurrently must not share directories. The root is removed at the
+	// end of the run in test_main.cpp.
+	static String run_root;
+	if (run_root.is_empty()) {
+		run_root = OS::get_singleton()->get_cache_path().path_join("godot_test").path_join(
+				"run_" + itos(OS::get_singleton()->get_process_id()) + "_" + itos(OS::get_singleton()->get_ticks_usec()));
+	}
+	DirAccess::make_dir_recursive_absolute(run_root); // Ensure the directory exists.
+	return run_root.path_join(p_suffix);
 }
 
 String &TestProjectSettingsInternalsAccessor::resource_path() {
