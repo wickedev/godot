@@ -290,7 +290,7 @@ L9 인프라      [Sentry+프로파일러P0/P1]──[P2]──[P3]────�
 |------|-----------|--------|
 | **GPU 게임플레이 물리** | 🔴 P4 "자체 구현 금지, 업스트림과 충돌" | 🟡 **P2.** `Jolt/Compute`+`Jolt/Shaders` 벤더링. 충돌 대상 자체가 없음(포크·디스커넥트) |
 | **스트랜드 헤어 물리** | 🔴 P3 장기 "Jolt `Physics/Hair` 대기" | 🟡 **스코프 내.** 시뮬 = 벤더링 / 렌더 = 스트랜드 래스터 + Marschner·Chiang BSDF(L1+L6) |
-| **소프트바디 셀프 콜리전** | 🔴 "Jolt 업스트림 대기" | ⚪ **미검증.** `Physics/SoftBody`는 번들에 있음 → Jolt 5.6.0이 셀프 콜리전을 지원하는지 **소스 직접 확인 필요**. 미지원일 때만 진짜 자체 구현 |
+| **소프트바디 셀프 콜리전** | 🔴 "Jolt 업스트림 대기" | 🔴 **자체 구현 확정 (2026-08-25 실측, C4).** 번들 5.6.0의 `SoftBody/` 전체에서 셀프 콜리전 심볼 0건 — 있는 것은 `Shape::CollideSoftBodyVertices`(버텍스 vs 외부 shape) + `SoftBodyShape.cpp:118`(바디 A 버텍스 vs 바디 B shape)뿐, **인트라바디 경로 부재**. constraint도 Edge/DihedralBend/Volume/LRA/Skinned뿐. (B)에서 유일하게 벤더링으로 안 풀리는 항목 — L5 자체 구현, XPBD 셀프 콜리전 브로드페이즈 신설 |
 
 ### (C) 기술적으로 틀린 *수단* → 목표는 유지, **수단만 교체** (뒤집지 않음)
 
