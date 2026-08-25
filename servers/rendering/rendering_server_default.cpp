@@ -297,6 +297,13 @@ void RenderingServerDefault::finish() {
 			server_task_id = WorkerThreadPool::INVALID_TASK_ID;
 		}
 		server_thread = Thread::MAIN_ID;
+
+		RenderingDevice *rd = RenderingDevice::get_singleton();
+		if (rd) {
+			// The render thread took ownership in _assign_mt_ids() and has now been joined, so
+			// give it back. Everything from here on, including finalize(), runs on this thread.
+			rd->make_current();
+		}
 	} else {
 		_finish();
 	}
