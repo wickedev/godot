@@ -217,7 +217,7 @@
 
 > **2026-08-18 신설 (AAA 기준).** 상세: [godot-physics-simulation-research.md](./godot-physics-simulation-research.md)
 
-**핵심 — Jolt Physics가 이미 빌트인** (`modules/jolt_physics/`): 강체·영역·소프트바디·6종 조인트. **GPU 물리(🔴 P4)를 제외하면 AAA에서도 CPU Jolt로 충분**하다 — GPU 물리는 업스트림과도 충돌하는 장기 항목이고, CPU Jolt가 AAA 강체·차량·의류 시뮬을 감당한다.
+**핵심 — Jolt Physics가 이미 빌트인** (`modules/jolt_physics/`): 강체·영역·소프트바디·6종 조인트. CPU Jolt가 AAA 강체·차량·의류 시뮬을 감당한다. **GPU 게임플레이 물리는 자체 솔버(Wave 4)** — upstream `Jolt/Compute`는 헤어 전용 추상화라 벤더링으로 얻는 것은 토대뿐(2026-08-25 확정, [로드맵 §15-B](./godot-openworld-implementation-roadmap.md)).
 
 | 격차 | AAA 신호 | 요점 |
 |------|---------|------|
@@ -227,9 +227,9 @@
 | 결정론·스냅샷·롤백 | 🟡 P1 | SCsub 1줄 + ~300줄. 넷코드 시 P0 |
 | 캐릭터 컨트롤러 | 🟢 P0 | GDScript step-up 2~3일 |
 | 멀티스레딩·성능 | 🟢 P0 | GDScript 스트리밍 매니저 1~2주(코어 0) |
-| GPU 물리 | ~~🔴 P4~~ → 🟡 **P2 스코프 내** | ~~CPU Jolt로 충분. 업스트림 대기~~ **[2026-08-25 반전]** `Jolt/Compute`·`Jolt/Shaders`는 upstream Jolt 5.6.0에 **실재**하며 Godot이 벤더링에서 제외(`thirdparty/README.md:519`) → 대기가 아니라 **번들 범위 확대** |
+| GPU 물리 | 🔴 **자체 솔버 (Wave 4)** | [2026-08-25 최종] upstream `Jolt/Compute`는 헤어 전용 추상화(소비자 = Hair뿐) — 벤더링(완료, 병합 대기)은 컴퓨트 추상화 토대만 제공. 게임플레이 GPU 물리는 자체 개발, G5 이후 재견적 |
 
-**AAA 재채점 반전:** 파괴(🟡 P2→P1)와 클로스(의류가 SpringBone→SoftBody B1+B3+B4로 격상)가 스타일라이즈드 근거로 강등돼 있던 것을 되돌렸다. GPU 물리만 🔴 유지.
+**AAA 재채점 반전:** 파괴(🟡 P2→P1)와 클로스(의류가 SpringBone→SoftBody B1+B3+B4로 격상)가 스타일라이즈드 근거로 강등돼 있던 것을 되돌렸다. GPU 물리는 🔴 자체 솔버(Wave 4), 스트랜드 헤어 시뮬은 벤더링+패치로 확보(CPU 경로).
 
 ---
 

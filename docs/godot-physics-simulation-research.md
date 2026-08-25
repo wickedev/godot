@@ -19,7 +19,7 @@
 | **결정론·스냅샷** | `JPH_CROSS_PLATFORM_DETERMINISTIC` **미정의**. `StateRecorder` 참조 0. 물리 스냅샷/복원 API 전무 | `StateRecorderImpl.cpp` 컴파일됨. `JoltStream{Input,Output}Wrapper` 양방향 이미 존재. `StateRecorderFilter`로 부분 저장 가능 | 🟡 **국소 코어** (SCsub 1줄 + 서버 메서드 2개) | 1~2주 | 🟡 **P1** (넷코드 필요 시 🟢 P0) |
 | **캐릭터 컨트롤러** | Jolt `CharacterVirtual` 참조 0. `PhysicsServer3D`에 `character` grep **0매치**. 계단 오르기(`stair` grep 0), 강체 밀어내기 없음 | `CharacterVirtual.cpp` 컴파일됨 — `WalkStairs`/`StickToFloor`/`ExtendedUpdate`/`SaveState`/캐릭터-vs-캐릭터/`mMaxStrength` 전부 구현돼 있음 | 🟡 **국소 코어** (신규 서버 API + 노드) / 계단만이면 🟢 GDScript 우회 | 2~4주 (계단 우회는 2일) | 🟢 **P0** |
 | **멀티스레딩·성능** | 물리 바디 스트리밍/활성 영역 개념 없음(`physics_streaming`/`activation_region`/`physics_lod` grep 각 0). `max_bodies` 기본 10240 재시작 필요 | `JoltJobSystem`이 **`WorkerThreadPool` 정상 사용**. `AddBodiesPrepare/Finalize` 배치 삽입 이미 사용. `DISABLE_MODE_REMOVE`로 노드 단위 제거 가능 | 🟢 **순수 GDScript/GDExtension** (스트리밍 매니저) | 1~2주 | 🟢 **P0** (저비용 고효과) |
-| **GPU 물리** | 파티클 충돌은 **단방향** — 월드가 반응 안 함. GPU→CPU는 AABB 전체 스톨 리드백 1개뿐. Godot이 Jolt의 `Jolt/Compute`·`Jolt/Shaders`·`Physics/Hair`를 **번들에서 의도적으로 제외** | `buffer_get_data_async` 바인딩됨(§Nanite 문서). SDF/Heightfield 콜라이더 존재 | 🔴 **대규모 코어** (실제 양방향) / 🟡 근사 대체는 GDScript | — | 🔴 **P4 (비권장)** |
+| **GPU 물리** | 파티클 충돌은 **단방향** — 월드가 반응 안 함. GPU→CPU는 AABB 전체 스톨 리드백 1개뿐. ~~Godot이 `Jolt/Compute`·`Shaders`·`Physics/Hair`를 번들에서 제외~~ [2026-08-25: 3폴더 벤더링 완료(병합 대기) — 단 Compute는 헤어 전용 추상화라 GPU 게임플레이 물리는 여전히 부재] | `buffer_get_data_async` 바인딩됨(§Nanite 문서). SDF/Heightfield 콜라이더 존재 | 🔴 **대규모 코어** (실제 양방향) / 🟡 근사 대체는 GDScript | — | 🔴 **P4 (비권장)** |
 
 **전략적 결론 미리보기:** 🟢 P0 3개(캐릭터 계단 우회 → 물리 스트리밍 → 차량)가 AAA에서도 최우선 과제다. **AAA 재평가(2026-08-18):** 기존 "원신급" 목표에서는 런타임 파괴·클로스·GPU 물리가 낮은 우선순위였으나, AAA 포토리얼 목표에서는 파괴(§3)와 클로스(§4)의 우선순위가 상승한다. GPU 물리(§8)는 여전히 P4 — AAA에서도 CPU Jolt로 충분하고 업스트림과 충돌하기 때문.
 
@@ -291,7 +291,7 @@ settings->CreateConstraints(&vertex_attrib, 1, JPH::SoftBodySharedSettings::EBen
 | **B2** | `mLRAConstraints` 활성화 (핀 정점 기준 최대 거리) — 늘어짐 방지 | 위와 동일 | 2~3일 |
 | **B3** | 공기 저항 구현 — `_apply_environmental_forces`의 면 루프에 상대속도 항 추가(`F = -0.5·ρ·Cd·A·(n·v)·|v|·n`). Jolt 수정 불요, Godot 코드만 | `jolt_soft_body_3d.cpp:232-311` | **1~2일. drag 속성이 이미 인스펙터에 있으니 죽은 속성을 살리는 셈 — ROI 최고.** |
 | **B4** | 스킨드 제약 — `Skeleton3D` 본 행렬을 매 프레임 `SkinVertices()`에 전달, `mSkinnedConstraints` + max distance 정점 가중치 | 신규 서버 API + `SoftBody3D` 스켈레톤 연동 | **2~4주** (데이터 모델·임포트 워크플로 포함) |
-| **B5** | 셀프 콜리전 | **Jolt 업스트림 작업 필요** | 🔴 범위 밖 |
+| **B5** | 셀프 콜리전 | ~~Jolt 업스트림 작업 필요~~ [2026-08-25 확정: upstream 5.6.0 미지원 — 자체 구현(L5)] | 🔴 자체 구현 |
 | **B6** | 클로스 LOD (거리별 `simulation_precision` 조절 / 원거리 스프링본 대체) | 순수 GDScript | 2~3일 |
 
 ### (e) 현실적 대안 — AAA에서의 전략
@@ -305,7 +305,7 @@ settings->CreateConstraints(&vertex_attrib, 1, JPH::SoftBodySharedSettings::EBen
 | **SpringBone만** | **높음** — 치마·망토·코트에서 드레이프·주름이 없음. AAA 캐릭터 존재감에 치명적. 원신급 타깃에서만 유효 | 머리카락·장식 흔들림 (AAA에서도 충분) |
 | **SoftBody B1+B3 (굽힘+공기저항)** | **중간** — 드레이프는 자연스러우나 스킨드 제약 없이 캐릭터에 부착 불가. 환경 천(깃발·커튼)에만 충분 | 환경 오브젝트 |
 | **SoftBody B1+B3+B4 (굽힘+공기저항+스킨드)** | **낮음** — AAA 캐릭터 의류 시뮬레이션의 최소 요구선. UE Chaos Cloth 대비 셀프 콜리전만 결여 | **캐릭터 의상 (권장)** |
-| **UE Chaos Cloth / NvCloth** | **없음** (기준) | 셀프 콜리전 + LOD 포함. B5(셀프 콜리전)는 Jolt 업스트림 대기 |
+| **UE Chaos Cloth / NvCloth** | **없음** (기준) | 셀프 콜리전 + LOD 포함. B5(셀프 콜리전)는 자체 구현 확정(upstream 미지원 실측) |
 
 ### (f) 우선순위: 🟡 **P1** (AAA 재평가: 유지)
 B1+B3(굽힘+공기저항)은 P1, B4(스킨드 제약)는 AAA에서 P1으로 격상, B6(클로스 LOD)는 P2.
@@ -536,13 +536,13 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 
 ⇒ **GPU 파티클은 게임플레이 물리와 상호작용할 수 없다.** 파티클이 세계를 느끼기만 하고, 세계는 파티클을 모른다.
 
-### (c) Jolt의 GPU 경로는 Godot이 **의도적으로 제외**했다
+### (c) ~~Jolt의 GPU 경로는 Godot이 의도적으로 제외했다~~ [2026-08-25: 벤더링 완료(병합 대기) — 단 그 경로의 정체가 달랐다]
 
 `thirdparty/README.md`가 명시하듯 번들에서 `Jolt/Compute/`, `Jolt/Shaders/`, `Jolt/Physics/Hair/` 3개 폴더가 빠져 있다. 즉 **업스트림 Jolt 5.6에는 GPU 컴퓨트 경로와 헤어 시뮬레이션이 존재하지만 Godot은 가져오지 않았다.**
 
 이건 두 가지를 뜻한다:
 1. (부정) 오늘 Godot에서 Jolt GPU 경로를 쓸 수 없다.
-2. **(긍정) 업스트림이 그 방향으로 가고 있으므로, 나중에 번들 정책만 바꾸면 따라갈 수 있다.** 지금 자체 GPU 물리를 만드는 건 미래의 업스트림과 정면충돌한다.
+2. ~~(긍정) 업스트림이 그 방향으로 가고 있으므로 번들 정책만 바꾸면 따라갈 수 있다. 자체 GPU 물리는 업스트림과 정면충돌한다.~~ **[2026-08-25 기각]** upstream 감사 결과 `Jolt/Compute`는 헤어 전용 추상화 — 업스트림에 GPU 게임플레이 물리 방향성 자체가 없다. 자체 솔버(Wave 4)가 충돌하는 대상은 존재하지 않으며, 벤더링된 추상화는 그 솔버의 토대로 재사용한다.
 
 ### (d) 경계와 대안
 
@@ -578,8 +578,8 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | `StateRecorder` 스냅샷/복원 API | | ✅ (~300줄) | |
 | **Jolt 차량 노출** | | ✅ (신규 constraint + 노드) | |
 | **Jolt `CharacterVirtual` 노출** | | ✅ (신규 서버 API + 노드) | |
-| 소프트바디 셀프 콜리전 | | | 🔴 Jolt 업스트림 |
-| **스트랜드 헤어 물리** | | | 🔴 Jolt `Physics/Hair` 업스트림 |
+| 소프트바디 셀프 콜리전 | | | 🔴 자체 구현 (upstream 미지원 확정) |
+| **스트랜드 헤어 물리** | | | ✅ 벤더링+바람 패치 (CPU 경로, 병합 대기) |
 | GPU 게임플레이 물리 | | | 🔴 렌더러+물리 동시 개조 |
 
 **핵심 통찰:** 이 표에 **"대규모 포크"가 단 3줄뿐**이고, 그 셋 다 "안 해도 되는" 또는 "업스트림 대기" 항목이다. 렌더러 격차 문서들(§1~3)에서 절벽이 항상 "코어 통합"에 있었던 것과 대조적으로, **물리 영역엔 절벽이 없다.** 전부 완만한 경사다. **AAA에서도 이 구조는 변하지 않는다** — 달라진 것은 우선순위(클로스 B4, 파괴 Phase C의 P1 격상)뿐.
@@ -653,7 +653,7 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 1. `JPH_CROSS_PLATFORM_DETERMINISTIC` 활성 시 Godot 씬에서의 **실측 성능 손실률** (Jolt는 일반적으로 한 자릿수 %로 보고하나 Godot 워크로드 미측정).
 2. Jolt 차량을 신규 `JointType`으로 넣을지 별도 RID 계열로 넣을지 — 업스트림 기여를 노린다면 API 설계 합의가 선행돼야 함.
 3. `CharacterVirtual`을 `PhysicsServer3D` 추상에 넣으면 GodotPhysics3D 백엔드가 구현 불가 → **백엔드별 선택적 기능(capability query)** 패턴이 Godot 물리 서버에 아직 없음. 이 설계 문제가 차량·캐릭터·스냅샷 전부에 공통으로 걸린다.
-4. Jolt `Jolt/Compute`·`Jolt/Shaders`·`Physics/Hair`의 성숙도와 Godot 번들 편입 일정 (업스트림 로드맵 미확인).
+4. ~~Jolt GPU 3폴더의 성숙도와 번들 편입 일정~~ [2026-08-25 해소: 편입 완료(병합 대기). 성숙도는 실측됨 — Hair "still in development"(바람 없음·LOD 없음·ConvexHull 한정), Compute는 헤어 전용 추상화].
 5. 스트리밍 시 `max_bodies` 재구성 — Jolt `PhysicsSystem::Init` 이후 변경 불가이므로, 공간 재생성 없이 늘리는 방법이 있는지.
 
 ---

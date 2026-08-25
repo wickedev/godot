@@ -281,14 +281,11 @@ L9 인프라      [Sentry+프로파일러P0/P1]──[P2]──[P3]────�
 | GPU 컬링 결과의 CPU 가시성 반영 | "대규모 코어, 비권장" | **L2.** Nanite 워크스트림에 흡수 |
 | 프리인테그레이티드 SSS LUT · 스트랜드 헤어 | "스타일라이즈드엔 불필요" | **L6.** 이미 AAA 재채점에서 복귀 완료 |
 
-### (B) ⭐ "업스트림 대기"로 뺀 것 → **사실오인. 벤더링하면 끝**
+### (B) "업스트림 대기"로 뺀 것 → **항목별로 갈린다 (2026-08-25 upstream 감사로 최종 확정)**
 
-**이번 재검토의 최대 발견.** 물리·헤어 3항목이 *"Jolt 업스트림 대기 / 자체 구현 금지"* 로 배제돼 있었는데, **전제가 사실이 아니다.**
+경위: 1차 재검토는 *"Jolt에 없는 게 아니라 Godot이 안 가져온 것 → 벤더링하면 끝"* 으로 세 항목을 일괄 반전했으나, **upstream 감사(C4)가 그 일괄 판정을 기각**했다 — `Jolt/Compute`는 헤어 전용 컴퓨트 추상화이고 GPU 게임플레이 물리는 upstream에도 없다. 항목별 최종 상태:
 
-> `thirdparty/README.md:519` — *"All files in `Jolt/`, except ... the `Jolt/Physics/Hair/`, `Jolt/Compute/` and `Jolt/Shaders/` folders."*
-> 번들 Jolt는 **5.6.0**(`e77f1755`). 로컬 실측: `Jolt/{Compute,Shaders,Physics/Hair}` **전부 ABSENT**, `Physics/SoftBody`는 PRESENT.
-
-**즉 "Jolt에 아직 없다"가 아니라 "Jolt에 있는데 Godot이 안 가져왔다"** — 포크에서는 **번들 범위 확대 + SCons 통합 + `RegisterTypes` 배선**이다. man-year가 아니다.
+> 원 근거였던 `thirdparty/README.md`의 3폴더 제외 문구는 **Jolt 벤더링 브랜치(c4/l5-jolt-vendoring, master 병합 대기)에서 이미 갱신**됐다 — master의 :519는 병합 시점까지만 유효.
 
 | 항목 | 기존 판정 | 재판정 |
 |------|-----------|--------|
