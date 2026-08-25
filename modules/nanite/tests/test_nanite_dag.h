@@ -571,6 +571,11 @@ TEST_CASE("[Nanite] DAG survives a save and reload") {
 
 	CHECK(reloaded->geometry_hash == original->geometry_hash);
 	CHECK(reloaded->settings_hash == original->settings_hash);
+	// The stored error is a measured maximum, not a proven bound, so the
+	// density it was measured at has to survive with it or the number cannot
+	// be interpreted on the other side.
+	CHECK(original->deviation_samples_per_triangle > 0);
+	CHECK(reloaded->deviation_samples_per_triangle == original->deviation_samples_per_triangle);
 	CHECK(reloaded->normals.size() == original->normals.size());
 	CHECK(reloaded->uvs.size() == original->uvs.size());
 	for (uint32_t i = 0; i < original->get_cluster_count(); i++) {
@@ -933,6 +938,13 @@ TEST_CASE("[Nanite] A structurally broken payload is refused") {
 		const Ref<NaniteDAG> loaded = reload_corrupted([](Ref<NaniteDAG> &d) {
 			d->cluster_indices[d->clusters[0].triangle_offset] = 254;
 			d->clusters[0].vertex_count = 3;
+		});
+		CHECK(!loaded->validate().is_empty());
+	}
+
+	SUBCASE("an error with no sampling density to interpret it by") {
+		const Ref<NaniteDAG> loaded = reload_corrupted([](Ref<NaniteDAG> &d) {
+			d->deviation_samples_per_triangle = 0;
 		});
 		CHECK(!loaded->validate().is_empty());
 	}

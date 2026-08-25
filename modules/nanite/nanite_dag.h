@@ -67,7 +67,7 @@ public:
 	static constexpr uint32_t NO_GROUP = 0xFFFFFFFFu;
 
 	// On-disk layout. Bumped when the serialized structure changes.
-	static constexpr uint32_t FORMAT_VERSION = 2;
+	static constexpr uint32_t FORMAT_VERSION = 3;
 	// The algorithm. Bumped when the same input would now produce a different
 	// DAG -- a change that leaves the layout untouched but makes every stored
 	// artifact stale. Keeping this separate from the format version is what
@@ -143,6 +143,13 @@ public:
 	uint64_t settings_hash = 0;
 	uint64_t geometry_hash = 0;
 	String source_hint; // Non-authoritative, for humans reading a stray file.
+
+	// How densely each simplified triangle was sampled when measuring how far
+	// the surface moved. The stored error is the largest deviation found at
+	// those samples, not a proven analytic bound, so a consumer cannot tell
+	// what the number means without knowing this. Zero means unrecorded, which
+	// only happens for a DAG built before the field existed.
+	uint32_t deviation_samples_per_triangle = 0;
 
 	static uint32_t encode_normal(const Vector3 &p_normal);
 	static Vector3 decode_normal(uint32_t p_encoded);

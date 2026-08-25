@@ -211,6 +211,11 @@ Vector<String> NaniteDAG::validate() const {
 	if (uvs.size() != vertex_count) {
 		errors.push_back(vformat("UV buffer holds %d entries for %d vertices.", uvs.size(), vertex_count));
 	}
+	if (deviation_samples_per_triangle == 0 && !groups.is_empty()) {
+		// Without it the stored error is an uninterpretable number: a consumer
+		// cannot tell a densely measured deviation from a sparsely measured one.
+		errors.push_back("Deviation sampling density is unrecorded, so the stored error cannot be interpreted.");
+	}
 	if (level_offsets.is_empty()) {
 		errors.push_back("Level offset table is empty.");
 	} else {
@@ -378,9 +383,9 @@ LocalVector<uint32_t> NaniteDAG::select_cut(float p_threshold) const {
 }
 
 String NaniteDAG::get_report() const {
-	String report = vformat("Nanite DAG: %d levels, %d clusters, %d groups, %d triangles, %d vertices (format %d, builder %d)\n",
+	String report = vformat("Nanite DAG: %d levels, %d clusters, %d groups, %d triangles, %d vertices (format %d, builder %d, %d deviation samples/triangle)\n",
 			get_level_count(), get_cluster_count(), get_group_count(), get_triangle_count(), vertex_count,
-			FORMAT_VERSION, BUILDER_VERSION);
+			FORMAT_VERSION, BUILDER_VERSION, deviation_samples_per_triangle);
 	report += "  level | clusters | triangles | max error\n";
 	report += "  ------+----------+-----------+----------\n";
 	for (uint32_t level = 0; level < get_level_count(); level++) {
@@ -604,6 +609,7 @@ PackedByteArray NaniteDAG::_serialize() const {
 	write_u32(data, surface_index);
 	write_u64(data, settings_hash);
 	write_u64(data, geometry_hash);
+	write_u32(data, deviation_samples_per_triangle);
 
 	const CharString hint = source_hint.utf8();
 	write_u32(data, hint.length());
@@ -709,6 +715,7 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 	parsed->surface_index = reader.u32();
 	parsed->settings_hash = reader.u64();
 	parsed->geometry_hash = reader.u64();
+	parsed->deviation_samples_per_triangle = reader.u32();
 	parsed->source_hint = reader.utf8();
 
 	parsed->vertex_count = reader.u32();
@@ -799,6 +806,7 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 	surface_index = parsed->surface_index;
 	settings_hash = parsed->settings_hash;
 	geometry_hash = parsed->geometry_hash;
+	deviation_samples_per_triangle = parsed->deviation_samples_per_triangle;
 	source_hint = parsed->source_hint;
 	vertex_count = parsed->vertex_count;
 	positions = std::move(parsed->positions);
@@ -876,6 +884,7 @@ Dictionary NaniteDAG::_get_statistics_bind() const {
 	stats["triangle_count"] = get_triangle_count();
 	stats["vertex_count"] = vertex_count;
 	stats["surface_index"] = surface_index;
+	stats["deviation_samples_per_triangle"] = deviation_samples_per_triangle;
 
 	Array levels;
 	for (uint32_t level = 0; level < get_level_count(); level++) {

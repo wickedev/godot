@@ -168,6 +168,12 @@ float max_gap_from_corners(const Vector3 &p_a, const Vector3 &p_b, const Vector3
 	return (ab * bc * ca) / (4.0f * area);
 }
 
+// Centroid plus the three edge midpoints. Recorded in the artifact, because
+// the stored error is the largest deviation seen at these samples rather than a
+// proven bound, and a consumer that does not know the density cannot say what
+// the number means.
+constexpr uint32_t DEVIATION_SAMPLES_PER_TRIANGLE = 4;
+
 struct DeviationBound {
 	// Sampled interior deviation of the simplified surface from the original.
 	// Not a bound -- it is what the analytic term assumes the worst about --
@@ -274,7 +280,7 @@ DeviationBound measure_deviation(const float *p_positions, const LocalVector<uin
 		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
 		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
 		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
-		const Vector3 samples[4] = { (a + b + c) / 3.0f, (a + b) * 0.5f, (b + c) * 0.5f, (c + a) * 0.5f };
+		const Vector3 samples[DEVIATION_SAMPLES_PER_TRIANGLE] = { (a + b + c) / 3.0f, (a + b) * 0.5f, (b + c) * 0.5f, (c + a) * 0.5f };
 
 		for (const Vector3 &sample : samples) {
 			float nearest = FLT_MAX;
@@ -573,6 +579,7 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 	// Identity, per the artifact contract. The geometry hash covers what the
 	// builder actually consumed rather than the source file, because scene
 	// import options change this geometry without touching the file.
+	dag->deviation_samples_per_triangle = DEVIATION_SAMPLES_PER_TRIANGLE;
 	dag->settings_hash = hash_settings(p_settings);
 	dag->geometry_hash = hash_geometry(p_positions, p_normals, p_uvs, p_indices);
 
