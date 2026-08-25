@@ -160,6 +160,19 @@ public:
 	// Non-virtual: installs the generated-file sink around post_process() without
 	// changing the virtual's signature, which external C++ subclasses override.
 	void run_post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, const String &p_source_file, List<String> *r_gen_files);
+
+private:
+	// Saves and restores rather than clearing: an import triggered from inside
+	// another one would otherwise null the outer sink on the way out.
+	struct GeneratedFileScope {
+		EditorScenePostImportPlugin *plugin = nullptr;
+		List<String> *saved_gen_files = nullptr;
+		String saved_source_file;
+		GeneratedFileScope(EditorScenePostImportPlugin *p_plugin, const String &p_source_file, List<String> *p_gen_files);
+		~GeneratedFileScope();
+	};
+
+public:
 };
 
 VARIANT_ENUM_CAST(EditorScenePostImportPlugin::InternalImportCategory)

@@ -219,12 +219,20 @@ void EditorScenePostImportPlugin::post_process(Node *p_scene, const HashMap<Stri
 	current_options = nullptr;
 }
 
+EditorScenePostImportPlugin::GeneratedFileScope::GeneratedFileScope(EditorScenePostImportPlugin *p_plugin, const String &p_source_file, List<String> *p_gen_files) :
+		plugin(p_plugin), saved_gen_files(p_plugin->current_gen_files), saved_source_file(p_plugin->current_source_file) {
+	plugin->current_gen_files = p_gen_files;
+	plugin->current_source_file = p_source_file;
+}
+
+EditorScenePostImportPlugin::GeneratedFileScope::~GeneratedFileScope() {
+	plugin->current_gen_files = saved_gen_files;
+	plugin->current_source_file = saved_source_file;
+}
+
 void EditorScenePostImportPlugin::run_post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, const String &p_source_file, List<String> *r_gen_files) {
-	current_gen_files = r_gen_files;
-	current_source_file = p_source_file;
+	GeneratedFileScope scope(this, p_source_file, r_gen_files);
 	post_process(p_scene, p_options);
-	current_source_file = String();
-	current_gen_files = nullptr;
 }
 
 void EditorScenePostImportPlugin::add_generated_file(const String &p_path) {
@@ -238,6 +246,13 @@ void EditorScenePostImportPlugin::add_generated_file(const String &p_path) {
 	ERR_FAIL_COND_MSG(!p_path.begins_with("res://"), vformat("add_generated_file(): \"%s\" is not a res:// path. Relative paths, user:// and uid:// aliases are not accepted.", p_path));
 	ERR_FAIL_COND_MSG(p_path.begins_with("res://.godot/"), vformat("add_generated_file(): \"%s\" is inside res://.godot/. That directory is managed by the importer, and a plugin writing there does not go through the import staging the editor expects.", p_path));
 	ERR_FAIL_COND_MSG(p_path != p_path.simplify_path(), vformat("add_generated_file(): \"%s\" is not in canonical form.", p_path));
+	// simplify_path() is NOT containment: it deliberately keeps a leading ".."
+	// on a res:// path, because the glTF importer relies on reaching above the
+	// project root (see the FIXME at String::simplify_path). So "res://../x"
+	// survives canonicalization unchanged and has to be rejected here.
+	ERR_FAIL_COND_MSG(p_path.trim_prefix("res://").split("/", false).has(".."), vformat("add_generated_file(): \"%s\" leaves the project directory.", p_path));
+	ERR_FAIL_COND_MSG(p_path.trim_prefix("res://").is_empty(), "add_generated_file(): the project root is not a file.");
+	ERR_FAIL_COND_MSG(p_path == "res://.godot", "add_generated_file(): res://.godot is managed by the editor.");
 	ERR_FAIL_COND_MSG(p_path == current_source_file, "add_generated_file(): a plugin may not register the scene it is importing.");
 
 	// Two plugins claiming the same sidecar is an error, not last-writer-wins:
