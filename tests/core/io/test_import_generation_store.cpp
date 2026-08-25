@@ -443,10 +443,7 @@ TEST_CASE("[ImportGenerationStore] Reclamation honours the retention count") {
 	settings.keep_per_resource = 1;
 	CHECK(ImportGenerationStore::collect_generation_garbage(settings, project_data_path) == OK);
 
-	int surviving = 0;
-	for (const String &generation_id : DirAccess::get_directories_at(ImportGenerationStore::get_resource_generations_path(resource_key, project_data_path))) {
-		surviving++;
-	}
+	const int surviving = DirAccess::get_directories_at(ImportGenerationStore::get_resource_generations_path(resource_key, project_data_path)).size();
 	CHECK(surviving == 2); // The selected one plus one predecessor.
 	CHECK(DirAccess::dir_exists_absolute(ImportGenerationStore::get_generation_path(resource_key, "keep-3", project_data_path)));
 }

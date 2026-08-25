@@ -56,7 +56,7 @@ static constexpr int64_t MAX_RESOURCE_GENERATIONS = 100'000;
 static constexpr int64_t LEASE_TIMEOUT_SECONDS = 60;
 static constexpr int64_t MAX_UID_CLAIMS = 100'000;
 static constexpr int64_t MAX_TOTAL_UID_CLAIMS = 1'000'000;
-static constexpr uint64_t MAX_EVENT_FILE_SIZE = 64 * 1024 * 1024;
+static constexpr int64_t MAX_EVENT_FILE_SIZE = 64 * 1024 * 1024; // Compared against FileAccess::get_size(), which returns int64_t.
 static constexpr int MAX_RESOURCE_PATH_LENGTH = 4096;
 
 struct UIDClaimSort {
