@@ -1135,6 +1135,14 @@
 		</member>
 		<member name="editor/import/reimport_missing_imported_files" type="bool" setter="" getter="" default="true">
 		</member>
+		<member name="editor/import/session/events_before_compaction" type="int" setter="" getter="" default="256">
+		</member>
+		<member name="editor/import/session/generation_storage_limit_mb" type="int" setter="" getter="" default="0">
+		</member>
+		<member name="editor/import/session/kept_generations_per_resource" type="int" setter="" getter="" default="1">
+		</member>
+		<member name="editor/import/session/reclaim_grace_seconds" type="int" setter="" getter="" default="600">
+		</member>
 		<member name="editor/import/use_multiple_threads" type="bool" setter="" getter="" default="true">
 			If [code]true[/code] importing of resources is run on multiple threads.
 		</member>
