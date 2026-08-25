@@ -54,7 +54,7 @@ vis-buffer 27b 클러스터 ID로 인덱스되는 레코드가 최소 보유할 
 `AccelerationStructureGeometry`는 원시 `vertex_buffer`/`index_buffer` RID + offset/stride/format을 받으므로(**Mesh RID 불요**), **풀에서 DAG 특정 LOD 레벨을 잘라 자료 중복 없이 BLAS 빌드**한다 — UE의 별도 fallback mesh 대비 구조적 우위. 요구:
 - §2 플래그 준수 (AS-build 입력)
 - BLAS용 LOD 선택 정책: v1은 **고정 LOD 레벨**(예: 레벨 2~3) — 프레임별 컷과 무관하게 안정. 리핏/리빌드 스케줄은 비동결
-- position 양자화 시 BLAS 입력은 **디코드된 float3 스테이징** 또는 양자화 포맷 직접 지원 여부 확인 (⚪ 미검증 — 서명 전 C3 확인 항목)
+- **position 양자화 직접 입력: 가능 (C3 코드+스펙 실측, 2026-08-25 — 단 실기 미검증):** 디코드 스테이징 불요. Vulkan AS 필수 지원 포맷에 `R16G16B16A16_SNORM`이 있어 클러스터 로컬 양자화를 직접 입력. **제약 2건 동결:** ① 3성분 16b 포맷은 필수 목록에 없음 → **정점 레코드 position은 4성분 8B/정점(4번째 패딩)** — L2 크기 산정 반영 ② 10:10:10:2 등 추가 패킹은 런타임 `bufferFeatures` 조회 선행 필요한데 **그 코드가 현재 0건**(Godot은 AS 정점 포맷 무검증 — 미지원 포맷은 검증레이어/UB로 남). ⚪ 실기 BLAS 빌드 1회 후 L3 서명 (Apple RT 부재로 RT 머신 확보 대기)
 
 ## 7. 확장 슬롯
 
