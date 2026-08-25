@@ -82,6 +82,15 @@
 				Add a specific import option (name and default value only). This function can only be called from [method _get_import_options] and [method _get_internal_import_options].
 			</description>
 		</method>
+		<method name="add_generated_file">
+			<return type="void" />
+			<param index="0" name="path" type="String" />
+			<description>
+				Registers a file that this plugin wrote during [method _post_process] so that the importer tracks it. Tracked files are deleted when the source is reimported, recorded as dependencies of the imported scene, and included in exports.
+				Writing a file without registering it leaves the editor unaware of it: it survives reimport as an orphan and is silently missing from exports.
+				Can only be called from [method _post_process], which is the first hook that runs after the lightmap unwrap and LOD generation have finalized the meshes. Anything derived from mesh data in the earlier per-category hooks would be derived from a mesh that is about to change.
+			</description>
+		</method>
 		<method name="add_import_option_advanced">
 			<return type="void" />
 			<param index="0" name="type" type="int" enum="Variant.Type" />

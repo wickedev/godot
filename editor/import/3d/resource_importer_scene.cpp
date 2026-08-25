@@ -213,10 +213,24 @@ void EditorScenePostImportPlugin::pre_process(Node *p_scene, const HashMap<Strin
 	GDVIRTUAL_CALL(_pre_process, p_scene);
 	current_options = nullptr;
 }
-void EditorScenePostImportPlugin::post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options) {
+void EditorScenePostImportPlugin::post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, List<String> *r_gen_files) {
 	current_options = &p_options;
+	current_gen_files = r_gen_files;
 	GDVIRTUAL_CALL(_post_process, p_scene);
+	current_gen_files = nullptr;
 	current_options = nullptr;
+}
+
+void EditorScenePostImportPlugin::add_generated_file(const String &p_path) {
+	// Deliberately restricted to _post_process(). The per-category hooks run
+	// mid-import, before the lightmap unwrap and the LOD generation have
+	// finalized the mesh, so anything derived from mesh data there would be
+	// derived from a mesh that is about to change.
+	ERR_FAIL_NULL_MSG(current_gen_files, "add_generated_file() can only be called from _post_process(), and only when the importer is tracking generated files.");
+	ERR_FAIL_COND_MSG(p_path.is_empty(), "add_generated_file() requires a path.");
+	if (current_gen_files->find(p_path) == nullptr) {
+		current_gen_files->push_back(p_path);
+	}
 }
 
 void EditorScenePostImportPlugin::_bind_methods() {
@@ -224,6 +238,7 @@ void EditorScenePostImportPlugin::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("add_import_option", "name", "value"), &EditorScenePostImportPlugin::add_import_option);
 	ClassDB::bind_method(D_METHOD("add_import_option_advanced", "type", "name", "default_value", "hint", "hint_string", "usage_flags"), &EditorScenePostImportPlugin::add_import_option_advanced, DEFVAL(PROPERTY_HINT_NONE), DEFVAL(""), DEFVAL(PROPERTY_USAGE_DEFAULT));
+	ClassDB::bind_method(D_METHOD("add_generated_file", "path"), &EditorScenePostImportPlugin::add_generated_file);
 
 	GDVIRTUAL_BIND(_get_internal_import_options, "category");
 	GDVIRTUAL_BIND(_get_internal_option_visibility, "category", "for_animation", "option");
@@ -3469,7 +3484,7 @@ Error ResourceImporterScene::import(ResourceUID::ID p_source_id, const String &p
 	}
 
 	for (int i = 0; i < post_importer_plugins.size(); i++) {
-		post_importer_plugins.write[i]->post_process(scene, p_options);
+		post_importer_plugins.write[i]->post_process(scene, p_options, r_gen_files);
 	}
 
 	progress.step(TTR("Saving..."), 104);
