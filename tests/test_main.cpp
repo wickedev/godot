@@ -33,7 +33,6 @@
 #include "core/config/engine.h"
 #include "core/input/input.h"
 #include "core/input/input_map.h"
-#include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
@@ -94,29 +93,14 @@ int test_main(int argc, char *argv[]) {
 
 	WorkerThreadPool::get_singleton()->init();
 
-	// Acquire this run's unique, validated temp root before anything can fail.
-	// There is deliberately NO recursive cleanup anywhere: path-based recursive
-	// deletion cannot be made safe against a concurrent symlink/junction swap of
-	// the root (or any subdirectory) without no-follow handle-relative deletion
-	// primitives, which DirAccess does not provide. Every run that created files
-	// therefore leaks its unique root; reclamation is left to an owner-aware
-	// janitor outside this binary (CI reclaims via workspace disposal). The
-	// destructor below only attempts a single non-recursive removal, which
-	// succeeds solely for a run that created no files — rmdir/RemoveDirectory
-	// do not follow symlinks into their targets, so no foreign path can be
-	// affected. The early-returning custom test command branch below is covered
-	// by the same guard.
-	const String temp_root = TestUtils::get_temp_path(""); // CRASH_COND inside on failure.
-	struct TempRootCleanup {
-		// Captured once, validated; never re-derived at destruction time.
-		String root;
-		~TempRootCleanup() {
-			if (root.is_empty() || !root.is_absolute_path()) {
-				return;
-			}
-			DirAccess::remove_absolute(root); // Non-recursive; fails (harmlessly) unless empty.
-		}
-	} temp_root_cleanup{ temp_root };
+	// Materialize this run's unique temp root before anything can fail (fatal on
+	// failure, inside the helper). It is deliberately never deleted — not even a
+	// final non-recursive rmdir: an ancestor of the root can be swapped for a
+	// symlink/junction between any check and the removal, redirecting even a
+	// single rmdir into a foreign tree. Every run leaks one directory by design;
+	// reclamation belongs to an owner-aware janitor outside this binary (CI
+	// reclaims via workspace disposal). See TestUtils::get_temp_path().
+	[[maybe_unused]] const String temp_root = TestUtils::get_temp_path("");
 
 	// Run custom test tools.
 	if (test_commands) {

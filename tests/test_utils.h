@@ -30,6 +30,8 @@
 
 #pragma once
 
+#include "core/error/error_list.h"
+
 class String;
 
 namespace TestUtils {
@@ -37,6 +39,10 @@ namespace TestUtils {
 String get_data_path(const String &p_file);
 String get_executable_dir();
 String get_temp_path(const String &p_suffix);
+// Creates a directory at `p_absolute_path`, which must lie under this run's temp root.
+// The run root itself is never (re-)created here: if it has vanished mid-run this
+// fails instead of recreating (or adopting) a path we no longer know we own.
+Error make_temp_dir(const String &p_absolute_path);
 } // namespace TestUtils
 
 // FIXME: This was originally constrained to `tests/core/config/test_project_settings.h`, but that
