@@ -174,6 +174,59 @@ float max_gap_from_corners(const Vector3 &p_a, const Vector3 &p_b, const Vector3
 // the number means.
 constexpr uint32_t DEVIATION_SAMPLES_PER_TRIANGLE = 4;
 
+// Furthest any interior sample of one triangle set sits from the other set.
+// Used in both directions so that the recorded density means the same thing
+// whichever way the surfaces are compared.
+float sample_triangles_against(const float *p_positions, const uint32_t *p_from, size_t p_from_count,
+		const uint32_t *p_to, size_t p_to_count) {
+	const size_t to_triangles = p_to_count / 3;
+	if (to_triangles == 0) {
+		return 0.0f;
+	}
+
+	LocalVector<Vector3> centroids;
+	LocalVector<float> radii;
+	centroids.resize(to_triangles);
+	radii.resize(to_triangles);
+	for (size_t t = 0; t < to_triangles; t++) {
+		const Vector3 a = get_position(p_positions, p_to[t * 3 + 0]);
+		const Vector3 b = get_position(p_positions, p_to[t * 3 + 1]);
+		const Vector3 c = get_position(p_positions, p_to[t * 3 + 2]);
+		centroids[t] = (a + b + c) / 3.0f;
+		radii[t] = MAX(MAX((float)centroids[t].distance_to(a), (float)centroids[t].distance_to(b)),
+				(float)centroids[t].distance_to(c));
+	}
+
+	float worst = 0.0f;
+	for (size_t f = 0; f + 2 < p_from_count; f += 3) {
+		const Vector3 a = get_position(p_positions, p_from[f + 0]);
+		const Vector3 b = get_position(p_positions, p_from[f + 1]);
+		const Vector3 c = get_position(p_positions, p_from[f + 2]);
+		const Vector3 samples[DEVIATION_SAMPLES_PER_TRIANGLE] = {
+			(a + b + c) / 3.0f, (a + b) * 0.5f, (b + c) * 0.5f, (c + a) * 0.5f
+		};
+
+		for (const Vector3 &sample : samples) {
+			float nearest = FLT_MAX;
+			for (size_t t = 0; t < to_triangles; t++) {
+				// Bounding-sphere reject, so most triangles never reach the
+				// point-triangle test.
+				if ((float)sample.distance_to(centroids[t]) - radii[t] >= nearest) {
+					continue;
+				}
+				const Face3 face(get_position(p_positions, p_to[t * 3 + 0]),
+						get_position(p_positions, p_to[t * 3 + 1]),
+						get_position(p_positions, p_to[t * 3 + 2]));
+				nearest = MIN(nearest, (float)sample.distance_to(face.get_closest_point_to(sample)));
+			}
+			if (nearest != FLT_MAX) {
+				worst = MAX(worst, nearest);
+			}
+		}
+	}
+	return worst;
+}
+
 struct DeviationBound {
 	// Sampled interior deviation of the simplified surface from the original.
 	// Not a bound -- it is what the analytic term assumes the worst about --
@@ -270,46 +323,19 @@ DeviationBound measure_deviation(const float *p_positions, const LocalVector<uin
 		}
 	}
 
-	// How far the simplified surface's interior really strays, sampled at each
-	// output triangle's centroid and edge midpoints. The analytic term above
-	// assumes this equals the triangle's own radius; measuring it shows how
-	// much of that headroom is real, which is the difference between a bound
-	// that guides LOD selection and one that merely holds.
-	const size_t before_triangles = p_before.size() / 3;
-	for (size_t t = 0; t < after_triangles; t++) {
-		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
-		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
-		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
-		const Vector3 samples[DEVIATION_SAMPLES_PER_TRIANGLE] = { (a + b + c) / 3.0f, (a + b) * 0.5f, (b + c) * 0.5f, (c + a) * 0.5f };
+	// Both directions, sampled the same way. Sampling only one and calling the
+	// pair symmetric was the previous mistake: the original surface's triangle
+	// interiors were never examined, so a bump that the simplified surface cut
+	// straight through went unseen from that side.
+	//
+	// Each triangle contributes DEVIATION_SAMPLES_PER_TRIANGLE interior points,
+	// and the original's vertices are measured on top, since a removed vertex
+	// is where the surfaces most often part company.
+	result.sampled = MAX(result.sampled,
+			sample_triangles_against(p_positions, p_after, p_after_count, p_before.ptr(), p_before.size()));
+	result.sampled = MAX(result.sampled,
+			sample_triangles_against(p_positions, p_before.ptr(), p_before.size(), p_after, p_after_count));
 
-		for (const Vector3 &sample : samples) {
-			float nearest = FLT_MAX;
-			for (size_t u = 0; u + 2 < p_before.size(); u += 3) {
-				const Vector3 qa = get_position(p_positions, p_before[u + 0]);
-				const Vector3 qb = get_position(p_positions, p_before[u + 1]);
-				const Vector3 qc = get_position(p_positions, p_before[u + 2]);
-				const Vector3 centroid = (qa + qb + qc) / 3.0f;
-				const float radius = MAX(MAX((float)centroid.distance_to(qa), (float)centroid.distance_to(qb)),
-						(float)centroid.distance_to(qc));
-				if ((float)sample.distance_to(centroid) - radius >= nearest) {
-					continue;
-				}
-				const Face3 face(qa, qb, qc);
-				nearest = MIN(nearest, (float)sample.distance_to(face.get_closest_point_to(sample)));
-			}
-			if (nearest != FLT_MAX) {
-				result.sampled = MAX(result.sampled, nearest);
-			}
-		}
-	}
-	(void)before_triangles;
-
-	// Two candidates for what to store, kept apart because they answer
-	// different questions. `analytic` holds without qualification; `measured`
-	// covers both directions by measurement at a stated sampling density.
-	// Measured on a displaced grid the analytic term runs 80-100x larger,
-	// because it assumes a flat triangle departs from the surface by its own
-	// radius while a flat triangle over a flat patch departs by almost nothing.
 	result.analytic = MAX(result.vertex_measure + gap_before, gap_after);
 	result.measured = MAX(result.vertex_measure, result.sampled);
 	return result;
@@ -784,7 +810,14 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 			group.level = level;
 			// Monotonic by construction: a group's error is its worst child's
 			// error plus the distance this simplification moved the surface.
-			group.error = max_child_error + MAX(step_error, 0.0f);
+			// Flooring a negative step at zero would be exactly the silent
+			// clamp this must not do: a deviation is a distance, so a negative
+			// or non-finite one means the measurement is wrong, and pressing it
+			// to zero destroys the only evidence of that.
+			if (!Math::is_finite(step_error) || step_error < 0.0f) {
+				FAIL(vformat("measured a deviation of %f, which is not a distance. The measurement is broken, so no edge is installed.", step_error));
+			}
+			group.error = max_child_error + step_error;
 			group.lod_bounds = enclose_spheres(child_bounds);
 			group.children = group_members;
 

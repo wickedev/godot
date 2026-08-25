@@ -265,6 +265,53 @@ inline void poke_u32(PackedByteArray &r_data, int p_offset, uint32_t p_value) {
 // Every threshold at which the cut can change: the cut only moves when it
 // crosses a group's error, so this enumerates every distinct cut the DAG can
 // produce rather than sampling a handful of arbitrary values.
+// A grid cut into independent blocks, so vertices along every block boundary
+// are duplicated rather than shared. This is what material boundaries, UV
+// seams and normal creases do to a real asset, and it is the axis the size
+// budget is most sensitive to: vertex data is charged per vertex, so the
+// vertex-to-triangle ratio drives bytes per triangle directly. The synthetic
+// grid and sphere both sit near 0.5; production geometry does not.
+inline TestMesh make_seamed_grid(uint32_t p_resolution, uint32_t p_block) {
+	TestMesh mesh;
+	const uint32_t blocks = p_resolution / p_block;
+	const uint32_t block_side = p_block + 1;
+
+	for (uint32_t by = 0; by < blocks; by++) {
+		for (uint32_t bx = 0; bx < blocks; bx++) {
+			const uint32_t base = mesh.vertex_count;
+			for (uint32_t y = 0; y <= p_block; y++) {
+				for (uint32_t x = 0; x <= p_block; x++) {
+					const float fx = (float)(bx * p_block + x) / (float)p_resolution;
+					const float fy = (float)(by * p_block + y) / (float)p_resolution;
+					const float height = 0.25f * Math::sin(fx * 8.0f) * Math::cos(fy * 6.0f);
+					mesh.positions.push_back(fx * 4.0f - 2.0f);
+					mesh.positions.push_back(height);
+					mesh.positions.push_back(fy * 4.0f - 2.0f);
+					const Vector3 normal = Vector3(-2.0f * Math::cos(fx * 8.0f), 1.0f, 1.5f * Math::sin(fy * 6.0f)).normalized();
+					mesh.normals.push_back((float)normal.x);
+					mesh.normals.push_back((float)normal.y);
+					mesh.normals.push_back((float)normal.z);
+					mesh.uvs.push_back(fx);
+					mesh.uvs.push_back(fy);
+					mesh.vertex_count++;
+				}
+			}
+			for (uint32_t y = 0; y < p_block; y++) {
+				for (uint32_t x = 0; x < p_block; x++) {
+					const uint32_t v = base + y * block_side + x;
+					mesh.indices.push_back(v);
+					mesh.indices.push_back(v + block_side);
+					mesh.indices.push_back(v + 1);
+					mesh.indices.push_back(v + 1);
+					mesh.indices.push_back(v + block_side);
+					mesh.indices.push_back(v + block_side + 1);
+				}
+			}
+		}
+	}
+	return mesh;
+}
+
 inline LocalVector<float> every_distinct_threshold(const NaniteDAG &p_dag) {
 	LocalVector<float> errors;
 	errors.push_back(0.0f);
@@ -1006,25 +1053,44 @@ TEST_CASE("[Nanite] The importer stops serving a DAG once the option is off") {
 }
 #endif // TOOLS_ENABLED
 
-TEST_CASE("[Nanite] Artifact size stays within the budgeted bytes per triangle") {
-	// This figure is not just informational: the geometry pool contract turns
-	// it into a ceiling on how many source triangles fit one pool buffer, and
-	// exceeding that ceiling fails at bind time with no diagnostic. An earlier
-	// revision serialized 8-bit local indices as words and came in at roughly
-	// twice the budget, which is the kind of drift this is here to catch.
+TEST_CASE("[Nanite] Artifact size per triangle stays put for each fixture") {
+	// Per fixture, not one universal ceiling. Bytes per triangle is dominated
+	// by the vertex-to-triangle ratio, and that is a property of the mesh
+	// rather than of the format: a seam-free grid and a seam-heavy one differ
+	// by more than any single number can cover. A universal bound tight enough
+	// to catch regressions on the grid would reject seamed geometry that is
+	// perfectly correct, and one loose enough to admit seamed geometry would
+	// catch nothing.
 	//
-	// Two fixtures, because a single one cannot tell a real figure from a
-	// coincidence of that mesh's vertex-to-triangle ratio.
-	const uint32_t BUDGET_BYTES_PER_TRIANGLE = 24;
-
+	// So each fixture carries its own bound, sized just above what it measures.
+	// The point is to notice drift -- an earlier revision serialized 8-bit
+	// indices as words and doubled the figure -- not to assert a portable
+	// constant.
 	struct Fixture {
 		const char *name;
-		bool sphere;
+		int kind; // 0 grid, 1 sphere, 2 seamed grid.
+		double ceiling;
 	};
-	const Fixture fixtures[] = { { "grid", false }, { "sphere", true } };
+	const Fixture fixtures[] = {
+		{ "seam-free grid", 0, 24.0 },
+		{ "sphere", 1, 25.0 },
+		{ "seam-heavy grid", 2, 42.0 },
+	};
 
 	for (const Fixture &fixture : fixtures) {
-		const TestMesh mesh = fixture.sphere ? make_closed_sphere(128, 64) : make_displaced_grid(160);
+		TestMesh mesh;
+		switch (fixture.kind) {
+			case 0:
+				mesh = make_displaced_grid(160);
+				break;
+			case 1:
+				mesh = make_closed_sphere(128, 64);
+				break;
+			default:
+				mesh = make_seamed_grid(160, 2);
+				break;
+		}
+
 		NaniteDAGBuilder::Settings settings;
 		ERR_PRINT_OFF;
 		const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
@@ -1034,10 +1100,11 @@ TEST_CASE("[Nanite] Artifact size stays within the budgeted bytes per triangle")
 		const uint64_t source_triangles = mesh.indices.size() / 3;
 		const PackedByteArray serialized = dag->get("data");
 		const double bytes_per_triangle = (double)serialized.size() / (double)source_triangles;
+		const double vertex_ratio = (double)mesh.vertex_count / (double)source_triangles;
 
-		CHECK_MESSAGE(bytes_per_triangle <= (double)BUDGET_BYTES_PER_TRIANGLE,
-				vformat("The %s fixture serializes to %.2f bytes per source triangle, past the budgeted %d.",
-						fixture.name, bytes_per_triangle, BUDGET_BYTES_PER_TRIANGLE));
+		CHECK_MESSAGE(bytes_per_triangle <= fixture.ceiling,
+				vformat("%s: %.2f bytes per source triangle at a vertex ratio of %.3f, past its %.1f ceiling.",
+						fixture.name, bytes_per_triangle, vertex_ratio, fixture.ceiling));
 
 		// The components have to add up to the file, or the accounting the
 		// budget is derived from describes something other than what is stored.
@@ -1050,10 +1117,8 @@ TEST_CASE("[Nanite] Artifact size stays within the budgeted bytes per triangle")
 			group_bytes += 8 * 4 + (uint64_t)(group.children.size() + group.produced.size()) * 4;
 		}
 		const uint64_t components = vertex_bytes + slice_bytes + local_bytes + cluster_bytes + group_bytes;
-		CHECK_MESSAGE((uint64_t)serialized.size() >= components,
-				"The component accounting exceeds the file it is supposed to describe.");
-		CHECK_MESSAGE((uint64_t)serialized.size() - components < 1024,
-				"Header overhead is larger than the accounting allows for.");
+		CHECK((uint64_t)serialized.size() >= components);
+		CHECK((uint64_t)serialized.size() - components < 1024);
 	}
 }
 

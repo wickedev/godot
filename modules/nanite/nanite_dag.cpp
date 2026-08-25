@@ -323,8 +323,14 @@ Vector<String> NaniteDAG::validate() const {
 		if (g.level != c.level) {
 			errors.push_back(at + vformat("parent group is on level %d, expected %d.", g.level, c.level));
 		}
-		if (g.error + epsilon < error) {
-			errors.push_back(at + vformat("MONOTONICITY VIOLATED: parent error %f is below the cluster's own error %f.", g.error, error));
+		// Compared exactly, with no tolerance. The cut orders these values with
+		// strict float comparisons, so letting a parent sit an epsilon below a
+		// child here permits an inversion there -- the cluster and its own
+		// coarser replacement both selected. Construction adds a non-negative
+		// step to the child's error, so equality is the tightest this ever is
+		// and no slack is needed. The negated form also catches NaN.
+		if (!(g.error >= error)) {
+			errors.push_back(at + vformat("MONOTONICITY VIOLATED: parent error %f is not at least the cluster's own error %f.", g.error, error));
 		}
 		if (!g.lod_bounds.contains(get_cluster_lod_bounds(i), epsilon)) {
 			errors.push_back(at + "MONOTONICITY VIOLATED: parent LOD sphere does not enclose the cluster's LOD sphere.");
