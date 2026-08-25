@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/profiling/profiling.gen.h" // IWYU pragma: keep.
+#include "core/profiling/profiling_gpu.h"
 
 // This header provides profiling primitives (implemented as macros) for various backends.
 // See the "No profiling" branch at the bottom for a short description of the functions.
@@ -94,6 +95,28 @@ const SourceLocationData *intern_source_location(const void *p_function_ptr, con
 
 void godot_init_profiler();
 void godot_cleanup_profiler();
+
+// --- GPU timeline -------------------------------------------------------------
+//
+// Thin forwarding only. The Tracy wiring lives in profiling_gpu.cpp so that the
+// signatures below can be adjusted (for whichever handle type the caller has) without
+// touching the implementation, and vice versa.
+//
+// Handles are passed as raw uint64_t: the caller side holds driver ID wrappers
+// (RDD::CommandBufferID and friends), which expose the underlying handle as `.id`.
+// Keeping the boundary untyped avoids dragging driver headers into core/profiling.
+
+// Create the GPU profiling context once, after the rendering device exists.
+#define GodotProfileGpuContextInit(m_physical_device, m_device, m_queue) \
+	::godot_profiling::gpu_context_init((uint64_t)(m_physical_device), (uint64_t)(m_device), (uint64_t)(m_queue))
+
+// Collect completed GPU timestamps. Call once per frame with a command buffer that is
+// currently recording; collection is non-blocking and skips queries not yet available.
+#define GodotProfileGpuCollect(m_command_buffer) \
+	::godot_profiling::gpu_collect((uint64_t)(m_command_buffer))
+
+// Destroy the GPU profiling context before the rendering device goes away.
+#define GodotProfileGpuContextShutdown() ::godot_profiling::gpu_context_shutdown()
 
 #elif defined(GODOT_USE_PERFETTO)
 // Use the perfetto profiler.
@@ -178,6 +201,11 @@ struct PerfettoScriptTracer {
 void godot_init_profiler();
 void godot_cleanup_profiler();
 
+// --- GPU timeline (no-op) -----------------------------------------------------
+#define GodotProfileGpuContextInit(m_physical_device, m_device, m_queue)
+#define GodotProfileGpuCollect(m_command_buffer)
+#define GodotProfileGpuContextShutdown()
+
 #elif defined(GODOT_USE_INSTRUMENTS)
 
 #include <os/log.h>
@@ -238,6 +266,11 @@ private:
 void godot_init_profiler();
 void godot_cleanup_profiler();
 
+// --- GPU timeline (no-op) -----------------------------------------------------
+#define GodotProfileGpuContextInit(m_physical_device, m_device, m_queue)
+#define GodotProfileGpuCollect(m_command_buffer)
+#define GodotProfileGpuContextShutdown()
+
 #else
 // No profiling; all macros are stubs.
 
@@ -268,5 +301,10 @@ void godot_cleanup_profiler();
 #define GodotProfileZoneScript(m_ptr, m_file, m_function, m_name, m_line)
 // Define a zone for a system call from a script (dynamic source location).
 #define GodotProfileZoneScriptSystemCall(m_ptr, m_file, m_function, m_name, m_line)
+
+// --- GPU timeline (no-op) -----------------------------------------------------
+#define GodotProfileGpuContextInit(m_physical_device, m_device, m_queue)
+#define GodotProfileGpuCollect(m_command_buffer)
+#define GodotProfileGpuContextShutdown()
 
 #endif
