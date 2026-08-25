@@ -109,6 +109,13 @@ repos:
         files: ^(doc/classes|.*/doc_classes)/.*\.xml$
         additional_dependencies: [xmlschema]
 
+      - id: validate-pe-codeview
+        name: validate-pe-codeview
+        language: python
+        entry: python misc/scripts/validate_pe_codeview.py
+        pass_filenames: false
+        files: ^(misc/scripts/validate_pe_codeview\.py|\.github/workflows/release_symbols\.yml)$
+
       - id: validate-codeowners
         name: validate-codeowners
         language: python

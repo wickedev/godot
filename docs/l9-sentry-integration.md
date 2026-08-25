@@ -103,9 +103,16 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 |---|---|
 | Linux | `readelf -n`으로 바이너리와 `.debugsymbols`의 **build ID 동일성** 대조. 미존재/불일치 시 실패 |
 | macOS | 두 arch를 `lipo`로 합쳐 **실제 출하 형태(universal)를 만든 뒤**, `dwarfdump --uuid`로 **모든 슬라이스 UUID가 dSYM에 커버되는지** 확인 |
-| Windows | **PE CodeView 레코드를 직접 파싱**해 GUID+age와 링커가 기록한 PDB 파일명을 얻고, `.exe`·`.pdb` 양쪽의 debug id를 추출해 **셋을 상호 대조** |
+| Windows | **PE CodeView 레코드를 직접 파싱**해 GUID+age와 링커가 기록한 PDB 파일명을 얻고, `.exe`·`.pdb` 양쪽의 debug id를 추출해 **셋을 상호 대조**. 비교는 **GUID+age 전체**로 한다(§아래) |
 
 > **macOS에 대한 근거:** `lipo`는 Mach-O 슬라이스의 UUID를 변경하지 않는다. 따라서 arch별 dSYM은 universal 바이너리에 대해 유효하다 — 다만 이 리포트는 그걸 **가정하지 않고 실제로 대조해서 증명**한다.
+>
+> **GUID만 비교하면 안 되는 이유:** 초판은 32자리 GUID 접두사만 비교했다. **같은 GUID에 age만 다른 PDB가 통과한다** — 재빌드하면 age가 올라가므로, 정확히 이 스텝이 막으려던 stale PDB가 그대로 빠져나간다. 지금은 GUID+age 전체를 정규화해 비교한다(도구마다 age 표기가 달라 선행 0을 제거해 맞춘다).
+>
+> **malformed 입력 방어:** `SizeOfData`가 RSDS 레코드 최소 길이(25바이트) 미만이거나 레코드가 파일 끝을 넘어가면 **거부**한다. PDB 이름의 NUL도 `SizeOfData` 안에서 찾는다. 검사가 없으면 뒤따르는 임의 바이트에서 그럴듯한 GUID를 읽어낸다.
+>
+> **파싱 로직 시험:** `misc/scripts/validate_pe_codeview.py`가 PE32/PE32+ 정상 케이스, CodeView가 첫 엔트리가 아닌 경우, age가 debug id를 실제로 가르는지, 그리고 malformed 4종(SizeOfData=0 / 절단 / 이름 미종료 / RSDS 아님)을 시험하며 **실패 시 non-zero로 종료**한다. pre-commit 훅으로 등록되어 이 스크립트나 워크플로가 바뀌면 돌아간다.
+> ⚠️ **이건 Python 미러를 시험하는 것이지 PowerShell을 실행하는 게 아니다.** 두 구현이 어긋나면 잡지 못한다 — 양쪽 주석에 "keep in step"을 명시해 뒀다.
 >
 > **Windows 검증을 sentry-cli에 위임하지 않는 이유:** `sentry-cli`는 DIF를 **파일 단위로 각자의 debug id에 따라** 받는다. 따라서 **이름만 맞고 내용이 다른 PDB(stale PDB)도 업로드는 정상 성공**한다 — 자기 debug id로 등록될 뿐이다. 그러면 크래시가 왔을 때 EXE의 debug id에 맞는 DIF가 없어 심볼이 안 붙는다. **업로드 성공은 대응 검증이 아니다.** 그래서 PE 디버그 디렉터리(directory 6, `IMAGE_DEBUG_TYPE_CODEVIEW`, `RSDS` 레코드)를 직접 읽어 대조한다.
 >
@@ -118,6 +125,8 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 그래서 검증 스텝이 실제 산출물만 `dist/`에 스테이징하고, `MANIFEST.sha256`(전 파일 SHA-256) + `MANIFEST.txt`(커밋·플랫폼·타깃·지시문)를 함께 남긴다. **아티팩트와 Sentry 업로드는 모두 `dist/`에서만** 이뤄진다.
 
 후속 패키징 단계는 **재빌드가 아니라 이 아티팩트를 받아** `shasum -a 256 -c MANIFEST.sha256`으로 검증한 뒤 그 바이트를 그대로 출하해야 한다.
+
+**Windows는 바이너리·PDB 외에 런타임 의존 DLL도 `dist/`에 포함한다** — Agility SDK(`D3D12Core.dll`, `d3d12SDKLayers.dll`)와 PIX(`WinPixEventRuntime.dll`)는 `platform/windows/SCsub:147`이 `bin/`에 복사하며 실행 시 로드된다. 이것들이 빠지면 매니페스트가 **출하물의 일부만 기술**하게 된다. 단 **Sentry 업로드는 우리 산출물(`dist/godot.*`)로 한정**한다 — 벤더 DLL은 Microsoft 심볼 서버에서 해소되므로 올려봐야 잡음이다.
 
 > 부수 효과: `bin/`에는 `bin/build_deps`(ANGLE·AccessKit·D3D12 SDK)가 들어 있다. 이전 판의 `bin/*` 글롭은 이것까지 Sentry와 아티팩트에 실어 보냈다. `dist/` 스테이징이 이 오염도 함께 제거한다.
 
@@ -140,7 +149,7 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 | Variable | `SENTRY_ORG` | Sentry 조직 슬러그 |
 | Variable | `SENTRY_PROJECT` | Sentry 프로젝트 슬러그 |
 
-이게 없으면 워크플로는 빌드·검증까지만 하고 업로드를 스킵한다.
+**자동 릴리스 태그 경로에서는 이게 없으면 워크플로가 실패한다** — 심볼 없이 조용히 릴리스가 나가는 것이 이 워크플로가 막으려는 실패 그 자체이기 때문이다. 빌드·검증만 돌려보려면 수동 실행에서 `upload=false`를 쓴다.
 
 ---
 
@@ -176,7 +185,7 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 - **프로덕션 텔레메트리**(세션·성능·이탈). runtime-misc §7(c)에 있으나 Task #6 범위 밖.
 - **Android/iOS 심볼.** 워크플로는 데스크톱 3플랫폼만 다룬다. 모바일은 콘솔(W4)과 함께 별도 판단.
 - **패키징 미포함.** macOS `.app`/export-template zip 조립(`generate_bundle`)은 범위 밖 — §2(c) 참조.
-- **Windows PDB GUID+age 동일성을 워크플로가 직접 단언하지 않는다.** `sentry-cli`의 업로드 시 거부에 의존한다. 네이티브 도구만으로 PE 디버그 디렉터리를 파싱하는 건 러너에 보장되지 않는 도구(`llvm-pdbutil`/`dumpbin`)를 요구한다.
+- **PowerShell 파싱 코드 자체는 CI 첫 실행이 첫 검증이다.** 오프셋 산술은 `misc/scripts/validate_pe_codeview.py`가 Python 미러로 시험하지만(§2(c)), **PowerShell 전사(轉寫)를 실행해 본 것은 아니다.** 로컬에 pwsh가 없다.
 - **`--build-id` 실기 검증 미완.** 개발 머신이 macOS라 `platform=linuxbsd` 구성이 불가하다(`ERROR: Invalid target platform "linuxbsd"`). 플래그 경로는 코드 검토로만 확인했고, **실증은 워크플로의 `readelf -n` 게이트가 CI에서 수행**한다. 첫 릴리스 실행 시 이 스텝의 출력을 확인할 것.
 
 ---

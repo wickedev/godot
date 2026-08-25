@@ -331,16 +331,38 @@ jobs:
               $ent  = $dbgFileOff + $e*28
               $type = [BitConverter]::ToUInt32($b, $ent + 12)
               if ($type -ne 2) { continue }        # 2 = IMAGE_DEBUG_TYPE_CODEVIEW
-              $ptr  = [BitConverter]::ToUInt32($b, $ent + 24)
+              $size = [BitConverter]::ToUInt32($b, $ent + 16)   # SizeOfData
+              $ptr  = [BitConverter]::ToUInt32($b, $ent + 24)   # PointerToRawData
+              # An RSDS record is 4 (sig) + 16 (GUID) + 4 (age) + at least 1 NUL. A
+              # truncated or zero SizeOfData means the entry does not describe a whole
+              # record, and reading past it yields a plausible-looking GUID from
+              # whatever follows in the file.
+              if ($size -lt 25) { throw "$Path CodeView entry has SizeOfData=$size, too small for an RSDS record" }
+              if (($ptr + $size) -gt $b.Length) { throw "$Path CodeView record runs past end of file" }
               if ([System.Text.Encoding]::ASCII.GetString($b, $ptr, 4) -ne "RSDS") { continue }
               $guid = [Guid]::new($b[($ptr+4)..($ptr+19)])
               $age  = [BitConverter]::ToUInt32($b, $ptr + 20)
-              $end  = $ptr + 24; while ($b[$end] -ne 0) { $end++ }
+              # Name must be NUL-terminated inside the record, not merely somewhere later.
+              $end  = $ptr + 24
+              $limit = $ptr + $size
+              while ($end -lt $limit -and $b[$end] -ne 0) { $end++ }
+              if ($end -ge $limit) { throw "$Path CodeView PDB name is not NUL-terminated within SizeOfData" }
               $pdb  = [System.Text.Encoding]::UTF8.GetString($b, $ptr + 24, $end - ($ptr + 24))
               # Sentry's debug id form: GUID with age appended, uppercase, no dashes.
               return @{ Id = ($guid.ToString("N").ToUpper() + $age.ToString("X")); Pdb = $pdb; Guid = $guid; Age = $age }
             }
             throw "$Path has no CodeView (RSDS) debug entry"
+          }
+
+          # sentry-cli renders a PE/PDB debug id as GUID + age; strip separators, drop
+          # leading zeros from the age field so "...0007" and "...7" compare equal.
+          function _NormaliseDebugId([string]$id) {
+            $flat = ($id -replace '[-{}]', '').ToUpper()
+            if ($flat.Length -le 32) { return $flat }
+            $guidPart = $flat.Substring(0, 32)
+            $agePart = $flat.Substring(32).TrimStart('0')
+            if ($agePart -eq "") { $agePart = "0" }
+            return $guidPart + $agePart
           }
 
           function Get-DebugId([string]$f) {
@@ -376,20 +398,39 @@ jobs:
               Write-Output "::error::Could not read debug ids (exe='$exeId' pdb='$pdbId'); is sentry-cli present?"
               exit 1
             }
-            $guidHex = $cv.Guid.ToString("N").ToUpper()
-            # Compare on the 32-hex GUID prefix; tools format the trailing age
-            # differently, and the age is checked via the PE record separately.
-            if ($exeId.Substring(0, 32) -ne $guidHex) {
-              Write-Output "::error::$($b.Name): sentry-cli reports $exeId but its PE CodeView GUID is $guidHex"
+            # Compare the WHOLE debug id, GUID *and* age. An earlier revision compared
+            # only the 32-hex GUID prefix, which let a rebuilt PDB carrying the same
+            # GUID but a bumped age pass -- exactly the stale-PDB case this step exists
+            # to catch. Ages are normalized because tools render them differently
+            # (sentry-cli emits lowercase hex without padding).
+            $cvId = ($cv.Guid.ToString("N") + $cv.Age.ToString("x")).ToUpper()
+            $exeIdNorm = _NormaliseDebugId $exeId
+            $pdbIdNorm = _NormaliseDebugId $pdbId
+            if ($exeIdNorm -ne $cvId) {
+              Write-Output "::error::$($b.Name): sentry-cli reports $exeIdNorm but its PE CodeView record says $cvId (GUID+age)"
               exit 1
             }
-            if ($pdbId.Substring(0, 32) -ne $guidHex) {
-              Write-Output "::error::debug id mismatch: $($b.Name) CodeView GUID $guidHex vs PDB $($pdbId.Substring(0, 32))"
+            if ($pdbIdNorm -ne $cvId) {
+              Write-Output "::error::debug id mismatch: $($b.Name) is built against $cvId but the shipped PDB is $pdbIdNorm"
               exit 1
             }
             Write-Output "OK $($b.Name) <-> $refName  codeview=$($cv.Id)"
             Copy-Item $b.FullName dist/
             Copy-Item $pdbPath dist/
+          }
+
+          # Runtime dependencies that live beside the binary (platform/windows/SCsub
+          # copies them into bin/). They carry no symbols of ours, but they are part of
+          # what ships, so the promotion manifest has to cover them or it describes an
+          # incomplete set. Multiarch builds place them in bin/<arch>/.
+          foreach ($dll in @("D3D12Core.dll", "d3d12SDKLayers.dll", "WinPixEventRuntime.dll")) {
+            Get-ChildItem -Path bin -Filter $dll -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+              $rel = [System.IO.Path]::GetRelativePath((Resolve-Path bin), $_.FullName)
+              $dest = Join-Path "dist" $rel
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item $_.FullName $dest
+              Write-Output "staged runtime dependency $rel"
+            }
           }
 
       # Exact-binary promotion contract. The verified binary is the one that must ship;
@@ -442,9 +483,18 @@ jobs:
             exit 1
           fi
           command -v sentry-cli >/dev/null || { echo "::error::sentry-cli install failed."; exit 1; }
+          # Upload our own build products only. dist/ also holds redistributed runtime
+          # DLLs (Agility SDK, PIX) for the promotion contract; those symbolicate from
+          # Microsoft's symbol server, and pushing them here would just add noise.
+          shopt -s nullglob
+          products=(dist/godot.*)
+          if [ ${#products[@]} -eq 0 ]; then
+            echo "::error::Nothing staged in dist/ to upload."
+            exit 1
+          fi
           # `--include-sources` embeds source context for frames in our own code, which is
           # what makes a Nanite/renderer crash readable without checking out the tag.
-          sentry-cli debug-files upload --include-sources --wait dist/
+          sentry-cli debug-files upload --include-sources --wait "${products[@]}"
 
       - name: Upload build artifact
         uses: ./.github/actions/upload-artifact
