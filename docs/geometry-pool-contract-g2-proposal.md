@@ -1,6 +1,8 @@
-# G2 — 지오 풀 버퍼 계약 동결 제안 (RFC)
+# G2 — 지오 풀 버퍼 계약 ❄️ FROZEN v1.1
 
-> **상태: v1.1 (2026-08-25) — L2 실측 입력 반영 (DenseGrid 51k tri·UVSphere 36k tri 픽스처).** 로드맵 게이트 G2(M6)의 동결 대상 문서.
+> **상태: ❄️ 동결 (2026-08-25) — 3/3 서명 (C1·C2·C3).** 로드맵 게이트 G2(M6) 통과.
+> 이후 변경은 개정 절차(3인 재서명)로만 가능. 비동결 항목(§1 우측 열)은 레인 내부 자유 유지.
+> v1.1 = L2 실측 입력 반영 (DenseGrid 51k tri·UVSphere 36k tri 픽스처).
 > 근거: [nanite-impl](./godot-nanite-implementation-research.md) §10.4-3 · [nanite-perf](./godot-nanite-performance-implementation-research.md) §2.5-R2 · [G1 RFC](./gbuffer-schema-v1-proposal.md) §4.2 · C3 RD 스파이크(`rd-capability-spike-report.md`).
 > **의견 수렴: C1(L1) · C2(L2, 풀 생산자) · C3(L3-대행, BLAS 소비자) — 3인 서명 후 G2 동결.**
 > G1과의 관계: G1은 *픽셀 쪽* 계약(GBuffer), G2는 *지오메트리 쪽* 계약(풀·클러스터·BLAS). 접점은 `gb_objectid` 24-bit와 §4.2 정점 속성 요구.
@@ -157,7 +159,7 @@ DenseGrid 실측(소스 51,200 tri → 10레벨, DAG 전체 102,227 tri, 25,921 
 
 | 레인 | 담당 | 판정 | 비고 |
 |---|---|---|---|
-| L1 (버퍼 생성·업로드 경로) | C1 | ⬜ | §2 플래그 실현성 (RD 레벨) |
+| L1 (버퍼 생성·업로드 경로) | C1 | ✅ **승인/서명 (2026-08-25, v1.1)** | §2 플래그 3종 RD 레벨 실코드 확인(rendering_device.cpp:3865) · §2 크기 상한 = 바인딩 제약(무진단 실패) 발견·문단화(b1db69933e) 후 서명 |
 | L2 (풀 생산자·DAG 포맷) | C2 | ✅ **승인/서명 (2026-08-25, v1.1)** | §3(b)·255 동결·§4 이중그룹·§7.5/7.6 반영 확인. 부수: §4의 `meshopt_computeClusterBounds` 미컴파일 발견 → 메인테이너가 SCsub 수정(1d1dbf5f31) |
 | L3-대행 (BLAS 소비) | C3 | ✅ **승인/서명 (2026-08-25)** | §6 실기 검증 + §2 생성 진입점 블로커 제기·반영(조건부→서명). 근거: c3/lumen-spike 73fde51b48, misc/rt_spike/ 재현 가능 |
 | 메인테이너 | ✅ 제안 | | |
