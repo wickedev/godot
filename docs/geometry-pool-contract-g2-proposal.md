@@ -79,6 +79,79 @@ vis-buffer 27b 클러스터 ID로 인덱스되는 레코드가 최소 보유할 
 - **레인 간 계약** (§2 진입점/플래그·BDA·AS-build·ID 폭 24/27/7·센티넬): **어느 모듈에도 속하지 않는 공유 계약 테스트** `tests/servers/rendering/test_geometry_pool_contract.h` — 계약 변경이 한 레인의 로컬 수정처럼 보이지 않게.
 - **디바이스 의존 항목** (BDA·AS-build·아토믹): headless에서 **조용히 통과 금지** — "skipped: no rendering device"를 명시 출력. 초록불이 "검증됨"으로 오독되는 것을 방지.
 
+## 7.7 DAG 아티팩트 저장 계약 (v1.1 신설 — C2 초안, 메인테이너 판정 반영)
+
+### 7.7.1 스코프
+
+DAG는 **런타임 산출물**이다 — S5 스트리밍이 디스크에서 읽고, 게임과 함께 출하된다. 따라서 임포트 캐시가 아니라 **출하 대상 리소스**로 다룬다. 이 절은 그 아티팩트의 **정체성·무효화·버전**을 동결한다. 내부 바이트 레이아웃은 §3·§4가 이미 정한다.
+
+### 7.7.2 아티팩트 정체성 (키)
+
+하나의 DAG 아티팩트는 다음 튜플로 유일하게 식별된다:
+
+```
+(source_uid, surface_index, builder_settings_hash, source_geometry_hash,
+ dag_format_version, dag_builder_version)
+```
+
+- **`source_uid`** — 씬의 `ResourceUID`. 경로가 아니다. 에셋 이동으로 DAG가 무효화되면 안 된다.
+- **`surface_index`** — 서페이스 = 머티리얼이고 서페이스마다 독립 DAG다(§3).
+- **`builder_settings_hash`** — 출력에 영향을 주는 `nanite/*` 옵션만: `max_cluster_triangles` · `group_size` · `simplify_ratio` · `spatial_clustering` · `lock_mesh_border` · `normal_weight` · `uv_weight` · `min_progress_ratio`. **`print_report`는 제외**(진단 전용, 출력 불변).
+- **`source_geometry_hash`** — ⚠️ **소스 파일 해시가 아니라, 빌더에 실제로 들어간 서페이스 배열(positions/normals/UV/indices)의 해시.** 근거: DAG는 post-import-plugin 시점 지오메트리의 스냅샷이다. `nodes/root_scale`·축 변환·머티리얼 병합 같은 상위 임포트 옵션이 파일을 바꾸지 않고도 입력 지오메트리를 바꾼다 — 파일 해시로 키를 잡으면 그 경우 낡은 DAG가 살아남는다.
+
+### 7.7.3 버전 필드 — 2개 (format ≠ builder)
+
+| 필드 | 의미 | 올라가는 때 |
+|---|---|---|
+| `dag_format_version` | **온디스크 레이아웃** | 직렬화 구조 변경 |
+| `dag_builder_version` | **알고리즘** | 그룹핑·단순화·오차 측정 방식 변경 |
+
+분리 근거는 실례가 있다: LOD 오차 산출을 속성 쿼드릭에서 실측 기하 편차로 바꾼 변경(§4 명확화)은 레이아웃을 안 건드렸지만 동일 입력에서 다른 DAG를 만든다. format만 있으면 그 개선이 낡은 아티팩트를 조용히 계속 서빙한다. `builder_version`이 키에 있어야 알고리즘 개선이 자동 리빌드를 유발한다.
+
+### 7.7.4 무효화
+
+키 구성요소 중 **하나라도** 바뀌면 새 아티팩트다. 추가로:
+- 로드 시 `dag_format_version` 불일치는 **큰 소리로 실패**하고 빈 DAG를 내주지 않는다(구현·테스트됨).
+- `dag_builder_version` 불일치는 **리임포트 필요**로 간주한다.
+- **고아 정리 (판정): v1은 수동.** 소유권 증명 없는 자동 삭제는 하지 않는다(테스트 temp 격리와 동일 원칙 — 삭제의 안전은 소유 추적이 전제). 에디터 정리 유틸리티는 S5 스트리밍 툴링과 함께 도입(그 시점에 키 인덱스가 어차피 필요).
+
+### 7.7.5 저장 위치 (판정: 선례 추종, 코어 변경 0)
+
+**`EditorScenePostImportPlugin`은 생성 파일을 임포트 시스템에 등록할 수 없다** — `r_gen_files`는 `ResourceImporterScene::import()`의 파라미터(`resource_importer_scene.h:298`)이고 `internal_process()`에는 전달되지 않는다. 따라서 플러그인이 쓴 파일은 리임포트 시 추적·정리 대상이 아니다.
+
+**v1 판정:** 메시 `save_to_file/enabled`+`save_to_file/path` 선례(`resource_importer_scene.cpp:2884` — `ResourceSaver::save()` 직접 호출, `r_gen_files` 미경유)를 그대로 따른다. 메시 카테고리에 `nanite/save_to_file` + `nanite/save_path`를 추가하고, **미지정 시 DAG는 세션 내 검사 전용**(디스크 미저장). 코어 변경 0.
+
+**후속:** 코어 임포트 후처리 훅(L1 신설, Wave 2 — 아래 7.7.6과 동일 훅) 도입 시 `r_gen_files` 등록으로 승격 가능. 훅이 와도 본 절의 키·버전 계약은 불변.
+
+### 7.7.6 라이트맵 언랩 상호작용 (판정: v1 미지원 명시 동결)
+
+임포트 순서상 DAG 훅은 `generate_lods`·`create_shadow_mesh`·`optimize_indices`·라이트맵 언랩보다 먼저 돈다. 앞의 셋은 무해하다(DAG가 자체 positions/indices 스냅샷 보유, ArrayMesh 재정렬에 훼손 안 됨). **언랩만 실제로 발산한다** — 정점 분할 + UV2 추가로 DAG 스냅샷에 UV2가 없다.
+
+> **v1 동결: Nanite 메시 + 베이크 라이트맵은 미지원.** 언랩 활성 시 임포터가 경고. (deferred-transition 문서의 "Nanite-no-lightmap L2 교차확인 대기" 항목은 이것으로 **확인 완료** — 구조적 사실로 승격.)
+> **해소 경로 (Wave 2):** DAG를 언랩 *이후* 재빌드하는 **코어 임포트 후처리 훅**(L1) — 7.7.5의 저장 등록 문제와 같은 훅으로 동시에 풀린다. G1의 미래 어태치먼트 `gb_shading_control`(라이트맵 슬롯 8b + UV2 16:16)이 소비 측 준비를 이미 예약하고 있으므로, 라이트맵 흡수 작업(Wave 2)과 같은 마일스톤에 묶는다.
+
+### 7.7.7 결정성 제약 — 캐시 공유 금지
+
+§7.5 결정성 미검증 항목이 이 절에 직접 걸린다. 크로스 플랫폼 결정성이 확인되기 전까지:
+
+> **아티팩트는 머신 로컬로 취급한다.** 같은 키가 다른 머신에서 다른 바이트를 만들 수 있으므로 **팀 공유 캐시·CI 아티팩트 재사용 금지.** VCS 커밋은 가능하나 그 경우 한 머신이 생산한 것을 정본으로 삼는다(다른 머신 리임포트가 다른 결과를 얻어 diff가 뜰 수 있음).
+
+같은 바이너리·같은 머신에서는 프로세스 간 바이트 동일 실측 확인(3회).
+
+### 7.7.8 크기 예산 (실측 기반)
+
+DenseGrid 실측(소스 51,200 tri → 10레벨, DAG 전체 102,227 tri, 25,921 vert, 833 클러스터, 106 그룹), §3 (b) 레이아웃 + §4 레코드 B 기준:
+
+| 구성 | 크기 |
+|---|---|
+| 정점 데이터 (25,921 × 20 B) | 506 KiB |
+| 클러스터별 슬라이스 (68,465 × 4 B) | 267 KiB |
+| 8비트 로컬 인덱스 (102,227 × 3 B) | 300 KiB |
+| 클러스터 + 그룹 레코드 | 35 KiB |
+| **합계** | **≈ 1,108 KiB** |
+
+→ **소스 삼각형당 약 22 B** (그룹 평균 7.8, 중복 2.64× 포함). 100만 삼각형 에셋 ≈ 21 MiB. `meshopt_encodeMeshlet` 압축 미적용 상한값(코덱 컴파일 유닛은 추가돼 사용 가능).
+
 ## 8. 서명란
 
 | 레인 | 담당 | 판정 | 비고 |
