@@ -1,0 +1,84 @@
+/**************************************************************************/
+/*  nanite_dag_builder.h                                                  */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
+
+#pragma once
+
+#include "nanite_dag.h"
+
+// Offline Nanite S1 DAG builder.
+//
+// Runs the Karis loop on one triangle surface:
+//   cluster -> group (spatially aware) -> simplify with the group boundary
+//   locked -> re-cluster -> repeat until nothing merges any more.
+//
+// The whole loop stands on the bundled meshoptimizer 1.2; no METIS, and no
+// renderer coupling whatsoever, which is why it can run ahead of gate G0.
+class NaniteDAGBuilder {
+public:
+	struct Settings {
+		// Cluster shape. 128 triangles is the Nanite/Bevy figure; 255 vertices
+		// is the mesh-shading friendly ceiling that still fits 8-bit locals.
+		uint32_t max_cluster_vertices = 255;
+		uint32_t max_cluster_triangles = 128;
+		float cone_weight = 0.0f;
+
+		// Clusters per group. Karis groups ~4-32; 8 balances edge-cut against
+		// how much geometry a single LOD decision locks together.
+		uint32_t group_size = 8;
+
+		// Fraction of a group's triangles to keep per level.
+		float simplify_ratio = 0.5f;
+
+		// Attribute weights fed to the QEM metric, relative to position.
+		float normal_weight = 0.5f;
+		float uv_weight = 0.25f;
+
+		// Optimise cluster subdivision for raytracing (meshopt_buildMeshletsSpatial).
+		// Relevant to the BLAS convergence point, off until that is scoped.
+		bool spatial_clustering = false;
+
+		// Safety net; the loop terminates on its own via strict cluster-count
+		// reduction, this only bounds pathological inputs.
+		uint32_t max_levels = 32;
+
+		// Run the invariant checker after the build and fail if it trips.
+		bool validate = true;
+	};
+
+	// Builds from a Mesh surface array set (Mesh::ARRAY_*). Triangles only.
+	static Ref<NaniteDAG> build_from_surface(const Array &p_arrays, const Settings &p_settings, String *r_error = nullptr);
+
+	// Builds from raw buffers. `p_positions` holds 3 floats per vertex,
+	// `p_attributes` holds `p_attribute_count` floats per vertex.
+	static Ref<NaniteDAG> build(const LocalVector<float> &p_positions, uint32_t p_vertex_count,
+			const LocalVector<float> &p_attributes, uint32_t p_attribute_count,
+			const LocalVector<float> &p_attribute_weights, const LocalVector<uint32_t> &p_indices,
+			const Settings &p_settings, String *r_error = nullptr);
+};
