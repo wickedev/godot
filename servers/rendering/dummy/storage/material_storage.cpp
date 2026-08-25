@@ -72,7 +72,6 @@ Vector<StringName> MaterialStorage::global_shader_parameter_get_list() const {
 
 RSE::GlobalShaderParameterType MaterialStorage::global_shader_parameter_get_type(const StringName &p_name) const {
 	if (!global_shader_variables.has(p_name)) {
-		print_line("don't have name, sorry");
 		return RSE::GLOBAL_VAR_TYPE_MAX;
 	}
 
