@@ -1048,6 +1048,9 @@ public:
 		// 64-bit atomic operations on storage images. Required to build a visibility buffer that
 		// packs depth and an identifier into a single R64_UINT texel resolved with one atomic min/max.
 		SUPPORTS_IMAGE_ATOMIC_64_BIT,
+		// Descriptor arrays may be indexed with a value that varies per invocation. A visibility
+		// buffer resolve needs this because the material index it looks up is per-pixel.
+		SUPPORTS_DESCRIPTOR_INDEXING,
 	};
 
 	enum SubgroupOperations {
