@@ -146,6 +146,7 @@
 
 ## Rendering
 /modules/glslang/                             @godotengine/rendering
+/modules/glslang/tests/                       @godotengine/rendering @godotengine/tests
 /modules/lightmapper_rd/                      @godotengine/rendering
 /modules/meshoptimizer/                       @godotengine/rendering
 /modules/raycast/                             @godotengine/rendering

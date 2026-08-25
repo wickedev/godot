@@ -16,6 +16,13 @@ if env["builtin_glslang"]:
     thirdparty_sources = [
         "glslang/GenericCodeGen/CodeGen.cpp",
         "glslang/GenericCodeGen/Link.cpp",
+        "glslang/HLSL/hlslAttributes.cpp",
+        "glslang/HLSL/hlslGrammar.cpp",
+        "glslang/HLSL/hlslOpMap.cpp",
+        "glslang/HLSL/hlslParseables.cpp",
+        "glslang/HLSL/hlslParseHelper.cpp",
+        "glslang/HLSL/hlslScanContext.cpp",
+        "glslang/HLSL/hlslTokenStream.cpp",
         "glslang/MachineIndependent/attribute.cpp",
         "glslang/MachineIndependent/Constant.cpp",
         "glslang/MachineIndependent/glslang_tab.cpp",
@@ -66,6 +73,17 @@ if env["builtin_glslang"]:
     env_glslang.Prepend(CPPPATH=[thirdparty_spirv_headers_dir + "include/spirv/unified1"])
 
     env_glslang.Append(CPPDEFINES=[("ENABLE_OPT", 0)])
+
+    # Upstream Godot omits glslang/HLSL, so the HLSL frontend is compiled out and every source
+    # has to be GLSL. We vendor it and switch it on, which is what lets compile_hlsl_shader()
+    # exist -- see the toolchain proposal in docs/.
+    #
+    # Scoped to this module's env on purpose. ENABLE_HLSL changes what glslang's own headers
+    # declare (glslang/Include/Types.h, Public/ShaderLang.h), so a translation unit that includes
+    # them with the define disagreeing with the one that compiled the library is an ODR violation.
+    # Nothing outside modules/glslang includes those headers, so the module env is both necessary
+    # and sufficient.
+    env_glslang.Append(CPPDEFINES=["ENABLE_HLSL"])
 
     env_thirdparty = env_glslang.Clone()
     env_thirdparty.disable_warnings()

@@ -33,3 +33,19 @@
 #include "servers/rendering/rendering_device_commons.h"
 
 Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error);
+
+// Compiles HLSL to SPIR-V through glslang's HLSL frontend, which upstream Godot compiles out --
+// see thirdparty/README.md and docs/godot-hlsl-toolchain-proposal.md.
+//
+// Deliberately general rather than shaped around its first caller. It exists because the vendored
+// Jolt hair kernels are HLSL, but anything shipped as HLSL -- vendor samples, upscaler SDKs,
+// reference compute kernels -- reaches the fork through here.
+//
+// HLSL carries no binding decorations of its own, so bindings and locations are assigned
+// automatically in declaration order. Consumers that reflect the resulting SPIR-V by name (Jolt's
+// ComputeShaderVK does) are unaffected; anything expecting a fixed descriptor layout is not, and
+// should state its bindings in the HLSL with `register()`.
+//
+// `p_entry_point` is the HLSL entry function. Unlike GLSL there is no `main` convention, though
+// the Jolt kernels do use it.
+Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error);

@@ -422,8 +422,9 @@ section).
 
 Files extracted from upstream source:
 
-- `glslang/` folder (except the `glslang/HLSL` and `glslang/ExtensionHeaders`
-  subfolders), `SPIRV/` folder
+- `glslang/` folder (except the `glslang/ExtensionHeaders` subfolder), `SPIRV/` folder
+  * `glslang/HLSL` is vendored, unlike upstream Godot which omits it. It is what makes
+    `compile_hlsl_shader()` possible; without it glslang only accepts GLSL.
   * Remove C interface code: `CInterface/` folders, files matching `"*_c[_\.]*"`
   * Remove `glslang/stub.cpp`
   * Remove `SPIRV/spirv.hpp11` (should use copy from `thirdparty/spirv-headers`)

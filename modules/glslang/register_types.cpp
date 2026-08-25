@@ -46,7 +46,7 @@ GODOT_GCC_WARNING_PUSH_AND_IGNORE("-Wshadow")
 
 GODOT_GCC_WARNING_POP
 
-Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
+static Vector<uint8_t> compile_shader(glslang::EShSource p_source_language, RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
 	Vector<uint8_t> ret;
 	EShLanguage stages[RenderingDeviceCommons::SHADER_STAGE_MAX] = {
 		EShLangVertex,
@@ -73,9 +73,20 @@ Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_sta
 	std::string preamble = "";
 
 	shader.setStrings(&cs_strings, 1);
-	shader.setEnvInput(glslang::EShSourceGlsl, stages[p_stage], glslang::EShClientVulkan, ClientInputSemanticsVersion);
+	shader.setEnvInput(p_source_language, stages[p_stage], glslang::EShClientVulkan, ClientInputSemanticsVersion);
 	shader.setEnvClient(glslang::EShClientVulkan, ClientVersion);
 	shader.setEnvTarget(glslang::EShTargetSpv, TargetVersion);
+
+	if (p_source_language == glslang::EShSourceHlsl) {
+		const CharString entry_point = p_entry_point.utf8();
+		shader.setEntryPoint(entry_point.get_data());
+		shader.setSourceEntryPoint(entry_point.get_data());
+		// HLSL has no binding decorations, so without this every resource lands on binding 0 and
+		// the module fails validation the moment a shader declares more than one.
+		shader.setAutoMapBindings(true);
+		shader.setAutoMapLocations(true);
+		shader.setHlslIoMapping(true);
+	}
 
 	if (!preamble.empty()) {
 		shader.setPreamble(preamble.c_str());
@@ -90,6 +101,9 @@ Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_sta
 #endif
 
 	EShMessages messages = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+	if (p_source_language == glslang::EShSourceHlsl) {
+		messages = (EShMessages)(messages | EShMsgReadHlsl);
+	}
 	if (generate_spirv_debug_info) {
 		messages = (EShMessages)(messages | EShMsgDebugInfo);
 	}
@@ -121,6 +135,15 @@ Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_sta
 		return ret;
 	}
 
+	// Auto-assigned bindings are only resolved here, not during parse.
+	if (p_source_language == glslang::EShSourceHlsl && !program.mapIO()) {
+		if (r_error) {
+			(*r_error) = "Failed to map HLSL bindings:\n";
+			(*r_error) += program.getInfoLog();
+		}
+		return ret;
+	}
+
 	std::vector<uint32_t> SpirV;
 	spv::SpvBuildLogger logger;
 	glslang::SpvOptions spvOptions;
@@ -140,6 +163,14 @@ Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_sta
 	}
 
 	return ret;
+}
+
+Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
+	return compile_shader(glslang::EShSourceGlsl, p_stage, p_source_code, "main", p_language_version, p_spirv_version, r_error);
+}
+
+Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
+	return compile_shader(glslang::EShSourceHlsl, p_stage, p_source_code, p_entry_point, p_language_version, p_spirv_version, r_error);
 }
 
 void initialize_glslang_module(ModuleInitializationLevel p_level) {
