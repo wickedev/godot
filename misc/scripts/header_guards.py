@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 
+import os
 import sys
+
+# This script rewrites the files it is given. It decides whether a file needs a
+# guard by looking for the Godot copyright header, which every source file has,
+# so without this list it would happily insert `#pragma once` into a .cpp. That
+# is a no-op the compiler accepts silently, so nothing downstream catches it.
+# Keep in sync with the `files` pattern of the header-guards pre-commit hook.
+#
+# Note the extension is only half of the scoping. The hook also carries an
+# `exclude` pattern, which among other things keeps generated `*-so_wrap.h`
+# wrappers out; invoking this script by hand over a directory glob will reach
+# those, so check `git diff` afterwards rather than trusting a clean exit.
+HEADER_EXTENSIONS = [".h", ".hpp", ".hh", ".hxx"]
 
 if len(sys.argv) < 2:
     print("Invalid usage of header_guards.py, it should be called with a path to one or multiple files.")
@@ -8,8 +21,13 @@ if len(sys.argv) < 2:
 
 changed = []
 invalid = []
+skipped = []
 
 for file in sys.argv[1:]:
+    if os.path.splitext(file.strip())[1] not in HEADER_EXTENSIONS:
+        skipped.append(file)
+        continue
+
     header_start = -1
     header_end = -1
 
@@ -78,6 +96,12 @@ for file in sys.argv[1:]:
         f.writelines(lines)
     changed.append(file)
 
+if skipped:
+    # Reported rather than passed over quietly: being handed a non-header is a
+    # sign the caller expected it to be checked, and staying silent is what
+    # makes the opposite mistake so hard to notice.
+    for file in skipped:
+        print(f"SKIPPED, NOT A HEADER: {file}")
 if changed:
     for file in changed:
         print(f"FIXED: {file}")

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# Despite the name, this script rewrites the files it is given rather than only
+# reporting on them. Pass it the files you actually intend to have reordered.
+
 if __name__ != "__main__":
     raise ImportError(f'Utility script "{__file__}" should not be used as a module!')
 
