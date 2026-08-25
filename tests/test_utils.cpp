@@ -46,9 +46,12 @@ String TestUtils::get_executable_dir() {
 String TestUtils::get_temp_path(const String &p_suffix) {
 	// Each run gets a unique root: leftovers from a previous run (or a crashed run
 	// that never reached cleanup) must never be observable, and two test binaries
-	// running concurrently must not share directories. The root is removed at the
-	// end of the run in test_main.cpp; a crashed run leaks its root by design
-	// (reclamation needs an owner-aware janitor, deliberately out of scope here).
+	// running concurrently must not share directories. Every run leaks its root by
+	// design: recursively deleting it cannot be made safe against concurrent
+	// symlink/junction swaps with path-based DirAccess operations, so reclamation
+	// is left to an owner-aware janitor (deliberately out of scope here); the
+	// end-of-run cleanup in test_main.cpp only attempts a non-recursive removal,
+	// which succeeds solely when the run created no files.
 	// Note this only isolates state that goes through this helper; tests touching
 	// user:// or other fixed paths are not covered.
 	static String run_root;
@@ -72,7 +75,10 @@ String TestUtils::get_temp_path(const String &p_suffix) {
 		// deletion reaches directories we do not own.
 		CRASH_COND_MSG(run_root.is_empty() || !run_root.is_absolute_path(), "Could not create an exclusive temp root for this test run.");
 	}
-	DirAccess::make_dir_recursive_absolute(run_root); // Ensure the directory still exists.
+	// No reacquisition: the exclusively-created root is never re-created or even
+	// re-checked. If something deletes or replaces it mid-run, recreating (or
+	// adopting) a path at the same name could hand tests a directory we do not
+	// own; instead the affected tests simply fail on their own file operations.
 	return run_root.path_join(p_suffix);
 }
 
