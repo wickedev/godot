@@ -48,9 +48,17 @@ MaterialStorage::~MaterialStorage() {
 }
 
 void MaterialStorage::global_shader_parameter_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) {
-	ERR_FAIL_COND(global_shader_variables.has(p_name));
+	ERR_FAIL_COND_MSG(!global_shader_parameter_try_add(p_name, p_type, p_value),
+			vformat("Global shader parameter '%s' already exists.", String(p_name)));
+}
+
+bool MaterialStorage::global_shader_parameter_try_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) {
+	if (global_shader_variables.has(p_name)) {
+		return false; // Not an error: the caller asked whether it could have the name.
+	}
 
 	global_shader_variables[p_name] = p_type;
+	return true;
 }
 
 void MaterialStorage::global_shader_parameter_remove(const StringName &p_name) {
