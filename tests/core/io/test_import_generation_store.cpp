@@ -41,7 +41,8 @@ namespace TestImportGenerationStore {
 
 static String _project_data_path(const String &p_name) {
 	const String path = TestUtils::get_temp_path(p_name);
-	ERR_FAIL_COND_V(TestUtils::make_temp_dir(path) != OK, String());
+	const Error error = DirAccess::make_dir_recursive_absolute(path);
+	ERR_FAIL_COND_V(error != OK && error != ERR_ALREADY_EXISTS, String());
 	return path;
 }
 
@@ -180,8 +181,8 @@ static ImportGenerationStore::ResourceGeneration _resource_generation(const Stri
 }
 
 static Error _write_staged_file(const String &p_staging_path, const String &p_file_name, const String &p_contents) {
-	const Error dir_error = TestUtils::make_temp_dir(p_staging_path);
-	if (dir_error != OK) {
+	const Error dir_error = DirAccess::make_dir_recursive_absolute(p_staging_path);
+	if (dir_error != OK && dir_error != ERR_ALREADY_EXISTS) {
 		return dir_error;
 	}
 	Ref<FileAccess> file = FileAccess::open(p_staging_path.path_join(p_file_name), FileAccess::WRITE);
