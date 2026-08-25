@@ -1141,6 +1141,9 @@ public:
 #define ServerName RendererMaterialStorage
 #define server_name RSG::material_storage
 
+	// Synchronous, unlike the void form below: the return value is the point. Only callers that
+	// need to know whether they acquired a name pay the round trip.
+	FUNC3R(bool, global_shader_parameter_try_add, const StringName &, RSE::GlobalShaderParameterType, const Variant &)
 	FUNC3(global_shader_parameter_add, const StringName &, RSE::GlobalShaderParameterType, const Variant &)
 	FUNC1(global_shader_parameter_remove, const StringName &)
 	FUNC0RC(Vector<StringName>, global_shader_parameter_get_list)

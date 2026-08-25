@@ -39,6 +39,10 @@ public:
 	virtual ~RendererMaterialStorage() {}
 
 	/* GLOBAL SHADER UNIFORM API */
+	// Returns false when the name is already declared, instead of treating that as an error. A
+	// caller that reserves names needs to know whether it actually acquired one: the query functions
+	// below are editor-only, so there is otherwise no way to find out in an exported build.
+	virtual bool global_shader_parameter_try_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) = 0;
 	virtual void global_shader_parameter_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) = 0;
 	virtual void global_shader_parameter_remove(const StringName &p_name) = 0;
 	virtual Vector<StringName> global_shader_parameter_get_list() const = 0;

@@ -939,6 +939,8 @@ public:
 
 	/* GLOBAL SHADER PARAMETERS API */
 
+	// Not bound to ClassDB on purpose -- the scripting surface keeps the void form.
+	virtual bool global_shader_parameter_try_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) = 0;
 	virtual void global_shader_parameter_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) = 0;
 	virtual void global_shader_parameter_remove(const StringName &p_name) = 0;
 	virtual Vector<StringName> global_shader_parameter_get_list() const = 0;

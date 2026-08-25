@@ -1800,7 +1800,14 @@ void MaterialStorage::_global_shader_uniform_mark_buffer_dirty(int32_t p_index, 
 }
 
 void MaterialStorage::global_shader_parameter_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) {
-	ERR_FAIL_COND(global_shader_uniforms.variables.has(p_name));
+	ERR_FAIL_COND_MSG(!global_shader_parameter_try_add(p_name, p_type, p_value),
+			vformat("Global shader parameter '%s' already exists.", String(p_name)));
+}
+
+bool MaterialStorage::global_shader_parameter_try_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) {
+	if (global_shader_uniforms.variables.has(p_name)) {
+		return false; // Not an error: the caller asked whether it could have the name.
+	}
 	GlobalShaderUniforms::Variable gv;
 	gv.type = p_type;
 	gv.value = p_value;
@@ -1826,7 +1833,7 @@ void MaterialStorage::global_shader_parameter_add(const StringName &p_name, RSE:
 
 		//is vector, allocate in buffer and update index
 		gv.buffer_index = _global_shader_uniform_allocate(gv.buffer_elements);
-		ERR_FAIL_COND_MSG(gv.buffer_index < 0, vformat("Failed allocating global variable '%s' out of buffer memory. Consider increasing it in the Project Settings.", String(p_name)));
+		ERR_FAIL_COND_V_MSG(gv.buffer_index < 0, false, vformat("Failed allocating global variable '%s' out of buffer memory. Consider increasing it in the Project Settings.", String(p_name)));
 		global_shader_uniforms.buffer_usage[gv.buffer_index].elements = gv.buffer_elements;
 		_global_shader_uniform_store_in_buffer(gv.buffer_index, gv.type, gv.value);
 		_global_shader_uniform_mark_buffer_dirty(gv.buffer_index, gv.buffer_elements);
@@ -1835,6 +1842,7 @@ void MaterialStorage::global_shader_parameter_add(const StringName &p_name, RSE:
 	}
 
 	global_shader_uniforms.variables[p_name] = gv;
+	return true;
 }
 
 void MaterialStorage::global_shader_parameter_remove(const StringName &p_name) {

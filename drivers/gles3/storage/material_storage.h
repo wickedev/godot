@@ -623,6 +623,7 @@ public:
 
 	void _update_global_shader_uniforms();
 
+	virtual bool global_shader_parameter_try_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) override;
 	virtual void global_shader_parameter_add(const StringName &p_name, RSE::GlobalShaderParameterType p_type, const Variant &p_value) override;
 	virtual void global_shader_parameter_remove(const StringName &p_name) override;
 	virtual Vector<StringName> global_shader_parameter_get_list() const override;
