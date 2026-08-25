@@ -8647,9 +8647,14 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	upload_staging_buffers.max_size *= 1024 * 1024;
 	upload_staging_buffers.max_size = MAX(upload_staging_buffers.max_size, upload_staging_buffers.block_size * 4);
 
-	// Copy the sizes to the download staging buffers.
+	// The download budget is a separate knob: async readback rings (streaming
+	// requests, GPU-driven culling results) size independently of upload traffic.
+	// The block size stays shared with uploads.
 	download_staging_buffers.block_size = upload_staging_buffers.block_size;
-	download_staging_buffers.max_size = upload_staging_buffers.max_size;
+	download_staging_buffers.max_size = GLOBAL_GET("rendering/rendering_device/staging_buffer/download_max_size_mb");
+	download_staging_buffers.max_size = MAX(1u, download_staging_buffers.max_size);
+	download_staging_buffers.max_size *= 1024 * 1024;
+	download_staging_buffers.max_size = MAX(download_staging_buffers.max_size, download_staging_buffers.block_size * 4);
 
 	texture_upload_region_size_px = GLOBAL_GET("rendering/rendering_device/staging_buffer/texture_upload_region_size_px");
 	texture_upload_region_size_px = Math::nearest_power_of_2_templated(texture_upload_region_size_px);
@@ -9886,14 +9891,22 @@ void RenderingDevice::_bind_methods() {
 	BIND_ENUM_CONSTANT(PIPELINE_SPECIALIZATION_CONSTANT_TYPE_INT);
 	BIND_ENUM_CONSTANT(PIPELINE_SPECIALIZATION_CONSTANT_TYPE_FLOAT);
 
+	BIND_ENUM_CONSTANT(SUPPORTS_MULTIVIEW);
+	BIND_ENUM_CONSTANT(SUPPORTS_HALF_FLOAT);
+	BIND_ENUM_CONSTANT(SUPPORTS_ATTACHMENT_VRS);
 	BIND_ENUM_CONSTANT(SUPPORTS_METALFX_SPATIAL);
 	BIND_ENUM_CONSTANT(SUPPORTS_METALFX_TEMPORAL);
+	BIND_ENUM_CONSTANT(SUPPORTS_FRAGMENT_SHADER_WITH_ONLY_SIDE_EFFECTS);
 	BIND_ENUM_CONSTANT(SUPPORTS_BUFFER_DEVICE_ADDRESS);
 	BIND_ENUM_CONSTANT(SUPPORTS_IMAGE_ATOMIC_32_BIT);
+	BIND_ENUM_CONSTANT(SUPPORTS_VULKAN_MEMORY_MODEL);
+	BIND_ENUM_CONSTANT(SUPPORTS_FRAMEBUFFER_DEPTH_RESOLVE);
+	BIND_ENUM_CONSTANT(SUPPORTS_POINT_SIZE);
 	BIND_ENUM_CONSTANT(SUPPORTS_RAY_QUERY);
 	BIND_ENUM_CONSTANT(SUPPORTS_RAYTRACING_PIPELINE);
 	BIND_ENUM_CONSTANT(SUPPORTS_HDR_OUTPUT);
 	BIND_ENUM_CONSTANT(SUPPORTS_RASTERIZATION_RATE_MAP);
+	BIND_ENUM_CONSTANT(SUPPORTS_GPU_MAPPABLE_BUFFER);
 	BIND_ENUM_CONSTANT(SUPPORTS_DRAW_INDIRECT_COUNT);
 	BIND_ENUM_CONSTANT(SUPPORTS_IMAGE_ATOMIC_64_BIT);
 	BIND_ENUM_CONSTANT(SUPPORTS_DESCRIPTOR_INDEXING);
