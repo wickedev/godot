@@ -1,8 +1,17 @@
 ; Minimal project for the Wave 0 RD capability spike (docs/rd-capability-spike-report.md).
-; Run with a real rendering driver -- `--headless` uses the dummy driver and has no
-; RenderingDevice, so the measurements below cannot run there.
 ;
-;   bin/godot.macos.editor.arm64 --path misc/rd_capability_spike
+; Run with a real rendering driver. `--headless` selects the dummy driver and has no
+; RenderingDevice, so nothing here can run under it. On a machine with no display,
+; use xvfb-run rather than --headless:
+;
+;   bin/godot.macos.editor.arm64 --quit-after 2000 --path misc/rd_capability_spike
+;   xvfb-run -a bin/godot.linuxbsd.editor.arm64 --rendering-driver vulkan \
+;       --quit-after 2000 --path misc/rd_capability_spike
+;
+; ALWAYS pass --quit-after when automating. A GDScript parse error means _ready()
+; never runs, so the script's own get_tree().quit() never fires and the process hangs
+; until an external timeout. Referencing an unbound RenderingDevice constant is a
+; parse error too, not a runtime one, so it has the same symptom.
 
 config_version=5
 
