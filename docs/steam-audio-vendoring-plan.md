@@ -21,6 +21,16 @@
 | ISPC / RadeonRays / TrueAudioNext | optional (GPU 가속) | v1 제외 — G5 이후 재검토 (Jolt/Compute와 같은 판정 구조) |
 | Java / Python | 바인딩 생성용 | 불요 |
 
+## 2.5 구현급 실측 추가 (2026-08-25 2차 스코핑)
+
+| 발견 | 함의 |
+|---|---|
+| `.fbs` → C++ 헤더가 **빌드 타임 flatc 생성** (`compile_fbs`, `--cpp --scoped-enums --filename-suffix .fbs`, ~20개 스키마) | **사전 생성 벤더링** 채택 — flatc를 Godot 빌드 의존으로 넣지 않는다. 생성 flatc 버전 = 벤더링할 flatbuffers 헤더 버전 일치 필수. 재생성 절차를 thirdparty README에 기록 |
+| `target_precompile_headers(core PUBLIC pch.h)` | SCons는 pch 미사용 — pch.h를 각 TU 강제 include(`-include`) 또는 소스 수정 없이 SCsub `CPPFLAGS`로 처리 |
+| SIMD: `sse_float4.h`/`avx_float8.h`/`neon_float4.h` + ISPC 게이트(`IPL_ENABLE_FLOAT8` 등) | arm64 macOS는 NEON 경로. float8(AVX)은 ISPC-off 시 자동 비활성 확인 필요 — x86 데스크톱은 SSE로 시작, AVX는 후속 |
+| HRTF 기본 데이터: `data/hrtf/` + `hrtf_database.cpp` | 임베드 방식(생성 소스인지 로더인지) 확인 필요 — 임베드 생성물이면 이것도 사전 생성 벤더링 |
+| 로컬 flatc 부재 | 13a 착수자는 flatbuffers 릴리스에서 flatc 바이너리 확보 (버전 고정) |
+
 ## 3. 단계
 
 1. **13a — 소스 벤더링**: `thirdparty/steam_audio/` = core/src/core + pffft + mysofa (+flatbuffers 판정) + `thirdparty/README.md` 갱신. SCsub 작성, `phonon.h` C API까지 컴파일 통과. 콘솔 고려: x86/ARM LE 순수 CPU 코드라 이식성 높음 — 플랫폼 gate는 SCsub에서 데스크톱 우선.
@@ -31,4 +41,4 @@
 
 - FlatBuffers 버전 충돌 (다른 서브시스템이 도입할 경우) — 벤더링 시 네임스페이스 격리 확인.
 - 콘솔 인증 선례 부재 — [W4 질의 #3](./w4-console-inquiry-checklist.md) 답변으로 조기 해소.
-- 규모: 13a 1~2주 / 13b 3~6주 / 13c는 §6 일정에 종속. L8 담당 확보 시 착수.
+- 규모: 13a 1~2주(2차 스코핑 반영: flatc 사전 생성 + pch 처리 포함) / 13b 3~6주 / 13c는 §6 일정에 종속. L8 담당 확보 시 착수.
