@@ -22,6 +22,8 @@
 | Apple M2 Pro / macOS | **Metal** | `rendering_driver_active=metal` |
 | NVIDIA GB10 / Linux aarch64 | **Vulkan** | `rendering_driver_active=vulkan` |
 
+> **⚠️ ⓐ의 수치는 3판이다.** 왕복 지연과 마셜링 지연은 **하니스 계측 결함으로 두 번 정정**됐다. 결론만 읽지 말고 §ⓐ의 경위를 함께 볼 것. 원시 로그: `misc/rd_capability_spike/measurements/`.
+
 > ### ⚠️ 초판 정정 — 백엔드 귀속이 틀렸었다
 > 초판은 macOS 측정을 **"MoltenVK/Vulkan"** 이라고 적었다. **틀렸다.** 하니스가 *프로젝트 설정*(`rendering/rendering_device/driver` = `"vulkan"`)을 출력했을 뿐, 실제 초기화된 드라이버는 **Metal**이었다. Apple Silicon에서는 설정과 무관하게 Metal로 해석된다.
 >
@@ -39,57 +41,35 @@
 
 콜백은 `_stall_for_frame(p_frame)`(`:8277`)에서 `driver->fence_wait(frames[p_frame].fence)`(`:8282`) **이후에** 호출된다. 이 함수는 `_begin_frame`(`:8111`)이 `:8114`에서 부른다.
 
-### 📏 왕복 지연 — 실측 (⚠️ 코드 분석 예측이 틀렸다)
+### 📏 왕복 지연 — 실측 (⚠️ **2차 정정. 앞선 "법칙"은 계측 결함이었다**)
 
-이 리포트 초안은 메커니즘만 보고 *"왕복 지연 = `frames.size()`"* 라고 적었다. **실측 결과 틀렸다.**
+이 절은 두 번 틀렸다. 경위를 남긴다.
 
-4구성 × 각 10샘플, 정상상태(60프레임 워밍업 후), **편차 0**. **두 백엔드에서 동일한 값이 나왔다:**
+1. **초판:** 코드만 보고 *"왕복 = `frames.size()`"* → 실측으로 반박됨.
+2. **2판:** *"단일 = `fq-1` · 렌더스레드 분리 = `fq`"* 라 적고 +1을 "파이프라이닝 오프셋"이라 **설명**함 → **하니스가 스레드를 넘나드는 카운터로 스탬프하고 있었다.** 2백엔드에서 재현됐지만, 두 백엔드가 **같은 카운터를 같은 방식으로 잘못 읽었을 뿐**이다. 재현성은 정확성을 보증하지 않는다.
 
-| `thread_model` | `frame_queue_size` | Metal (M2 Pro) | **Vulkan (GB10)** |
+**결함:** `Engine.get_frames_drawn()`은 **메인 스레드**가 `Main::iteration()`에서 증가시키는 **비원자** 카운터다(`main/main.cpp`, `core/config/engine.h:59`). async 콜백은 **렌더 스레드**에서 돈다. `thread_model=2`에서 렌더 스레드가 메인 스레드 카운터를 읽고, 두 스레드는 정확히 한 프레임 어긋나 있다.
+
+**수정:** 하니스가 **렌더 스레드가 소유·증가시키는 자체 카운터**(`_rt_frame`)로 요청과 콜백을 스탬프한다. 두 스탬프가 한 스레드의 한 시계에서 나온다. `get_frames_drawn()`은 **오직 스큐를 드러내기 위해서만** 함께 기록한다.
+
+#### 정정된 실측 (NVIDIA GB10 · Linux aarch64 · Vulkan · 구성당 독립 3회 × 10샘플, 편차 0)
+
+| `thread_model` | `frame_queue_size` | **왕복(렌더스레드 시계)** | 메인↔렌더 시계 스큐 |
 |:---:|:---:|:---:|:---:|
-| 1 = Safe (단일, 기본) | 2 (기본) | 1 | **1** |
-| 1 = Safe | 3 | 2 | **2** |
-| 2 = Separate (렌더 스레드 분리) | 2 | 2 | **2** |
-| 2 = Separate | 3 | 3 | **3** |
+| 1 = Safe | 2 | **1** | −1 |
+| 1 = Safe | 3 | **2** | −1 |
+| 2 = Separate | 2 | **1** | **0** |
+| 2 = Separate | 3 | **2** | **0** |
 
-⇒ **단일 = `frame_queue_size - 1` · 렌더 스레드 분리 = `frame_queue_size`**
+⇒ **왕복 지연 = `frame_queue_size - 1`. `thread_model`과 무관하다.**
 
-분리 모델의 +1은 메인 스레드가 렌더 스레드보다 한 프레임 앞서는 파이프라이닝 오프셋이다.
+**스큐 열이 결정적 증거다.** `thread_model=1`에서 −1, `2`에서 0 — **정확히 1 차이**. 메인 스레드 카운터로 스탬프하면 `thread_model=2`에서만 지연이 1 높게 나온다. **2판이 "파이프라이닝 오프셋"이라 설명했던 +1의 정체가 이것이다.**
 
-> **`thread_model` 값 정정:** 초판 범례가 0/1을 뒤집어 적었다. 정본은 `core/config/project_settings.cpp:1851` — **`Unsafe (deprecated)=0, Safe=1, Separate=2`**, 기본 `Safe`(1). 표의 매핑(1=단일, 2=분리)은 처음부터 옳았고 범례 텍스트만 틀렸다.
->
-> **재현 명령** (구성별로 `project.godot`에 두 줄 추가 후 실행):
-> ```
-> [rendering]
-> rendering_device/vsync/frame_queue_size=<2|3>
-> driver/threads/thread_model=<1|2>
-> ```
-> ```
-> xvfb-run -a bin/godot.linuxbsd.editor.arm64 --rendering-driver vulkan --path misc/rd_capability_spike
-> ```
+#### 뒤집힌 실무 결론
 
-**설계에 쓸 숫자는 멀티스레드 쪽이다.** 기본값(`thread_model=1`, `fq=2`)에서는 1프레임이지만 AAA 타이틀은 거의 확실히 스레드 렌더링을 켜므로 **2~3프레임을 전제로 팝인 예산을 잡아야 한다.** 1프레임 기준으로 설계하면 안 된다.
+2판은 *"AAA는 스레드 렌더링을 켜므로 2~3프레임을 전제하라"* 고 적었다. **틀렸다.** 스레드 모델은 리드백 지연을 **바꾸지 않는다.** 기본값(`fq=2`)에서 **1프레임**, `fq=3`일 때만 2프레임이다. 팝인 예산은 `frame_queue_size`만 보면 된다.
 
-관련 설정: `rendering/rendering_device/vsync/frame_queue_size`(`core/config/project_settings.cpp:1897`, 기본 2·범위 2~3), `rendering/driver/threads/thread_model`.
-
-해당 프레임 슬롯 재사용 시점엔 펜스가 이미 시그널된 상태라 `fence_wait`는 즉시 반환한다. **정상 경로에 추가 스톨 없음** — 아래 스테이징 고갈 경로만 예외다.
-
-### ⚠️ 스톨하는 경로 — 이게 진짜 설계 제약이다
-
-`_staging_buffer_allocate`(`:931`)에서 **다운로드 스테이징 블록이 전부 현재 프레임에 점유되고 풀을 더 늘릴 수 없으면** `STAGING_REQUIRED_ACTION_FLUSH_AND_STALL_ALL`을 반환한다(`:984`).
-이를 `_staging_buffer_execute_required_action`(`:1022`)이 받아 **`_flush_and_stall_for_all_frames()` = 전면 파이프라인 스톨**을 실행한다. `buffer_get_data_async`는 `:1381`에서 이 경로를 탄다.
-
-**예산 (실측):**
-
-| 항목 | 값 | 출처 |
-|---|---|---|
-| `block_size` | `staging_buffer/block_size_kb` **기본 256 KB** | `project_settings.cpp:1899` |
-| `max_size` | `staging_buffer/max_size_mb` **기본 128 MB** | `project_settings.cpp:1900` |
-| 다운로드 풀 설정 | **업로드 값을 그대로 복사** | `rendering_device.cpp:8612-8613` |
-
-> **`max_size`는 프레임당 예산이 아니다.** 풀 **전체의 상한**이고, 블록은 `frame_used <= frames_drawn - frames.size()`일 때만 재활용된다(`:993`) — 즉 **in-flight 프레임들이 합산 점유**한다. 프레임당 실효 여유는 대략 `max_size / frames.size()`이며 업로드 트래픽 패턴에 따라 달라진다. 128 MB를 "프레임당 128 MB 써도 된다"로 읽으면 안 된다.
->
-> 업로드와 다운로드는 **물리적으로 별개 풀**이다(`upload_staging_buffers` / `download_staging_buffers`). 공유되는 것은 **크기 설정 두 개**뿐이다.
+원시 로그·빌드 해시·실행 명령: `misc/rd_capability_spike/measurements/`.
 
 ### 📏 스톨 임계 — **측정 시도했으나 수치를 얻지 못했다 (정직한 실패)**
 
@@ -114,13 +94,21 @@
 
 #### 부수: 램프 도중 재현되는 크래시 1건 (미해결, 후속 과제)
 
-대형 버퍼를 매 프레임 재할당하며 리드백을 계속 거는 램프 중 **SIGABRT가 재현**됐다. 스택은 `buffer_get_data_async` 호출 지점에서 MoltenVK `SPIRVToMSLConverter::convert`로 들어간다.
+대형 버퍼를 매 프레임 재할당하며 리드백을 계속 거는 램프 중 **SIGABRT가 재현**됐다(macOS, **Metal** 활성).
+
+> ⚠️ 당시 백트레이스에 MoltenVK `SPIRVToMSLConverter::convert` 프레임이 보였고 초판은 이를 MoltenVK 문제로 적었다. **그 귀속은 철회한다** — 실제 활성 드라이버는 Metal이었으므로(§0 정정) 그 프레임의 의미를 신뢰할 수 없다. **원인 미규명으로 되돌린다.**
 
 > **첫 가설은 검증해서 기각했다.** "in-flight 리드백이 걸린 버퍼를 `free_rid`하면 터진다"고 의심했다 — `free_rid`(`:7672`) → `_free_internal` 경로에 `download_buffer_get_data_requests`를 확인하는 코드가 없기 때문이다. **최소 재현기로 직접 시험한 결과 정상 동작했다**: 같은 프레임에 async 리드백을 걸고 즉시 `free_rid`해도 콜백이 올바른 크기로 정상 발화하고 25프레임을 더 살아남았다. **이 가설은 틀렸다.**
 >
 > 실제 원인은 미규명이다. 지속적 대용량 프레임당 리드백이라는 조건이 스톨 경로와 인접하므로 **스테이징 고갈 경로 자체의 결함 가능성**이 남아 있으나, 근거 없이 주장하지 않는다. 크래시를 유발한 램프 프로브는 **하니스에서 제거**했다(노이즈 데이터 + 크래시 이중 결함). 재현 조건만 여기 기록한다: 256 KB→32 MB 램프, 스텝당 12프레임, 매 프레임 전체 버퍼 리드백.
 
-⇒ **다운로드 전용 노브가 없다.** VT 피드백 리드백 예산과 텍스처/메시 업로드 예산이 **같은 프로젝트 설정 하나**를 공유한다(풀 자체는 분리되어 있으나 크기 설정이 공유). 스트리밍이 무거운 프레임에 피드백 리드백이 겹치면 양쪽이 같은 노브를 놓고 경쟁한다.
+⇒ **다운로드 전용 노브가 없다.**
+
+정확히 말하면: **업로드 풀과 다운로드 풀은 물리적으로 별개**다(`upload_staging_buffers` / `download_staging_buffers`). 용량을 놓고 서로 경쟁하지 **않는다.** 결합돼 있는 것은 **설정값 두 개뿐**이다 — `download_staging_buffers.{block_size,max_size}`가 업로드 쪽 값을 그대로 복사받는다(`rendering_device.cpp:8612-8613`).
+
+**실무상 문제는 튜닝 불가다.** VT 피드백은 작고 잦은 리드백을, 텍스처/메시 스트리밍은 크고 드문 업로드를 원하는데 **둘의 블록/풀 크기를 따로 잡을 수 없다.** 한쪽에 맞추면 다른 쪽이 어긋난다.
+
+> **`max_size`는 프레임당 예산이 아니다.** 풀 **전체 상한**이고, 블록은 `frame_used <= frames_drawn - frames.size()`(`:993`)일 때만 재활용되므로 **in-flight 프레임들이 합산 점유**한다. 프레임당 실효 여유는 대략 `max_size / frames.size()`다. 128 MB를 "프레임당 128 MB"로 읽으면 안 된다.
 
 ### 추가 제약
 - **콜백은 렌더 스레드에서 실행된다**(`_stall_for_frame` 문맥). 콜백 안에서 무거운 페이지 분석을 하면 그대로 렌더 스레드를 막는다. → 콜백은 **버퍼 복사 + 워커 큐잉만** 하고 끝내야 한다.
@@ -166,9 +154,20 @@ ERROR: This function (buffer_get_data_async) can only be called from the render 
 ```
 **4개 구성(단일/멀티 × fq 2/3) 전부 동일.** 가드는 살아 있다.
 
-**`call_on_render_thread` 마셜링 지연은 8회 측정(2백엔드 × 4구성) 전부 0프레임이었다.**
+### 📏 `call_on_render_thread` 마셜링 지연 — 이것도 정정됐다
 
-> ⚠️ **범위 한정:** 이 0프레임은 **`_process`에서 enqueue한 경우**에 한한다. `_process`는 프레임의 커맨드 큐가 아직 플러시되기 전에 돌므로 같은 프레임 안에서 소화된다. **다른 시점(물리 틱, 워커 스레드, 프레임 후반)에서 밀어 넣으면 다를 수 있고 측정하지 않았다.** "마셜링은 항상 공짜"로 일반화하지 말 것.
+2판은 *"8회 측정 전부 0프레임 — 우회 경로에 프레임 비용이 없다"* 고 적었다. **같은 시계 결함에 오염돼 있었다.** 렌더스레드 시계로 재측정:
+
+| `thread_model` | 마셜링 지연 |
+|:---:|:---:|
+| 1 = Safe | **0 프레임** |
+| 2 = Separate | **1 프레임** |
+
+⇒ **렌더 스레드가 분리되면 `call_on_render_thread`는 프레임을 하나 먹는다. 공짜가 아니다.**
+
+**VT/Nanite 피드백 루프에 직접 영향한다.** 워커에서 리드백을 걸려면 (a) `call_on_render_thread`로 밀어 넣고 → (b) 리드백 왕복을 기다린다. 스레드 렌더링에서 **(a) 1프레임 + (b) `fq-1`프레임**이다.
+
+> ⚠️ **범위 한정:** `_process`에서 enqueue한 경우다. 물리 틱·워커 스레드·프레임 후반은 **측정하지 않았다.**
 
 ### 승인된 우회 경로 두 가지
 
@@ -293,12 +292,14 @@ vis-buffer 리졸브에서 머티리얼 인덱스는 **픽셀마다 다르다 = 
 
 ## 5. ⚠️ 미완 — 실측이 필요한 항목
 
-**본 리포트는 코드 정적 분석이다. GPU에서 아무것도 실행하지 않았다.** 아래는 아직 수치가 없다:
+ⓐ 왕복·마셜링 지연과 ⓑ 가드는 **실기 측정됐다**(§ⓐ·§ⓑ, 원시 로그 `misc/rd_capability_spike/measurements/`). 아래는 **여전히 수치가 없는 항목**이다:
 
 | 항목 | 필요한 측정 | 왜 코드만으론 부족한가 |
 |---|---|---|
 | ⓐ **스톨 임계·비용** | GPU 타임스탬프 계측 + 통제된 씬 | 프레임타임 관측은 노이즈에 묻혔다(위 표). **L9 GPU 프로파일러 P1/P2가 선행되어야 한다** |
-| ⓐ·ⓑ **Windows/Linux 재측정** | 하니스를 각 플랫폼에서 실행 | 실측 전부가 macOS/MoltenVK 단일 플랫폼. 특히 왕복 법칙이 드라이버 무관인지 미확인 |
+| ⓐ·ⓑ **Windows / AMD / Intel / 모바일 재측정** | 하니스를 각 플랫폼에서 실행 | 지금까지 Metal(Apple M2 Pro)·Vulkan(NVIDIA GB10) 두 조합뿐이다. 왕복 = `fq-1`이 드라이버·벤더 무관인지는 미확인 |
+| ⓐ 마셜링 지연의 다른 enqueue 지점 | 물리 틱·워커 스레드·프레임 후반에서 push | `_process`에서만 측정했다 |
+| `thread_model=2` 종료 시 SIGABRT | 원인 규명 | 전 프로브 완료 후 엔진 종료 중 발생. `RenderingDevice::finalize`가 자기 렌더스레드 가드에 걸린다(`rendering_device.cpp:8925`). 하니스 문제인지 엔진 문제인지 **미판정** |
 | ⓒ macOS 어서션 실체 | MoltenVK에서 nonuniform indexing이 실제 동작하는지 | `:1027` 불일치의 해석이 갈림 |
 
 **하니스:** `misc/rd_capability_spike/` (GDScript, 실행 1줄). 다른 레인이 자기 플랫폼에서 그대로 돌려 `RESULT` 라인을 회신하면 위 표가 채워진다.
