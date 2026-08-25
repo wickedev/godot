@@ -84,6 +84,13 @@ Ref<StreamPeerTCP> accept_connection(Ref<TCPServer> &p_server) {
 	REQUIRE(p_server->is_connection_available());
 	Ref<StreamPeerTCP> client_from_server = p_server->take_connection();
 	REQUIRE(client_from_server.is_valid());
+	if (client_from_server.is_null()) {
+		// REQUIRE does not leave the function in this build (see
+		// REQUIRE_OR_RETURN in test_macros.h), and the macro cannot be used
+		// here because this helper returns a value. The caller gets a null Ref
+		// and its own guard reports the follow-on failure.
+		return Ref<StreamPeerTCP>();
+	}
 	CHECK_EQ(client_from_server->get_connected_host(), LOCALHOST);
 	CHECK_EQ(client_from_server->get_status(), StreamPeerTCP::STATUS_CONNECTED);
 

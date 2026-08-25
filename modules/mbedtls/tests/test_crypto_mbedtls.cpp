@@ -74,6 +74,11 @@ Ref<CryptoKey> load_key(const String &p_key_path, bool p_public_only) {
 String read_file_s(const String &p_file_path) {
 	Ref<FileAccess> file_access = FileAccess::open(p_file_path, FileAccess::READ);
 	REQUIRE(file_access.is_valid());
+	if (file_access.is_null()) {
+		// REQUIRE does not return in this build; an empty string is the
+		// sentinel that keeps the comparison meaningful rather than crashing.
+		return String();
+	}
 	return file_access->get_as_utf8_string();
 }
 
