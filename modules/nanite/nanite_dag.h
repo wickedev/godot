@@ -102,8 +102,14 @@ public:
 		// level 0, where the geometry is the unsimplified input.
 		uint32_t source_group = NO_GROUP;
 
-		// Geometric bounds of this cluster's own triangles, for culling.
+		// Culling volumes for this cluster's own triangles. The cone is what
+		// lets a cluster be rejected when every triangle in it faces away; the
+		// apex is needed for the perspective form of that test, so it is kept
+		// rather than only axis and cutoff.
 		Sphere bounds;
+		Vector3 cone_apex;
+		Vector3 cone_axis;
+		float cone_cutoff = 1.0f;
 	};
 
 	struct Group {

@@ -35,6 +35,7 @@
 
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
+#include "core/os/os.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "scene/resources/3d/importer_mesh.h"
@@ -46,6 +47,7 @@
 #include "tests/test_macros.h"
 #include "tests/test_utils.h"
 
+#include <cmath>
 #include <functional>
 
 namespace TestNaniteDAG {
@@ -258,6 +260,28 @@ inline void poke_u32(PackedByteArray &r_data, int p_offset, uint32_t p_value) {
 	w[p_offset + 1] = (uint8_t)((p_value >> 8) & 0xFF);
 	w[p_offset + 2] = (uint8_t)((p_value >> 16) & 0xFF);
 	w[p_offset + 3] = (uint8_t)((p_value >> 24) & 0xFF);
+}
+
+// Every threshold at which the cut can change: the cut only moves when it
+// crosses a group's error, so this enumerates every distinct cut the DAG can
+// produce rather than sampling a handful of arbitrary values.
+inline LocalVector<float> every_distinct_threshold(const NaniteDAG &p_dag) {
+	LocalVector<float> errors;
+	errors.push_back(0.0f);
+	for (const NaniteDAG::Group &group : p_dag.groups) {
+		errors.push_back(group.error);
+	}
+	errors.sort();
+
+	LocalVector<float> thresholds;
+	for (uint32_t i = 0; i < errors.size(); i++) {
+		if (i == 0 || errors[i] != errors[i - 1]) {
+			thresholds.push_back(errors[i]);
+			// Just past the boundary, where the cut has actually moved on.
+			thresholds.push_back(nextafterf(errors[i], 3.4e38f));
+		}
+	}
+	return thresholds;
 }
 
 inline Ref<NaniteDAG> build_test_dag(const TestMesh &p_mesh, const NaniteDAGBuilder::Settings &p_settings) {
@@ -616,8 +640,10 @@ TEST_CASE("[Nanite] Every cut of a closed mesh is watertight") {
 	CHECK(dag->validate().is_empty());
 
 	const LocalVector<uint32_t> weld = weld_by_position(**dag);
-	const float top_error = dag->get_level_max_error(dag->get_level_count() - 1);
-	const float thresholds[] = { 0.0f, top_error * 0.05f, top_error * 0.25f, top_error * 0.5f, top_error, top_error * 4.0f };
+	// Every cut the DAG can produce, not a sample of them: a hole that only
+	// opens between two of the thresholds picked by hand would go unseen.
+	const LocalVector<float> thresholds = every_distinct_threshold(**dag);
+	CHECK(thresholds.size() > 10);
 
 	for (const float threshold : thresholds) {
 		const LocalVector<uint32_t> cut = dag->select_cut(threshold);
@@ -763,9 +789,13 @@ TEST_CASE("[Nanite] Cuts stay watertight across a surface boundary") {
 	REQUIRE(bottom_dag.is_valid());
 
 	const LocalVector<uint32_t> weld = weld_by_position(**top_dag);
-	const float top_error = MAX(top_dag->get_level_max_error(top_dag->get_level_count() - 1),
-			bottom_dag->get_level_max_error(bottom_dag->get_level_count() - 1));
-	const float thresholds[] = { 0.0f, top_error * 0.25f, top_error * 0.5f, top_error, top_error * 4.0f };
+	// Both surfaces change cut at their own group errors, so the union changes
+	// at the merge of the two sets.
+	LocalVector<float> thresholds = every_distinct_threshold(**top_dag);
+	for (const float threshold : every_distinct_threshold(**bottom_dag)) {
+		thresholds.push_back(threshold);
+	}
+	thresholds.sort();
 
 	for (const float threshold : thresholds) {
 		HashMap<uint64_t, uint32_t> edge_use;
@@ -805,15 +835,11 @@ TEST_CASE("[Nanite] Cuts stay watertight across a surface boundary") {
 		CHECK_MESSAGE(holes == 0,
 				vformat("Two-surface cut at threshold %f has %d edges belonging to a single triangle, so the surfaces have torn apart.", threshold, holes));
 
-		// Doubled edges are bounded rather than located. Two attempts to
-		// predict where they appear were both wrong -- first only the shared
-		// border, then the border plus poles -- because where a surface folds
-		// onto itself depends on the fixture's topology and on which attributes
-		// the simplifier is weighing. What holds regardless is that folding
-		// stays rare; a surface collapsing on itself in bulk would not.
-		CHECK_MESSAGE(doubled * 100 <= edge_use.size(),
-				vformat("Two-surface cut at threshold %f doubled %d of %d edges, which is past the 1%% a locked seam explains.",
-						threshold, doubled, edge_use.size()));
+		// A closed surface is manifold: every edge belongs to exactly two
+		// triangles. Holes and doubled sheets are both departures from that,
+		// and both are now required to be absent rather than merely rare.
+		CHECK_MESSAGE(doubled == 0,
+				vformat("Two-surface cut at threshold %f has %d edges carrying more than two triangles.", threshold, doubled));
 	}
 }
 

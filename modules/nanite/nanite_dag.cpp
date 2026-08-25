@@ -279,6 +279,21 @@ Vector<String> NaniteDAG::validate() const {
 		if (!Math::is_finite(c.bounds.radius) || c.bounds.radius < 0.0f) {
 			errors.push_back(at + "has a non-finite or negative bounding sphere.");
 		}
+		if (!Math::is_finite(c.cone_cutoff) || !c.cone_axis.is_finite() || !c.cone_apex.is_finite()) {
+			errors.push_back(at + "has a non-finite normal cone.");
+		}
+
+		// Both group references are range-checked before anything reads
+		// through them: validate() runs on freshly parsed data, where a
+		// corrupted index would otherwise index the group array out of bounds.
+		if (c.source_group != NO_GROUP && c.source_group >= groups.size()) {
+			errors.push_back(at + "source group index is out of range.");
+			continue;
+		}
+		if (c.parent_group != NO_GROUP && c.parent_group >= groups.size()) {
+			errors.push_back(at + "parent group index is out of range.");
+			continue;
+		}
 
 		const float error = get_cluster_error(i);
 		if (!Math::is_finite(error) || error < 0.0f) {
@@ -289,8 +304,6 @@ Vector<String> NaniteDAG::validate() const {
 			if (c.level != 0) {
 				errors.push_back(at + "has no source group but is not on level 0.");
 			}
-		} else if (c.source_group >= groups.size()) {
-			errors.push_back(at + "source group index is out of range.");
 		} else if (groups[c.source_group].level + 1 != c.level) {
 			errors.push_back(at + vformat("source group is on level %d, expected %d.", groups[c.source_group].level, c.level - 1));
 		}
@@ -299,10 +312,6 @@ Vector<String> NaniteDAG::validate() const {
 		// an error at least as large, otherwise the cut intervals overlap and a
 		// cluster can be drawn together with its own coarser replacement.
 		if (c.parent_group == NO_GROUP) {
-			continue;
-		}
-		if (c.parent_group >= groups.size()) {
-			errors.push_back(at + "parent group index is out of range.");
 			continue;
 		}
 		const Group &g = groups[c.parent_group];
@@ -484,7 +493,7 @@ namespace {
 
 // Word counts per record, used to bound a count read from the payload before
 // it is allowed to size an allocation.
-constexpr size_t CLUSTER_WORDS = 11;
+constexpr size_t CLUSTER_WORDS = 18;
 constexpr size_t GROUP_MIN_WORDS = 8;
 
 void write_u32(PackedByteArray &r_data, uint32_t p_value) {
@@ -645,6 +654,13 @@ PackedByteArray NaniteDAG::_serialize() const {
 		write_u32(data, cluster.parent_group);
 		write_u32(data, cluster.source_group);
 		write_sphere(data, cluster.bounds);
+		write_f32(data, (float)cluster.cone_apex.x);
+		write_f32(data, (float)cluster.cone_apex.y);
+		write_f32(data, (float)cluster.cone_apex.z);
+		write_f32(data, (float)cluster.cone_axis.x);
+		write_f32(data, (float)cluster.cone_axis.y);
+		write_f32(data, (float)cluster.cone_axis.z);
+		write_f32(data, cluster.cone_cutoff);
 	}
 
 	write_u32(data, groups.size());
@@ -733,6 +749,15 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 		cluster.parent_group = reader.u32();
 		cluster.source_group = reader.u32();
 		cluster.bounds = reader.sphere();
+		const float apex_x = reader.f32();
+		const float apex_y = reader.f32();
+		const float apex_z = reader.f32();
+		cluster.cone_apex = Vector3(apex_x, apex_y, apex_z);
+		const float axis_x = reader.f32();
+		const float axis_y = reader.f32();
+		const float axis_z = reader.f32();
+		cluster.cone_axis = Vector3(axis_x, axis_y, axis_z);
+		cluster.cone_cutoff = reader.f32();
 	}
 
 	parsed->groups.resize(reader.count(sizeof(uint32_t) * GROUP_MIN_WORDS));

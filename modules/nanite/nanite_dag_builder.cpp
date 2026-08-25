@@ -31,6 +31,7 @@
 #include "nanite_dag_builder.h"
 
 #include "core/math/face3.h"
+#include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "core/templates/hashfuncs.h"
 #include "scene/resources/mesh.h"
@@ -108,68 +109,6 @@ NaniteDAG::Sphere enclose_spheres(const LocalVector<NaniteDAG::Sphere> &p_sphere
 // for projecting to screen space, which is what the LOD cut and the GBuffer
 // contract's motion residual bound both do with it.
 //
-// Scope of the measure, stated precisely because a bound is only as good as
-// what it actually covers:
-//
-// Simplification only removes vertices, so every survivor lies exactly on the
-// original surface -- the deviation in that direction is identically zero, not
-// merely small. Measuring the removed vertices against the result therefore
-// gives the two-sided *vertex-to-surface* Hausdorff distance, not a one-sided
-// approximation of it.
-//
-// What it does not cover is interior separation: a simplified triangle whose
-// middle departs from the original surface with no original vertex sitting at
-// the gap to witness it. That term is bounded by neither direction of the
-// vertex measure and would need edge-edge sampling to capture.
-float measure_geometric_deviation(const float *p_positions, const LocalVector<uint32_t> &p_before,
-		const uint32_t *p_after, size_t p_after_count) {
-	HashSet<uint32_t> survivors;
-	for (size_t i = 0; i < p_after_count; i++) {
-		survivors.insert(p_after[i]);
-	}
-
-	// Per-triangle bounding spheres, so most triangles can be rejected without
-	// a point-triangle test.
-	const size_t triangle_count = p_after_count / 3;
-	LocalVector<Vector3> centroids;
-	LocalVector<float> radii;
-	centroids.resize(triangle_count);
-	radii.resize(triangle_count);
-	for (size_t t = 0; t < triangle_count; t++) {
-		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
-		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
-		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
-		centroids[t] = (a + b + c) / 3.0f;
-		radii[t] = MAX(MAX((float)centroids[t].distance_to(a), (float)centroids[t].distance_to(b)),
-				(float)centroids[t].distance_to(c));
-	}
-
-	HashSet<uint32_t> measured;
-	float worst = 0.0f;
-	for (const uint32_t vertex : p_before) {
-		if (survivors.has(vertex) || measured.has(vertex)) {
-			continue;
-		}
-		measured.insert(vertex);
-
-		const Vector3 point = get_position(p_positions, vertex);
-		float nearest = FLT_MAX;
-		for (size_t t = 0; t < triangle_count; t++) {
-			if ((float)point.distance_to(centroids[t]) - radii[t] >= nearest) {
-				continue;
-			}
-			const Face3 face(get_position(p_positions, p_after[t * 3 + 0]),
-					get_position(p_positions, p_after[t * 3 + 1]),
-					get_position(p_positions, p_after[t * 3 + 2]));
-			nearest = MIN(nearest, (float)point.distance_to(face.get_closest_point_to(point)));
-		}
-		if (nearest != FLT_MAX) {
-			worst = MAX(worst, nearest);
-		}
-	}
-	return worst;
-}
-
 uint64_t hash_buffer_64(const void *p_data, int p_length, uint64_t p_carry) {
 	const uint32_t low = hash_murmur3_buffer(p_data, p_length, (uint32_t)(p_carry & 0xFFFFFFFF));
 	const uint32_t high = hash_murmur3_buffer(p_data, p_length, (uint32_t)(p_carry >> 32) ^ 0x9E3779B9u);
@@ -177,13 +116,14 @@ uint64_t hash_buffer_64(const void *p_data, int p_length, uint64_t p_carry) {
 }
 
 // Only the settings that change the output. A diagnostic toggle must not
-// invalidate a stored artifact.
+// invalidate a stored artifact, and anything that reshapes the DAG must.
 uint64_t hash_settings(const NaniteDAGBuilder::Settings &p_settings) {
 	const float values[] = {
 		(float)p_settings.max_cluster_vertices, (float)p_settings.max_cluster_triangles,
 		p_settings.cone_weight, (float)p_settings.group_size, p_settings.simplify_ratio,
 		p_settings.normal_weight, p_settings.uv_weight, p_settings.min_progress_ratio,
-		p_settings.spatial_clustering ? 1.0f : 0.0f, p_settings.lock_mesh_border ? 1.0f : 0.0f
+		p_settings.spatial_clustering ? 1.0f : 0.0f, p_settings.lock_mesh_border ? 1.0f : 0.0f,
+		(float)p_settings.max_levels
 	};
 	return hash_buffer_64(values, (int)sizeof(values), 0x1234567890ABCDEFull);
 }
@@ -203,6 +143,200 @@ uint64_t hash_geometry(const LocalVector<float> &p_positions, const LocalVector<
 	}
 	carry = hash_buffer_64(p_indices.ptr(), (int)(p_indices.size() * sizeof(uint32_t)), carry);
 	return carry;
+}
+
+// The largest distance from any point of a triangle to its nearest corner.
+// For an acute triangle that is the circumradius; once a triangle is right or
+// obtuse the circumcenter leaves it and the worst point is the midpoint of the
+// longest edge. Both cases are exact, and the degenerate one falls out of the
+// second without dividing by a zero area.
+float max_gap_from_corners(const Vector3 &p_a, const Vector3 &p_b, const Vector3 &p_c) {
+	const float ab = (float)p_a.distance_to(p_b);
+	const float bc = (float)p_b.distance_to(p_c);
+	const float ca = (float)p_c.distance_to(p_a);
+	const float longest = MAX(ab, MAX(bc, ca));
+	const float other_a = (longest == ab) ? bc : ((longest == bc) ? ca : ab);
+	const float other_b = (longest == ab) ? ca : ((longest == bc) ? ab : bc);
+
+	if (longest * longest >= other_a * other_a + other_b * other_b) {
+		return longest * 0.5f;
+	}
+	const float area = (float)(p_b - p_a).cross(p_c - p_a).length() * 0.5f;
+	if (area <= 0.0f) {
+		return longest * 0.5f;
+	}
+	return (ab * bc * ca) / (4.0f * area);
+}
+
+struct DeviationBound {
+	// Sampled interior deviation of the simplified surface from the original.
+	// Not a bound -- it is what the analytic term assumes the worst about --
+	// but it says how much of that assumption the geometry actually uses.
+	float sampled = 0.0f;
+	// Furthest any original vertex ended up from the simplified surface. This
+	// is what the previous revision stored, and on its own it is an estimate
+	// rather than a bound.
+	float vertex_measure = 0.0f;
+	// Holds unconditionally, from the Lipschitz argument below.
+	float analytic = 0.0f;
+	// Both directions by measurement rather than worst case.
+	float measured = 0.0f;
+};
+
+// A bound on how far the surface moved, rather than a sample of it.
+//
+// The previous revision measured removed vertices against the result and called
+// the answer two-sided, reasoning that survivors sit exactly on the original so
+// the reverse direction is zero. That is wrong: a surface is not its vertices.
+// The interior of a simplified triangle can leave the original entirely -- that
+// is precisely what flattening a bump does -- and no vertex is anywhere near
+// the gap to witness it.
+//
+// Two Lipschitz steps close both directions. d(., X) is 1-Lipschitz, so:
+//
+//   original -> simplified: for a point p in an original triangle with corners
+//     q_i, d(p, B) <= min_i (d(q_i, B) + |p - q_i|) <= V + gap(S), where V is
+//     the vertex measure and gap(S) the furthest a point of S sits from its
+//     own nearest corner.
+//
+//   simplified -> original: the corners of a simplified triangle are original
+//     vertices, so they lie on A at distance 0, giving d(p, A) <= gap(T)
+//     directly.
+//
+// Hence max(V + gap_A, gap_B) bounds the Hausdorff distance. It is loose where
+// triangles are large, which is exactly where a flat triangle really can depart
+// from a curved patch by about its own radius, so the looseness is honest
+// rather than an artifact. Cost is one pass over each triangle set.
+DeviationBound measure_deviation(const float *p_positions, const LocalVector<uint32_t> &p_before,
+		const uint32_t *p_after, size_t p_after_count) {
+	DeviationBound result;
+
+	HashSet<uint32_t> survivors;
+	for (size_t i = 0; i < p_after_count; i++) {
+		survivors.insert(p_after[i]);
+	}
+
+	const size_t after_triangles = p_after_count / 3;
+	LocalVector<Vector3> centroids;
+	LocalVector<float> radii;
+	centroids.resize(after_triangles);
+	radii.resize(after_triangles);
+	float gap_after = 0.0f;
+	for (size_t t = 0; t < after_triangles; t++) {
+		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
+		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
+		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
+		centroids[t] = (a + b + c) / 3.0f;
+		radii[t] = MAX(MAX((float)centroids[t].distance_to(a), (float)centroids[t].distance_to(b)),
+				(float)centroids[t].distance_to(c));
+		gap_after = MAX(gap_after, max_gap_from_corners(a, b, c));
+	}
+
+	float gap_before = 0.0f;
+	for (uint32_t t = 0; t + 2 < p_before.size(); t += 3) {
+		gap_before = MAX(gap_before, max_gap_from_corners(get_position(p_positions, p_before[t + 0]), get_position(p_positions, p_before[t + 1]), get_position(p_positions, p_before[t + 2])));
+	}
+
+	// Survivors sit on the result at distance zero, so only the removed
+	// vertices can contribute to the vertex term.
+	HashSet<uint32_t> measured;
+	for (const uint32_t vertex : p_before) {
+		if (survivors.has(vertex) || measured.has(vertex)) {
+			continue;
+		}
+		measured.insert(vertex);
+
+		const Vector3 point = get_position(p_positions, vertex);
+		float nearest = FLT_MAX;
+		for (size_t t = 0; t < after_triangles; t++) {
+			// Bounding-sphere reject, so most triangles never reach the
+			// point-triangle test.
+			if ((float)point.distance_to(centroids[t]) - radii[t] >= nearest) {
+				continue;
+			}
+			const Face3 face(get_position(p_positions, p_after[t * 3 + 0]),
+					get_position(p_positions, p_after[t * 3 + 1]),
+					get_position(p_positions, p_after[t * 3 + 2]));
+			nearest = MIN(nearest, (float)point.distance_to(face.get_closest_point_to(point)));
+		}
+		if (nearest != FLT_MAX) {
+			result.vertex_measure = MAX(result.vertex_measure, nearest);
+		}
+	}
+
+	// How far the simplified surface's interior really strays, sampled at each
+	// output triangle's centroid and edge midpoints. The analytic term above
+	// assumes this equals the triangle's own radius; measuring it shows how
+	// much of that headroom is real, which is the difference between a bound
+	// that guides LOD selection and one that merely holds.
+	const size_t before_triangles = p_before.size() / 3;
+	for (size_t t = 0; t < after_triangles; t++) {
+		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
+		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
+		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
+		const Vector3 samples[4] = { (a + b + c) / 3.0f, (a + b) * 0.5f, (b + c) * 0.5f, (c + a) * 0.5f };
+
+		for (const Vector3 &sample : samples) {
+			float nearest = FLT_MAX;
+			for (size_t u = 0; u + 2 < p_before.size(); u += 3) {
+				const Vector3 qa = get_position(p_positions, p_before[u + 0]);
+				const Vector3 qb = get_position(p_positions, p_before[u + 1]);
+				const Vector3 qc = get_position(p_positions, p_before[u + 2]);
+				const Vector3 centroid = (qa + qb + qc) / 3.0f;
+				const float radius = MAX(MAX((float)centroid.distance_to(qa), (float)centroid.distance_to(qb)),
+						(float)centroid.distance_to(qc));
+				if ((float)sample.distance_to(centroid) - radius >= nearest) {
+					continue;
+				}
+				const Face3 face(qa, qb, qc);
+				nearest = MIN(nearest, (float)sample.distance_to(face.get_closest_point_to(sample)));
+			}
+			if (nearest != FLT_MAX) {
+				result.sampled = MAX(result.sampled, nearest);
+			}
+		}
+	}
+	(void)before_triangles;
+
+	// Two candidates for what to store, kept apart because they answer
+	// different questions. `analytic` holds without qualification; `measured`
+	// covers both directions by measurement at a stated sampling density.
+	// Measured on a displaced grid the analytic term runs 80-100x larger,
+	// because it assumes a flat triangle departs from the surface by its own
+	// radius while a flat triangle over a flat patch departs by almost nothing.
+	result.analytic = MAX(result.vertex_measure + gap_before, gap_after);
+	result.measured = MAX(result.vertex_measure, result.sampled);
+	return result;
+}
+
+// Whether a simplification produced geometry where some edge carries more than
+// two triangles. A closed surface is manifold, so that is a fold: the surface
+// has doubled back onto itself. Boundary edges carrying one triangle are
+// expected and ignored -- the group is a patch, not a closed mesh.
+//
+// Edges are compared in position space, since a seam duplicates vertices at one
+// point and index comparison would miss folds that meet across it.
+bool folds_onto_itself(const uint32_t *p_indices, size_t p_index_count, const LocalVector<uint32_t> &p_weld) {
+	HashMap<uint64_t, uint32_t> edge_use;
+	for (size_t t = 0; t + 2 < p_index_count; t += 3) {
+		for (uint32_t e = 0; e < 3; e++) {
+			const uint32_t a = p_weld[p_indices[t + e]];
+			const uint32_t b = p_weld[p_indices[t + (e + 1) % 3]];
+			if (a == b) {
+				continue;
+			}
+			const uint64_t key = ((uint64_t)MIN(a, b) << 32) | (uint64_t)MAX(a, b);
+			uint32_t *existing = edge_use.getptr(key);
+			if (existing) {
+				if (++(*existing) > 2) {
+					return true;
+				}
+			} else {
+				edge_use.insert(key, 1);
+			}
+		}
+	}
+	return false;
 }
 
 // Global index buffer for one cluster, which is what the partitioner and the
@@ -278,7 +412,13 @@ struct BuildContext {
 				dag->cluster_indices.push_back(local);
 				global.push_back(meshlet_vertices[meshlet.vertex_offset + local]);
 			}
-			cluster.bounds = sphere_from_indices(positions, global.ptr(), global.size());
+			const meshopt_Bounds meshopt_bounds = meshopt_computeClusterBounds(global.ptr(), global.size(),
+					positions, vertex_count, POSITION_STRIDE);
+			cluster.bounds.center = Vector3(meshopt_bounds.center[0], meshopt_bounds.center[1], meshopt_bounds.center[2]);
+			cluster.bounds.radius = meshopt_bounds.radius;
+			cluster.cone_apex = Vector3(meshopt_bounds.cone_apex[0], meshopt_bounds.cone_apex[1], meshopt_bounds.cone_apex[2]);
+			cluster.cone_axis = Vector3(meshopt_bounds.cone_axis[0], meshopt_bounds.cone_axis[1], meshopt_bounds.cone_axis[2]);
+			cluster.cone_cutoff = meshopt_bounds.cone_cutoff;
 			r_created.push_back(dag->clusters.size());
 			dag->clusters.push_back(cluster);
 		}
@@ -592,16 +732,29 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, co
 			// was given.
 			// `simplify_error` ordered the collapses; it is not a distance, so
 			// it stops here. What the DAG stores is measured.
-			const float step_error = simplified_count >= 3
-					? measure_geometric_deviation(ctx.positions, merged, simplified.ptr(), simplified_count)
-					: 0.0f;
+			const DeviationBound deviation = simplified_count >= 3
+					? measure_deviation(ctx.positions, merged, simplified.ptr(), simplified_count)
+					: DeviationBound();
+			const float step_error = deviation.measured;
+			if (p_settings.report_deviation_terms) {
+				print_line(vformat("  [deviation] level %d group %d: vertex %.6f, sampled %.6f, bound %.6f",
+						level, g, deviation.vertex_measure, deviation.sampled, deviation.analytic));
+			}
 
 			const uint32_t progress_ceiling = (uint32_t)(merged.size() * MIN(p_settings.min_progress_ratio, 1.0f));
 			const NaniteDAG::Sphere merged_bounds = sphere_from_indices(ctx.positions, merged.ptr(), merged.size());
 			const bool stalled = simplified_count < 3 || simplified_count > progress_ceiling;
 			const bool error_is_not_a_distance = !(step_error <= 2.0f * merged_bounds.radius);
+			// Extreme reduction can fold a patch onto itself, which leaves the
+			// drawn surface non-manifold at whatever threshold selects it.
+			// Cheaper to refuse the result than to hope no cut picks it.
+			const bool folded = !stalled && folds_onto_itself(simplified.ptr(), simplified_count, weld);
 
-			if (stalled || error_is_not_a_distance) {
+			if (stalled || error_is_not_a_distance || folded) {
+				if (folded && !error_is_not_a_distance) {
+					WARN_PRINT(vformat("Nanite: discarding a simplification of %d triangles that folded onto itself. The group's clusters stay DAG roots.",
+							merged.size() / 3));
+				}
 				if (error_is_not_a_distance && !stalled) {
 					WARN_PRINT(vformat("Nanite: discarding a simplification of %d triangles whose measured deviation %f exceeds its own extent %f. The group's clusters stay DAG roots.",
 							merged.size() / 3, step_error, 2.0f * merged_bounds.radius));

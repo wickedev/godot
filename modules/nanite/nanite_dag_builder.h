@@ -76,6 +76,10 @@ public:
 		// reduction, this only bounds pathological inputs.
 		uint32_t max_levels = 32;
 
+		// Print the three deviation terms per group. Diagnostic only, so it is
+		// deliberately absent from the settings hash.
+		bool report_deviation_terms = false;
+
 		// Lock the surface's open border. Required when a mesh has more than one
 		// surface: the border is then a seam shared with another surface that
 		// simplifies independently, and moving it cracks between submeshes.
