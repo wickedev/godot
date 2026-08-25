@@ -90,11 +90,11 @@ DAG는 **런타임 산출물**이다 — S5 스트리밍이 디스크에서 읽�
 하나의 DAG 아티팩트는 다음 튜플로 유일하게 식별된다:
 
 ```
-(source_uid, surface_index, builder_settings_hash, source_geometry_hash,
+(surface_index, builder_settings_hash, source_geometry_hash,
  dag_format_version, dag_builder_version)
 ```
 
-- **`source_uid`** — 씬의 `ResourceUID`. 경로가 아니다. 에셋 이동으로 DAG가 무효화되면 안 된다.
+- ~~`source_uid`~~ — **v1.1 정정(C2 실측): 키에서 제거.** `ResourceImporterScene::import()`는 `p_source_id`/`p_source_file`을 받지만(`:3228`) 어느 플러그인 훅에도 전달하지 않으며, 임포트 중 씬 루트의 `get_scene_file_path()`는 빈 문자열(실측) — post-import plugin은 UID를 얻을 수 없다. 역할을 나누면 UID는 **출처 추적**이지 무효화에 기여하지 않는다: 지오메트리 해시+설정 해시+버전 2종으로 무효화는 완전하고(다른 에셋이면 지오메트리 해시가 다름), `save_path` 명시 모델에서 소스 결속은 경로가 담당한다. 디버깅용으로 씬 루트 이름을 `source_hint`로 저장하되 **비권위(non-authoritative)** 명시, 키 제외. 출처 추적이 필요해지면 코어 후처리 훅(Wave 2, §7.7.5)이 `p_source_id`를 전달할 때 **가산적으로** 추가한다 — 나머지 키가 이미 완전하므로 무효화 의미 불변, 마이그레이션 불요.
 - **`surface_index`** — 서페이스 = 머티리얼이고 서페이스마다 독립 DAG다(§3).
 - **`builder_settings_hash`** — 출력에 영향을 주는 `nanite/*` 옵션만: `max_cluster_triangles` · `group_size` · `simplify_ratio` · `spatial_clustering` · `lock_mesh_border` · `normal_weight` · `uv_weight` · `min_progress_ratio`. **`print_report`는 제외**(진단 전용, 출력 불변).
 - **`source_geometry_hash`** — ⚠️ **소스 파일 해시가 아니라, 빌더에 실제로 들어간 서페이스 배열(positions/normals/UV/indices)의 해시.** 근거: DAG는 post-import-plugin 시점 지오메트리의 스냅샷이다. `nodes/root_scale`·축 변환·머티리얼 병합 같은 상위 임포트 옵션이 파일을 바꾸지 않고도 입력 지오메트리를 바꾼다 — 파일 해시로 키를 잡으면 그 경우 낡은 DAG가 살아남는다.
