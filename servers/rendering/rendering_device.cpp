@@ -8647,9 +8647,23 @@ Error RenderingDevice::initialize(RenderingContextDriver *p_context, DisplayServ
 	upload_staging_buffers.max_size *= 1024 * 1024;
 	upload_staging_buffers.max_size = MAX(upload_staging_buffers.max_size, upload_staging_buffers.block_size * 4);
 
-	// Copy the sizes to the download staging buffers.
+	// The download budget is a separate knob: async readback rings (streaming
+	// requests, GPU-driven culling results) size independently of upload
+	// traffic. The block size stays shared with uploads.
+	//
+	// 0 means "follow the upload budget", which is what this did before the
+	// knob existed. That is the default deliberately: a project that raised
+	// max_size_mb to widen its READBACK budget would otherwise be silently
+	// downgraded to the new setting's default on upgrade, with no error and a
+	// stall as the only symptom. Splitting the budget stays opt-in.
 	download_staging_buffers.block_size = upload_staging_buffers.block_size;
-	download_staging_buffers.max_size = upload_staging_buffers.max_size;
+	download_staging_buffers.max_size = GLOBAL_GET("rendering/rendering_device/staging_buffer/download_max_size_mb");
+	if (download_staging_buffers.max_size == 0) {
+		download_staging_buffers.max_size = upload_staging_buffers.max_size;
+	} else {
+		download_staging_buffers.max_size *= 1024 * 1024;
+		download_staging_buffers.max_size = MAX(download_staging_buffers.max_size, download_staging_buffers.block_size * 4);
+	}
 
 	texture_upload_region_size_px = GLOBAL_GET("rendering/rendering_device/staging_buffer/texture_upload_region_size_px");
 	texture_upload_region_size_px = Math::nearest_power_of_2_templated(texture_upload_region_size_px);
