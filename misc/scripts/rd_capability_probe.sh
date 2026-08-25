@@ -61,6 +61,7 @@ func _ready() -> void:
 		["SUPPORTS_IMAGE_ATOMIC_32_BIT", RenderingDevice.SUPPORTS_IMAGE_ATOMIC_32_BIT],
 		["SUPPORTS_IMAGE_ATOMIC_64_BIT", RenderingDevice.SUPPORTS_IMAGE_ATOMIC_64_BIT],
 		["SUPPORTS_DRAW_INDIRECT_COUNT", RenderingDevice.SUPPORTS_DRAW_INDIRECT_COUNT],
+		["SUPPORTS_DESCRIPTOR_INDEXING", RenderingDevice.SUPPORTS_DESCRIPTOR_INDEXING],
 		["SUPPORTS_RAY_QUERY", RenderingDevice.SUPPORTS_RAY_QUERY],
 		["SUPPORTS_RAYTRACING_PIPELINE", RenderingDevice.SUPPORTS_RAYTRACING_PIPELINE],
 	]:
@@ -85,5 +86,11 @@ cat > "$PROJECT_DIR/probe.tscn" <<'EOF'
 script = ExtResource("1")
 EOF
 
+# Keep the engine's exit status: piping through grep would otherwise report the filter's
+# result, and a crash would surface as success.
+set +e
 "$GODOT" --path "$PROJECT_DIR" --rendering-driver "$DRIVER" --quit-after 120 2>&1 |
-	grep -vE "^(Godot Engine|--- Debug adapter|Using |OpenGL|Vulkan|Metal API)" || true
+	grep -vE "^(Godot Engine|--- Debug adapter|Using |OpenGL|Vulkan|Metal API)"
+godot_status=${PIPESTATUS[0]}
+set -e
+exit "$godot_status"
