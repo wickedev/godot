@@ -78,10 +78,6 @@ class AudioStreamPlayback : public RefCounted {
 	GDCLASS(AudioStreamPlayback, RefCounted);
 
 	SafeNumeric<uint64_t> suspension_generation;
-	// Depth of nested begin/end_stream_mutation() scopes on the mutating thread
-	// (e.g. start() calling seek()). Mutations of one playback must not be
-	// issued from multiple threads at once (that is already undefined upstream).
-	int stream_mutation_nesting = 0;
 
 protected:
 	static void _bind_methods();
@@ -89,12 +85,14 @@ protected:
 	// AFTER their no-op early returns (a call that mutated nothing must not bump) and
 	// inside a StreamMutationScope.
 	void bump_suspension_generation() { suspension_generation.increment(); }
-	// Serializes a public stream mutation (start/seek/scripted mix) against the audio
+	// Serializes a public stream mutation (start/seek/external mix) against the audio
 	// thread: while `audio/general/suspend_inaudible_playbacks` is enabled, the audio
 	// thread's wake path inspects the generation and flushes residuals, which must
 	// never interleave with a mutation of the same decoder. Takes the AudioServer
-	// (driver) lock once per outermost scope; a no-op when the feature is disabled
-	// (no wake path exists then) or no AudioServer is running.
+	// (driver) lock in every scope — the driver mutex is recursive, so nested scopes
+	// (start() calling seek(), a decoder's internal loop seek during mix) reenter
+	// naturally. A no-op when the feature is disabled (no wake path exists then) or
+	// no AudioServer is running.
 	void begin_stream_mutation();
 	void end_stream_mutation();
 	struct StreamMutationScope {
@@ -148,6 +146,10 @@ public:
 	// e.g. start() via begin_resample()); flushing fresh residuals would drop the
 	// first frames of the restarted stream.
 	virtual void flush_suspension_residuals() {}
+	// Records that the internally buffered audio belongs to the current generation
+	// (used after an external mix consumed frames: the remaining lookahead is the
+	// valid post-mutation continuation, not stale audio).
+	virtual void mark_suspension_residuals_fresh() {}
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -206,6 +208,7 @@ public:
 	virtual int mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) override;
 
 	virtual void flush_suspension_residuals() override;
+	virtual void mark_suspension_residuals_fresh() override { residual_generation.set(get_suspension_generation()); }
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

@@ -72,9 +72,12 @@ int AudioStreamPlayback::mix(AudioFrame *p_buffer, float p_rate_scale, int p_fra
 }
 
 void AudioStreamPlayback::begin_stream_mutation() {
-	if (stream_mutation_nesting++ > 0) {
-		return; // Nested (e.g. start() calling seek()); the outermost scope holds the lock.
-	}
+	// Every scope locks: the driver mutex is recursive, so nesting (start()
+	// calling seek(), or a decoder's internal loop seek during mix on the audio
+	// thread) is naturally reentrant. A per-playback depth counter cannot be
+	// used as an optimization here — it would not distinguish the owning
+	// thread, letting a main-thread mutation skip the lock while the audio
+	// thread is inside a nested scope.
 	AudioServer *server = AudioServer::get_singleton();
 	if (server && server->is_inaudible_suspension_enabled()) {
 		server->lock();
@@ -82,9 +85,6 @@ void AudioStreamPlayback::begin_stream_mutation() {
 }
 
 void AudioStreamPlayback::end_stream_mutation() {
-	if (--stream_mutation_nesting > 0) {
-		return;
-	}
 	AudioServer *server = AudioServer::get_singleton();
 	if (server && server->is_inaudible_suspension_enabled()) {
 		server->unlock();
@@ -92,11 +92,7 @@ void AudioStreamPlayback::end_stream_mutation() {
 }
 
 PackedVector2Array AudioStreamPlayback::_mix_audio_bind(float p_rate_scale, int p_frames) {
-	// Scripted mixing consumes stream data outside the server's mix, which is a
-	// position mutation as far as the suspension protocol is concerned.
-	StreamMutationScope mutation_scope(this);
-	bump_suspension_generation();
-	Vector<AudioFrame> frames = mix_audio(p_rate_scale, p_frames);
+	const Vector<AudioFrame> frames = mix_audio(p_rate_scale, p_frames);
 
 	PackedVector2Array res;
 	res.resize(frames.size());
@@ -110,11 +106,34 @@ PackedVector2Array AudioStreamPlayback::_mix_audio_bind(float p_rate_scale, int 
 }
 
 Vector<AudioFrame> AudioStreamPlayback::mix_audio(float p_rate_scale, int p_frames) {
+	// External mixing consumes stream data outside the server's mix, which is a
+	// position mutation as far as the suspension protocol is concerned. The
+	// protocol lives HERE so the scripted binding and C++ callers share one
+	// implementation, and only a call that actually consumed frames counts as
+	// a mutation: an empty or not-playing mix must not bump (a wake would
+	// otherwise discard valid residuals), and after a consuming mix the
+	// resampler's buffered lookahead IS the post-mutation continuation, so it
+	// is marked fresh rather than left to be zero-filled on wake.
+	StreamMutationScope mutation_scope(this);
 	Vector<AudioFrame> res;
 	res.resize(p_frames);
+	if (p_frames <= 0) {
+		return res;
+	}
+
+	// Sampled BEFORE mixing: a stream that ends mid-call did consume data and
+	// must bump, while one that was already stopped consumed nothing. The
+	// returned frame count alone cannot tell those apart -- the resampler
+	// reports frames WRITTEN, and on a playback that never started it reports
+	// a full buffer of (silent) output without touching the decoder.
+	const bool was_playing = is_playing();
 
 	int frames = mix(res.ptrw(), p_rate_scale, p_frames);
 	res.resize(frames);
+	if (was_playing && frames > 0) {
+		bump_suspension_generation();
+		mark_suspension_residuals_fresh();
+	}
 
 	return res;
 }
