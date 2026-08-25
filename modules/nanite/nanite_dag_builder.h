@@ -64,13 +64,24 @@ public:
 		// Relevant to the BLAS convergence point, off until that is scoped.
 		bool spatial_clustering = false;
 
+		// A group must shrink to at most this fraction of its triangles for the
+		// simplification to count. Guards against meshoptimizer stalling on
+		// topology and reporting a non-geometric error alongside it.
+		float min_progress_ratio = 0.95f;
+
 		// Safety net; the loop terminates on its own via strict cluster-count
 		// reduction, this only bounds pathological inputs.
 		uint32_t max_levels = 32;
 
-		// Run the invariant checker after the build and fail if it trips.
-		bool validate = true;
+		// Lock the surface's open border. Required when a mesh has more than one
+		// surface: the border is then a seam shared with another surface that
+		// simplifies independently, and moving it cracks between submeshes.
+		bool lock_mesh_border = false;
 	};
+
+	// The invariant checker always runs and a DAG that trips it is never
+	// returned. There is deliberately no way to opt out: a DAG that violates
+	// error monotonicity is not a faster DAG, it is a broken one.
 
 	// Builds from a Mesh surface array set (Mesh::ARRAY_*). Triangles only.
 	static Ref<NaniteDAG> build_from_surface(const Array &p_arrays, const Settings &p_settings, String *r_error = nullptr);

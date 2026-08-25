@@ -37,6 +37,10 @@
 #ifdef TOOLS_ENABLED
 #include "editor/import/3d/resource_importer_scene.h"
 #include "editor/nanite_import_plugin.h"
+
+// Held so the plugin can be handed back on shutdown; otherwise it outlives the
+// module and shows up as a leaked ObjectDB instance.
+static Ref<NaniteImportPlugin> nanite_import_plugin;
 #endif
 
 void initialize_nanite_module(ModuleInitializationLevel p_level) {
@@ -45,14 +49,19 @@ void initialize_nanite_module(ModuleInitializationLevel p_level) {
 	}
 #ifdef TOOLS_ENABLED
 	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
-		Ref<NaniteImportPlugin> import_plugin;
-		import_plugin.instantiate();
-		ResourceImporterScene::add_post_importer_plugin(import_plugin);
+		nanite_import_plugin.instantiate();
+		ResourceImporterScene::add_post_importer_plugin(nanite_import_plugin);
 	}
 #endif
 }
 
 void uninitialize_nanite_module(ModuleInitializationLevel p_level) {
+#ifdef TOOLS_ENABLED
+	if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR && nanite_import_plugin.is_valid()) {
+		ResourceImporterScene::remove_post_importer_plugin(nanite_import_plugin);
+		nanite_import_plugin.unref();
+	}
+#endif
 	if (p_level != MODULE_INITIALIZATION_LEVEL_SCENE) {
 		return;
 	}

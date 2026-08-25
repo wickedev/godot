@@ -44,23 +44,32 @@ Vector3 get_position(const float *p_positions, uint32_t p_vertex) {
 	return Vector3(p_positions[p_vertex * 3 + 0], p_positions[p_vertex * 3 + 1], p_positions[p_vertex * 3 + 2]);
 }
 
-// Enclosing sphere over the referenced vertices. Not minimal, but guaranteed
-// to contain them, which is all the monotonicity invariant needs.
+// Enclosing sphere over the referenced vertices, centered on their bounding
+// box. Not minimal, but it contains them and -- unlike averaging the index
+// stream -- it does not shift toward whichever vertices happen to be
+// referenced most often. That bias matters: a UV sphere's pole is shared by a
+// whole triangle fan, which dragged the center off-origin and inflated the
+// radius by ~16%, both loosening culling bounds and weakening the error
+// sanity check that uses this extent.
 NaniteDAG::Sphere sphere_from_indices(const float *p_positions, const uint32_t *p_indices, uint32_t p_index_count) {
 	NaniteDAG::Sphere sphere;
 	if (p_index_count == 0) {
 		return sphere;
 	}
-	Vector3 centroid;
-	for (uint32_t i = 0; i < p_index_count; i++) {
-		centroid += get_position(p_positions, p_indices[i]);
+	Vector3 min_corner = get_position(p_positions, p_indices[0]);
+	Vector3 max_corner = min_corner;
+	for (uint32_t i = 1; i < p_index_count; i++) {
+		const Vector3 position = get_position(p_positions, p_indices[i]);
+		min_corner = min_corner.min(position);
+		max_corner = max_corner.max(position);
 	}
-	centroid /= (real_t)p_index_count;
+	const Vector3 center = (min_corner + max_corner) * 0.5f;
+
 	float radius = 0.0f;
 	for (uint32_t i = 0; i < p_index_count; i++) {
-		radius = MAX(radius, (float)centroid.distance_to(get_position(p_positions, p_indices[i])));
+		radius = MAX(radius, (float)center.distance_to(get_position(p_positions, p_indices[i])));
 	}
-	sphere.center = centroid;
+	sphere.center = center;
 	sphere.radius = radius;
 	return sphere;
 }
@@ -100,7 +109,13 @@ struct BuildContext {
 		}
 		const size_t max_vertices = settings->max_cluster_vertices;
 		const size_t max_triangles = settings->max_cluster_triangles;
-		const size_t max_meshlets = meshopt_buildMeshletsBound(p_index_count, max_vertices, max_triangles);
+		// The spatial builder may emit clusters as small as min_triangles, so
+		// it can return far more of them than the max-triangle bound predicts.
+		// meshoptimizer is explicit that the bound must be computed with
+		// min_triangles; using max_triangles under-allocates by the ratio
+		// between them and lets the builder write past the arrays.
+		const size_t min_triangles = settings->spatial_clustering ? MAX(max_triangles / 2, (size_t)1) : max_triangles;
+		const size_t max_meshlets = meshopt_buildMeshletsBound(p_index_count, max_vertices, min_triangles);
 
 		LocalVector<meshopt_Meshlet> meshlets;
 		meshlets.resize(max_meshlets);
@@ -113,7 +128,7 @@ struct BuildContext {
 		if (settings->spatial_clustering) {
 			meshlet_count = meshopt_buildMeshletsSpatial(meshlets.ptr(), meshlet_vertices.ptr(), meshlet_triangles.ptr(),
 					p_indices, p_index_count, positions, vertex_count, POSITION_STRIDE,
-					max_vertices, MAX(max_triangles / 2, (size_t)1), max_triangles, 0.5f);
+					max_vertices, min_triangles, max_triangles, 0.5f);
 		} else {
 			meshlet_count = meshopt_buildMeshlets(meshlets.ptr(), meshlet_vertices.ptr(), meshlet_triangles.ptr(),
 					p_indices, p_index_count, positions, vertex_count, POSITION_STRIDE,
@@ -136,6 +151,10 @@ struct BuildContext {
 				dag->indices.push_back(meshlet_vertices[meshlet.vertex_offset + local]);
 			}
 			cluster.bounds = sphere_from_indices(positions, &dag->indices[cluster.index_offset], cluster.index_count);
+			// Level 0 projects its (zero) error from its own geometry. Clusters
+			// produced by a simplification overwrite this with their group's
+			// sphere, so that a whole group shares one LOD decision.
+			cluster.lod_bounds = cluster.bounds;
 			r_created.push_back(dag->clusters.size());
 			dag->clusters.push_back(cluster);
 		}
@@ -174,6 +193,9 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 	if (p_attribute_count > 0 && p_attribute_weights.size() != p_attribute_count) {
 		FAIL("attribute weight count does not match the attribute count.");
 	}
+	if (p_attribute_count > 32) {
+		FAIL("attribute count exceeds the 32 attributes meshoptimizer supports.");
+	}
 	if (p_settings.max_cluster_vertices < 3 || p_settings.max_cluster_vertices > 256) {
 		FAIL("max_cluster_vertices must be in [3, 256].");
 	}
@@ -209,6 +231,17 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 	LocalVector<uint32_t> weld;
 	weld.resize(p_vertex_count);
 	meshopt_generateVertexRemap(weld.ptr(), nullptr, p_vertex_count, ctx.positions, p_vertex_count, POSITION_STRIDE);
+
+	// Positions that may never move again. A group that fails to simplify
+	// leaves its clusters as permanent roots, drawn at every threshold, still
+	// carrying their original seam. Later levels no longer see those clusters,
+	// so without this they would happily simplify the shared seam away on the
+	// other side and crack against geometry that is still on screen.
+	LocalVector<uint8_t> permanently_locked;
+	permanently_locked.resize(p_vertex_count);
+	for (uint32_t i = 0; i < p_vertex_count; i++) {
+		permanently_locked[i] = 0;
+	}
 
 	// Level 0: the input geometry, split into clusters, error zero.
 	LocalVector<uint32_t> current;
@@ -276,10 +309,16 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 				}
 			}
 		}
+		unsigned int simplify_options = meshopt_SimplifySparse | meshopt_SimplifyErrorAbsolute;
 		LocalVector<uint8_t> vertex_lock;
 		vertex_lock.resize(p_vertex_count);
 		for (uint32_t i = 0; i < p_vertex_count; i++) {
-			vertex_lock[i] = locked_position[weld[i]] ? (uint8_t)meshopt_SimplifyVertex_Lock : (uint8_t)0;
+			const uint32_t welded = weld[i];
+			const bool locked = locked_position[welded] || permanently_locked[welded];
+			vertex_lock[i] = locked ? (uint8_t)meshopt_SimplifyVertex_Lock : (uint8_t)0;
+		}
+		if (p_settings.lock_mesh_border) {
+			simplify_options |= meshopt_SimplifyLockBorder;
 		}
 
 		// 3. Simplify each group and re-cluster the result. Everything lands
@@ -324,13 +363,44 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 					ctx.positions, p_vertex_count, POSITION_STRIDE,
 					p_attribute_count > 0 ? p_attributes.ptr() : nullptr, sizeof(float) * p_attribute_count,
 					p_attribute_count > 0 ? p_attribute_weights.ptr() : nullptr, p_attribute_count,
-					vertex_lock.ptr(), target_index_count, FLT_MAX,
-					meshopt_SimplifySparse | meshopt_SimplifyErrorAbsolute, &simplify_error);
+					vertex_lock.ptr(), target_index_count, FLT_MAX, simplify_options, &simplify_error);
 
-			if (simplified_count < 3 || simplified_count >= merged.size()) {
-				// Locked boundary plus topology left nothing to collapse. The
-				// members simply stay roots rather than gaining a parent that
-				// represents no reduction.
+			// Two ways a group can fail, both ending with its members staying
+			// roots rather than gaining a parent that misrepresents them.
+			//
+			// The first is simply not shrinking. The second is subtler and was
+			// found by measurement: when meshoptimizer stops short on topology
+			// constraints, the error it reports is not a geometric distance at
+			// all. A UV sphere step that removed one triangle reported an error
+			// of half the mesh radius, and another that cut 27% of triangles
+			// reported more than the sphere's diameter. Accumulating either
+			// would corrupt the LOD error of every level above -- the very
+			// quantity the runtime projects to pick a cut, and that the GBuffer
+			// contract uses to bound motion residual across an LOD switch.
+			//
+			// The bound is physical rather than tuned: a simplification cannot
+			// displace the surface further than the extent of the geometry it
+			// was given.
+			const uint32_t progress_ceiling = (uint32_t)(merged.size() * MIN(p_settings.min_progress_ratio, 1.0f));
+			const NaniteDAG::Sphere merged_bounds = sphere_from_indices(ctx.positions, merged.ptr(), merged.size());
+			const bool stalled = simplified_count < 3 || simplified_count > progress_ceiling;
+			const bool error_is_not_a_distance = !(simplify_error <= 2.0f * merged_bounds.radius);
+
+			if (stalled || error_is_not_a_distance) {
+				if (error_is_not_a_distance && !stalled) {
+					WARN_PRINT(vformat("Nanite: discarding a simplification of %d triangles that reported a non-geometric error of %f against an extent of %f. The group's clusters stay DAG roots.",
+							merged.size() / 3, simplify_error, 2.0f * merged_bounds.radius));
+				}
+				// Whatever the reason, these clusters are now permanent roots, so
+				// their geometry -- and therefore every seam they share with the
+				// rest of the mesh -- must survive untouched through every level
+				// above.
+				for (uint32_t cluster_id : group_members) {
+					const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
+					for (uint32_t k = 0; k < cluster.index_count; k++) {
+						permanently_locked[weld[dag->indices[cluster.index_offset + k]]] = 1;
+					}
+				}
 				continue;
 			}
 
@@ -386,7 +456,7 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		current = next;
 	}
 
-	if (p_settings.validate) {
+	{
 		const Vector<String> errors = dag->validate();
 		if (!errors.is_empty()) {
 			String message = vformat("DAG invariants violated (%d):", errors.size());
@@ -413,6 +483,15 @@ Ref<NaniteDAG> NaniteDAGBuilder::build_from_surface(const Array &p_arrays, const
 		FAIL("surface has no vertex array.");
 	}
 	const uint32_t vertex_count = source_positions.size();
+
+	// S1 builds against rest-pose positions. A skinned surface deforms at
+	// runtime, which moves cluster bounds and invalidates the LOD error the cut
+	// is chosen from, so it must be refused rather than silently mis-clustered.
+	const PackedInt32Array source_bones = p_arrays[Mesh::ARRAY_BONES];
+	const PackedFloat32Array source_weights = p_arrays[Mesh::ARRAY_WEIGHTS];
+	if (!source_bones.is_empty() || !source_weights.is_empty()) {
+		FAIL("surface is skinned; stage S1 supports static geometry only.");
+	}
 
 	const PackedVector3Array source_normals = p_arrays[Mesh::ARRAY_NORMAL];
 	const PackedVector2Array source_uvs = p_arrays[Mesh::ARRAY_TEX_UV];

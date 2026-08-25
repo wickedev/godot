@@ -32,6 +32,7 @@
 
 #include "core/object/class_db.h"
 #include "core/string/print_string.h"
+#include "core/string/string_name.h"
 #include "scene/resources/mesh.h"
 
 uint32_t NaniteDAG::get_level_count() const {
@@ -61,14 +62,77 @@ float NaniteDAG::get_level_max_error(uint32_t p_level) const {
 	return max_error;
 }
 
+uint32_t NaniteDAG::get_cluster_vertex_count(uint32_t p_cluster) const {
+	ERR_FAIL_COND_V(p_cluster >= clusters.size(), 0);
+	const Cluster &cluster = clusters[p_cluster];
+
+	// At most max_cluster_vertices entries, so sorting a scratch copy beats
+	// standing up a hash set.
+	LocalVector<uint32_t> referenced;
+	referenced.resize(cluster.index_count);
+	for (uint32_t i = 0; i < cluster.index_count; i++) {
+		referenced[i] = indices[cluster.index_offset + i];
+	}
+	referenced.sort();
+
+	uint32_t distinct = 0;
+	for (uint32_t i = 0; i < referenced.size(); i++) {
+		if (i == 0 || referenced[i] != referenced[i - 1]) {
+			distinct++;
+		}
+	}
+	return distinct;
+}
+
+uint32_t NaniteDAG::get_level_vertex_slice_total(uint32_t p_level) const {
+	ERR_FAIL_COND_V(p_level >= get_level_count(), 0);
+	uint32_t total = 0;
+	for (uint32_t i = level_offsets[p_level]; i < level_offsets[p_level + 1]; i++) {
+		total += get_cluster_vertex_count(i);
+	}
+	return total;
+}
+
+uint32_t NaniteDAG::get_level_distinct_vertex_count(uint32_t p_level) const {
+	ERR_FAIL_COND_V(p_level >= get_level_count(), 0);
+	LocalVector<uint8_t> seen;
+	seen.resize(vertex_count);
+	for (uint32_t i = 0; i < vertex_count; i++) {
+		seen[i] = 0;
+	}
+	uint32_t distinct = 0;
+	for (uint32_t i = level_offsets[p_level]; i < level_offsets[p_level + 1]; i++) {
+		const Cluster &cluster = clusters[i];
+		for (uint32_t k = 0; k < cluster.index_count; k++) {
+			const uint32_t vertex = indices[cluster.index_offset + k];
+			if (!seen[vertex]) {
+				seen[vertex] = 1;
+				distinct++;
+			}
+		}
+	}
+	return distinct;
+}
+
 // Tolerance for the monotonicity comparisons, scaled by the mesh so that it
 // stays meaningful for both centimetre-scale props and kilometre-scale terrain.
 float NaniteDAG::_compute_epsilon() const {
+	// The mesh's own extent, not its distance from the origin: a small object
+	// far from the origin would otherwise get a wildly oversized tolerance.
+	if (vertex_count == 0) {
+		return 1e-4f;
+	}
+	float min_corner[3] = { positions[0], positions[1], positions[2] };
+	float max_corner[3] = { positions[0], positions[1], positions[2] };
+	for (uint32_t i = 1; i < vertex_count; i++) {
+		for (uint32_t axis = 0; axis < 3; axis++) {
+			min_corner[axis] = MIN(min_corner[axis], positions[i * 3 + axis]);
+			max_corner[axis] = MAX(max_corner[axis], positions[i * 3 + axis]);
+		}
+	}
 	float extent = 0.0f;
-	for (uint32_t i = 0; i < vertex_count; i++) {
-		extent = MAX(extent, Math::abs(positions[i * 3 + 0]));
-		extent = MAX(extent, Math::abs(positions[i * 3 + 1]));
-		extent = MAX(extent, Math::abs(positions[i * 3 + 2]));
+	for (uint32_t axis = 0; axis < 3; axis++) {
+		extent = MAX(extent, max_corner[axis] - min_corner[axis]);
 	}
 	return 1e-4f * MAX(1.0f, extent);
 }
@@ -173,6 +237,12 @@ Vector<String> NaniteDAG::validate() const {
 		if (!Math::is_finite(g.error) || g.error < 0.0f) {
 			errors.push_back(at + vformat("error %f is negative or not finite.", g.error));
 		}
+		// A simplification cannot displace the surface further than the extent
+		// of the geometry it covers. An error beyond that is not a distance at
+		// all, which is how a stalled simplifier reports failure.
+		if (g.error > 2.0f * g.lod_bounds.radius + epsilon) {
+			errors.push_back(at + vformat("error %f exceeds the diameter %f of its own LOD bounds, so it is not a geometric distance.", g.error, 2.0f * g.lod_bounds.radius));
+		}
 		for (uint32_t child : g.children) {
 			if (child >= clusters.size()) {
 				errors.push_back(at + "child index is out of range.");
@@ -216,6 +286,41 @@ String NaniteDAG::get_report() const {
 		report += vformat("  %5d | %8d | %9d | %.6f\n",
 				level, get_level_cluster_count(level), get_level_triangle_count(level), get_level_max_error(level));
 	}
+
+	// Pool sizing table: how full clusters actually are, and what a per-cluster
+	// vertex slice costs over a shared vertex buffer.
+	report += "  level | tri/cl avg | tri/cl max | vtx/cl avg | vtx/cl max | slice vtx | shared vtx | dup\n";
+	report += "  ------+------------+------------+------------+------------+-----------+------------+------\n";
+	for (uint32_t level = 0; level < get_level_count(); level++) {
+		const uint32_t cluster_count = get_level_cluster_count(level);
+		uint32_t max_triangles = 0;
+		uint32_t max_vertices = 0;
+		for (uint32_t i = level_offsets[level]; i < level_offsets[level + 1]; i++) {
+			max_triangles = MAX(max_triangles, clusters[i].index_count / 3);
+			max_vertices = MAX(max_vertices, get_cluster_vertex_count(i));
+		}
+		const uint32_t slice_total = get_level_vertex_slice_total(level);
+		const uint32_t shared_total = get_level_distinct_vertex_count(level);
+		report += vformat("  %5d | %10.1f | %10d | %10.1f | %10d | %9d | %10d | %.2fx\n",
+				level,
+				(double)get_level_triangle_count(level) / (double)cluster_count, max_triangles,
+				(double)slice_total / (double)cluster_count, max_vertices,
+				slice_total, shared_total,
+				shared_total > 0 ? (double)slice_total / (double)shared_total : 0.0);
+	}
+
+	if (!groups.is_empty()) {
+		uint32_t min_children = UINT32_MAX;
+		uint32_t max_children = 0;
+		uint32_t total_children = 0;
+		for (const Group &group : groups) {
+			min_children = MIN(min_children, group.children.size());
+			max_children = MAX(max_children, group.children.size());
+			total_children += group.children.size();
+		}
+		report += vformat("  groups: %d, clusters per group min %d / avg %.1f / max %d\n",
+				groups.size(), min_children, (double)total_children / (double)groups.size(), max_children);
+	}
 	return report;
 }
 
@@ -254,7 +359,7 @@ Ref<ArrayMesh> NaniteDAG::_create_debug_mesh(const LocalVector<uint32_t> &p_clus
 	uint32_t out = 0;
 	for (uint32_t cluster : p_clusters) {
 		const Cluster &c = clusters[cluster];
-		// Golden-ratio hue stepping keeps neighbouring cluster ids visually apart.
+		// Golden-ratio hue stepping keeps neighboring cluster ids visually apart.
 		const Color color = Color::from_hsv(Math::fmod(cluster * 0.618033988f, 1.0f), 0.65f, 0.95f);
 
 		for (uint32_t t = 0; t < c.index_count; t += 3) {
@@ -321,6 +426,206 @@ Dictionary NaniteDAG::_get_statistics_bind() const {
 	return stats;
 }
 
+namespace {
+
+void write_u32(PackedByteArray &r_data, uint32_t p_value) {
+	r_data.append_array(PackedByteArray{ (uint8_t)(p_value & 0xFF), (uint8_t)((p_value >> 8) & 0xFF),
+			(uint8_t)((p_value >> 16) & 0xFF), (uint8_t)((p_value >> 24) & 0xFF) });
+}
+
+void write_f32(PackedByteArray &r_data, float p_value) {
+	uint32_t bits;
+	memcpy(&bits, &p_value, sizeof(bits));
+	write_u32(r_data, bits);
+}
+
+void write_sphere(PackedByteArray &r_data, const NaniteDAG::Sphere &p_sphere) {
+	write_f32(r_data, (float)p_sphere.center.x);
+	write_f32(r_data, (float)p_sphere.center.y);
+	write_f32(r_data, (float)p_sphere.center.z);
+	write_f32(r_data, p_sphere.radius);
+}
+
+struct Reader {
+	const uint8_t *data = nullptr;
+	int64_t size = 0;
+	int64_t offset = 0;
+	bool overrun = false;
+
+	uint32_t u32() {
+		if (offset + 4 > size) {
+			overrun = true;
+			return 0;
+		}
+		const uint32_t value = (uint32_t)data[offset] | ((uint32_t)data[offset + 1] << 8) |
+				((uint32_t)data[offset + 2] << 16) | ((uint32_t)data[offset + 3] << 24);
+		offset += 4;
+		return value;
+	}
+
+	float f32() {
+		const uint32_t bits = u32();
+		float value;
+		memcpy(&value, &bits, sizeof(value));
+		return value;
+	}
+
+	NaniteDAG::Sphere sphere() {
+		NaniteDAG::Sphere out;
+		const float x = f32();
+		const float y = f32();
+		const float z = f32();
+		out.center = Vector3(x, y, z);
+		out.radius = f32();
+		return out;
+	}
+};
+
+} // namespace
+
+PackedByteArray NaniteDAG::_serialize() const {
+	PackedByteArray data;
+	write_u32(data, FORMAT_VERSION);
+	write_u32(data, vertex_count);
+
+	write_u32(data, positions.size());
+	for (const float position : positions) {
+		write_f32(data, position);
+	}
+	write_u32(data, indices.size());
+	for (const uint32_t index : indices) {
+		write_u32(data, index);
+	}
+	write_u32(data, level_offsets.size());
+	for (const uint32_t offset : level_offsets) {
+		write_u32(data, offset);
+	}
+
+	write_u32(data, clusters.size());
+	for (const Cluster &cluster : clusters) {
+		write_u32(data, cluster.index_offset);
+		write_u32(data, cluster.index_count);
+		write_u32(data, cluster.level);
+		write_u32(data, cluster.parent_group);
+		write_u32(data, cluster.source_group);
+		write_f32(data, cluster.error);
+		write_sphere(data, cluster.lod_bounds);
+		// Infinity survives the float round-trip, which is what keeps a root
+		// cluster drawable at every threshold after a reload.
+		write_f32(data, cluster.parent_error);
+		write_sphere(data, cluster.parent_lod_bounds);
+		write_sphere(data, cluster.bounds);
+	}
+
+	write_u32(data, groups.size());
+	for (const Group &group : groups) {
+		write_u32(data, group.level);
+		write_f32(data, group.error);
+		write_sphere(data, group.lod_bounds);
+		write_u32(data, group.children.size());
+		for (const uint32_t child : group.children) {
+			write_u32(data, child);
+		}
+		write_u32(data, group.produced.size());
+		for (const uint32_t produced : group.produced) {
+			write_u32(data, produced);
+		}
+	}
+	return data;
+}
+
+bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
+	positions.clear();
+	indices.clear();
+	clusters.clear();
+	groups.clear();
+	level_offsets.clear();
+	vertex_count = 0;
+
+	if (p_data.is_empty()) {
+		return true;
+	}
+
+	Reader reader;
+	reader.data = p_data.ptr();
+	reader.size = p_data.size();
+
+	const uint32_t version = reader.u32();
+	ERR_FAIL_COND_V_MSG(version != FORMAT_VERSION, false,
+			vformat("NaniteDAG was saved with format version %d but this build reads version %d. Reimport the source mesh.", version, FORMAT_VERSION));
+
+	vertex_count = reader.u32();
+
+	positions.resize(reader.u32());
+	for (uint32_t i = 0; i < positions.size(); i++) {
+		positions[i] = reader.f32();
+	}
+	indices.resize(reader.u32());
+	for (uint32_t i = 0; i < indices.size(); i++) {
+		indices[i] = reader.u32();
+	}
+	level_offsets.resize(reader.u32());
+	for (uint32_t i = 0; i < level_offsets.size(); i++) {
+		level_offsets[i] = reader.u32();
+	}
+
+	clusters.resize(reader.u32());
+	for (uint32_t i = 0; i < clusters.size(); i++) {
+		Cluster &cluster = clusters[i];
+		cluster.index_offset = reader.u32();
+		cluster.index_count = reader.u32();
+		cluster.level = reader.u32();
+		cluster.parent_group = reader.u32();
+		cluster.source_group = reader.u32();
+		cluster.error = reader.f32();
+		cluster.lod_bounds = reader.sphere();
+		cluster.parent_error = reader.f32();
+		cluster.parent_lod_bounds = reader.sphere();
+		cluster.bounds = reader.sphere();
+	}
+
+	groups.resize(reader.u32());
+	for (uint32_t i = 0; i < groups.size(); i++) {
+		Group &group = groups[i];
+		group.level = reader.u32();
+		group.error = reader.f32();
+		group.lod_bounds = reader.sphere();
+		group.children.resize(reader.u32());
+		for (uint32_t k = 0; k < group.children.size(); k++) {
+			group.children[k] = reader.u32();
+		}
+		group.produced.resize(reader.u32());
+		for (uint32_t k = 0; k < group.produced.size(); k++) {
+			group.produced[k] = reader.u32();
+		}
+		if (reader.overrun) {
+			break;
+		}
+	}
+
+	ERR_FAIL_COND_V_MSG(reader.overrun, false, "NaniteDAG data is truncated.");
+	return true;
+}
+
+bool NaniteDAG::_set(const StringName &p_name, const Variant &p_value) {
+	if (p_name == SNAME("data")) {
+		return _deserialize(p_value);
+	}
+	return false;
+}
+
+bool NaniteDAG::_get(const StringName &p_name, Variant &r_ret) const {
+	if (p_name == SNAME("data")) {
+		r_ret = _serialize();
+		return true;
+	}
+	return false;
+}
+
+void NaniteDAG::_get_property_list(List<PropertyInfo> *p_list) const {
+	p_list->push_back(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "data", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR));
+}
+
 void NaniteDAG::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_level_count"), &NaniteDAG::get_level_count);
 	ClassDB::bind_method(D_METHOD("get_cluster_count"), &NaniteDAG::get_cluster_count);
@@ -329,6 +634,9 @@ void NaniteDAG::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_level_cluster_count", "level"), &NaniteDAG::get_level_cluster_count);
 	ClassDB::bind_method(D_METHOD("get_level_triangle_count", "level"), &NaniteDAG::get_level_triangle_count);
 	ClassDB::bind_method(D_METHOD("get_level_max_error", "level"), &NaniteDAG::get_level_max_error);
+	ClassDB::bind_method(D_METHOD("get_cluster_vertex_count", "cluster"), &NaniteDAG::get_cluster_vertex_count);
+	ClassDB::bind_method(D_METHOD("get_level_vertex_slice_total", "level"), &NaniteDAG::get_level_vertex_slice_total);
+	ClassDB::bind_method(D_METHOD("get_level_distinct_vertex_count", "level"), &NaniteDAG::get_level_distinct_vertex_count);
 	ClassDB::bind_method(D_METHOD("get_statistics"), &NaniteDAG::_get_statistics_bind);
 	ClassDB::bind_method(D_METHOD("get_report"), &NaniteDAG::get_report);
 	ClassDB::bind_method(D_METHOD("validate"), &NaniteDAG::_validate_bind);

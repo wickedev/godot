@@ -130,6 +130,15 @@ public:
 	uint32_t get_level_triangle_count(uint32_t p_level) const;
 	float get_level_max_error(uint32_t p_level) const;
 
+	// Distinct vertices a single cluster references. Bounded by the builder's
+	// max_cluster_vertices, so it fits an 8-bit local index.
+	uint32_t get_cluster_vertex_count(uint32_t p_cluster) const;
+	// Summed over a level: what a per-cluster vertex slice layout would cost.
+	uint32_t get_level_vertex_slice_total(uint32_t p_level) const;
+	// Distinct vertices the level touches: what a shared vertex buffer costs.
+	// The ratio of the two is the duplication a slice layout pays for locality.
+	uint32_t get_level_distinct_vertex_count(uint32_t p_level) const;
+
 	// Every violated DAG invariant, most importantly error monotonicity. Empty
 	// means the DAG is sound. Always compiled: this is the G3 quality gate's
 	// pass/fail criterion, not a debug-only luxury.
@@ -142,13 +151,28 @@ public:
 	// Per-level cluster/triangle/error table, for judging DAG quality.
 	String get_report() const;
 
-	// Every cluster of one level, coloured per cluster.
+	// Every cluster of one level, colored per cluster.
 	Ref<ArrayMesh> create_level_debug_mesh(uint32_t p_level) const;
-	// The cut at `p_threshold`, coloured per cluster.
+	// The cut at `p_threshold`, colored per cluster.
 	Ref<ArrayMesh> create_cut_debug_mesh(float p_threshold) const;
+
+	// Bumped whenever the serialized layout changes. This is a provisional
+	// format: it is expected to be replaced wholesale once the geometry pool
+	// contract is settled. Loading a mismatched version fails loudly rather
+	// than yielding a silently empty DAG.
+	static constexpr uint32_t FORMAT_VERSION = 1;
 
 protected:
 	static void _bind_methods();
+
+	// Storage goes through one opaque blob rather than a property per array, so
+	// that changing the layout is a version bump and not a scene-format break.
+	bool _set(const StringName &p_name, const Variant &p_value);
+	bool _get(const StringName &p_name, Variant &r_ret) const;
+	void _get_property_list(List<PropertyInfo> *p_list) const;
+
+	PackedByteArray _serialize() const;
+	bool _deserialize(const PackedByteArray &p_data);
 
 private:
 	float _compute_epsilon() const;

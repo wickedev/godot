@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="NaniteDAG" inherits="Resource" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Offline cluster hierarchy used by virtualized geometry.
+	</brief_description>
+	<description>
+		A directed acyclic graph of triangle clusters built at import time from a single mesh surface. Level 0 holds the original geometry split into clusters of at most 128 triangles; each level above is produced by grouping clusters, simplifying each group as a unit, and splitting the result into clusters again, until nothing merges any more.
+		At render time a [i]cut[/i] through the graph is chosen from a screen-space error threshold, mixing detail levels across a single mesh. Error and bounds are properties of a whole group rather than of individual clusters, so every cluster of a group changes detail level together; that, together with locking the vertices on a group's boundary during simplification, is what keeps a cut free of cracks.
+		Errors are absolute, in mesh units, and never decrease towards the root. [method validate] checks that and the graph's other invariants.
+		[b]Note:[/b] the stored layout is provisional and may change between builds. Reimport the source mesh rather than relying on a saved graph.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="create_cut_debug_mesh" qualifiers="const">
+			<return type="ArrayMesh" />
+			<param index="0" name="threshold" type="float" />
+			<description>
+				Returns a mesh of the clusters selected at [param threshold], each cluster in its own color. Useful for seeing which detail levels a given threshold mixes.
+			</description>
+		</method>
+		<method name="create_level_debug_mesh" qualifiers="const">
+			<return type="ArrayMesh" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns a mesh of every cluster on [param level], each cluster in its own color.
+			</description>
+		</method>
+		<method name="get_cluster_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the total number of clusters across all levels.
+			</description>
+		</method>
+		<method name="get_cluster_vertex_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="cluster" type="int" />
+			<description>
+				Returns the number of distinct vertices referenced by the cluster at index [param cluster].
+			</description>
+		</method>
+		<method name="get_group_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of groups. A group is the set of clusters that were simplified together to produce the level above.
+			</description>
+		</method>
+		<method name="get_level_cluster_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns how many clusters make up [param level].
+			</description>
+		</method>
+		<method name="get_level_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the number of levels, counting level 0.
+			</description>
+		</method>
+		<method name="get_level_distinct_vertex_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns how many distinct vertices [param level] touches, which is what a shared vertex buffer would need to store for it.
+			</description>
+		</method>
+		<method name="get_level_max_error" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns the largest error of any cluster on [param level], in mesh units. This never decreases as levels go up.
+			</description>
+		</method>
+		<method name="get_level_triangle_count" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns the total triangle count of [param level].
+			</description>
+		</method>
+		<method name="get_level_vertex_slice_total" qualifiers="const">
+			<return type="int" />
+			<param index="0" name="level" type="int" />
+			<description>
+				Returns the summed vertex count of every cluster on [param level], which is what giving each cluster its own vertex slice would cost. Compare with [method get_level_distinct_vertex_count] to see the duplication that layout pays for locality.
+			</description>
+		</method>
+		<method name="get_report" qualifiers="const">
+			<return type="String" />
+			<description>
+				Returns a per-level table of cluster counts, triangle counts, errors and vertex usage, for judging the quality of the hierarchy.
+			</description>
+		</method>
+		<method name="get_statistics" qualifiers="const">
+			<return type="Dictionary" />
+			<description>
+				Returns the same figures as [method get_report] as a [Dictionary], for programmatic use.
+			</description>
+		</method>
+		<method name="get_triangle_count" qualifiers="const">
+			<return type="int" />
+			<description>
+				Returns the total triangle count across all levels.
+			</description>
+		</method>
+		<method name="select_cut" qualifiers="const">
+			<return type="PackedInt32Array" />
+			<param index="0" name="threshold" type="float" />
+			<description>
+				Returns the clusters that should be drawn at error threshold [param threshold], in mesh units. A cluster is selected when its own error is within the threshold but the error of the group that would replace it is not.
+			</description>
+		</method>
+		<method name="validate" qualifiers="const">
+			<return type="PackedStringArray" />
+			<description>
+				Returns a description of every violated invariant, or an empty array if the graph is sound. Checks that error never decreases towards the root, that each group's bounding sphere encloses its children's, that all clusters of a group share one detail decision, and that indices and back-references are in range.
+			</description>
+		</method>
+	</methods>
+</class>

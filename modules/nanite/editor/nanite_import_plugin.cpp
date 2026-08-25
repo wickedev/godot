@@ -94,6 +94,18 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 
 	const String mesh_name = mesh->get_name().is_empty() ? String("<unnamed>") : mesh->get_name();
 
+	// Blend shapes move vertices at runtime, so the offline cluster bounds and
+	// LOD errors would describe a pose the mesh is never actually in. Skinned
+	// surfaces are refused by the builder for the same reason.
+	if (mesh->get_blend_shape_count() > 0) {
+		WARN_PRINT(vformat("Nanite: skipping '%s', stage S1 supports static geometry only and this mesh has blend shapes.", mesh_name));
+		return;
+	}
+
+	// With several surfaces the open border of each one is a seam shared with
+	// another surface that simplifies independently.
+	settings.lock_mesh_border = mesh->get_surface_count() > 1;
+
 	for (int surface = 0; surface < mesh->get_surface_count(); surface++) {
 		if (mesh->get_surface_primitive_type(surface) != Mesh::PRIMITIVE_TRIANGLES) {
 			WARN_PRINT(vformat("Nanite: skipping surface %d of '%s', only triangle surfaces can be clustered.", surface, mesh_name));

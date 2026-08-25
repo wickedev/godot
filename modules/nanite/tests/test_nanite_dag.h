@@ -33,6 +33,7 @@
 #include "../nanite_dag.h"
 #include "../nanite_dag_builder.h"
 
+#include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "tests/test_macros.h"
 
@@ -48,6 +49,29 @@ struct TestMesh {
 	LocalVector<uint32_t> indices;
 	uint32_t vertex_count = 0;
 	uint32_t attribute_count = 3;
+};
+
+struct PositionKey {
+	float x = 0.0f;
+	float y = 0.0f;
+	float z = 0.0f;
+	uint32_t index = 0;
+
+	bool operator<(const PositionKey &p_other) const {
+		if (x != p_other.x) {
+			return x < p_other.x;
+		}
+		if (y != p_other.y) {
+			return y < p_other.y;
+		}
+		if (z != p_other.z) {
+			return z < p_other.z;
+		}
+		return index < p_other.index;
+	}
+	bool same_position(const PositionKey &p_other) const {
+		return x == p_other.x && y == p_other.y && z == p_other.z;
+	}
 };
 
 inline TestMesh make_displaced_grid(uint32_t p_resolution) {
@@ -92,6 +116,130 @@ inline TestMesh make_displaced_grid(uint32_t p_resolution) {
 		}
 	}
 	return mesh;
+}
+
+// A UV sphere built as a full quad grid, which leaves a fan of zero-area
+// triangles at each pole. This is what a naive sphere generator produces and
+// what real assets often contain; measured, it is also what drives a group to
+// fail to simplify.
+inline TestMesh make_pole_sphere(uint32_t p_segments, uint32_t p_rings) {
+	TestMesh mesh;
+	const uint32_t stride = p_segments + 1;
+	mesh.vertex_count = stride * (p_rings + 1);
+	mesh.positions.resize((uint64_t)mesh.vertex_count * 3);
+	mesh.attributes.resize((uint64_t)mesh.vertex_count * 3);
+
+	for (uint32_t r = 0; r <= p_rings; r++) {
+		const float phi = (float)r / (float)p_rings * (float)Math::PI;
+		for (uint32_t sgm = 0; sgm <= p_segments; sgm++) {
+			const float theta = (float)sgm / (float)p_segments * 2.0f * (float)Math::PI;
+			const uint32_t v = r * stride + sgm;
+			const Vector3 position = Vector3(Math::sin(phi) * Math::cos(theta), Math::cos(phi), Math::sin(phi) * Math::sin(theta));
+			for (uint32_t axis = 0; axis < 3; axis++) {
+				mesh.positions[v * 3 + axis] = (float)position[axis];
+				mesh.attributes[v * 3 + axis] = (float)position[axis];
+			}
+		}
+	}
+	for (uint32_t i = 0; i < 3; i++) {
+		mesh.attribute_weights.push_back(0.5f);
+	}
+	for (uint32_t r = 0; r < p_rings; r++) {
+		for (uint32_t sgm = 0; sgm < p_segments; sgm++) {
+			const uint32_t a = r * stride + sgm;
+			const uint32_t b = a + stride;
+			mesh.indices.push_back(a);
+			mesh.indices.push_back(b);
+			mesh.indices.push_back(a + 1);
+			mesh.indices.push_back(a + 1);
+			mesh.indices.push_back(b);
+			mesh.indices.push_back(b + 1);
+		}
+	}
+	return mesh;
+}
+
+// A closed sphere with proper triangle fans at the poles, so it has no
+// degenerate triangles and no boundary edges. Every edge is shared by exactly
+// two triangles, which is what makes it usable as a watertightness fixture.
+inline TestMesh make_closed_sphere(uint32_t p_segments, uint32_t p_rings) {
+	TestMesh mesh;
+	const uint32_t stride = p_segments + 1;
+	mesh.vertex_count = stride * (p_rings + 1);
+	mesh.positions.resize((uint64_t)mesh.vertex_count * 3);
+	mesh.attributes.resize((uint64_t)mesh.vertex_count * 3);
+
+	for (uint32_t r = 0; r <= p_rings; r++) {
+		const float phi = (float)r / (float)p_rings * (float)Math::PI;
+		for (uint32_t sgm = 0; sgm <= p_segments; sgm++) {
+			const float theta = (float)sgm / (float)p_segments * 2.0f * (float)Math::PI;
+			const uint32_t v = r * stride + sgm;
+			// Snap the poles. sin(PI) is ~1e-7 in float rather than 0, so
+			// computing them would scatter the pole across a ring of distinct
+			// positions, and the fan around it would never close.
+			Vector3 position;
+			if (r == 0) {
+				position = Vector3(0.0f, 1.0f, 0.0f);
+			} else if (r == p_rings) {
+				position = Vector3(0.0f, -1.0f, 0.0f);
+			} else if (sgm == p_segments) {
+				// Same reason as the poles: sin(2*PI) is not 0 in float, so the
+				// wrap-around column has to reuse column 0 verbatim to weld.
+				const uint32_t first = r * stride;
+				position = Vector3(mesh.positions[first * 3], mesh.positions[first * 3 + 1], mesh.positions[first * 3 + 2]);
+			} else {
+				position = Vector3(Math::sin(phi) * Math::cos(theta), Math::cos(phi), Math::sin(phi) * Math::sin(theta));
+			}
+			for (uint32_t axis = 0; axis < 3; axis++) {
+				mesh.positions[v * 3 + axis] = (float)position[axis];
+				mesh.attributes[v * 3 + axis] = (float)position[axis];
+			}
+		}
+	}
+	for (uint32_t i = 0; i < 3; i++) {
+		mesh.attribute_weights.push_back(0.5f);
+	}
+	for (uint32_t r = 0; r < p_rings; r++) {
+		for (uint32_t sgm = 0; sgm < p_segments; sgm++) {
+			const uint32_t a = r * stride + sgm;
+			const uint32_t b = a + stride;
+			if (r > 0) {
+				mesh.indices.push_back(a);
+				mesh.indices.push_back(b);
+				mesh.indices.push_back(a + 1);
+			}
+			if (r + 1 < p_rings) {
+				mesh.indices.push_back(a + 1);
+				mesh.indices.push_back(b);
+				mesh.indices.push_back(b + 1);
+			}
+		}
+	}
+	return mesh;
+}
+
+// Maps every vertex to the first vertex sharing its position. Seam columns and
+// pole fans duplicate positions for attribute reasons, so edges have to be
+// compared in position space or a closed surface looks torn.
+inline LocalVector<uint32_t> weld_by_position(const NaniteDAG &p_dag) {
+	const float *positions = p_dag.positions.ptr();
+	LocalVector<PositionKey> keys;
+	keys.resize(p_dag.vertex_count);
+	for (uint32_t i = 0; i < p_dag.vertex_count; i++) {
+		keys[i] = PositionKey{ positions[i * 3 + 0], positions[i * 3 + 1], positions[i * 3 + 2], i };
+	}
+	keys.sort();
+
+	LocalVector<uint32_t> weld;
+	weld.resize(p_dag.vertex_count);
+	uint32_t canonical = keys.is_empty() ? 0 : keys[0].index;
+	for (uint32_t i = 0; i < keys.size(); i++) {
+		if (i > 0 && !keys[i].same_position(keys[i - 1])) {
+			canonical = keys[i].index;
+		}
+		weld[keys[i].index] = canonical;
+	}
+	return weld;
 }
 
 inline Ref<NaniteDAG> build_test_dag(const TestMesh &p_mesh, const NaniteDAGBuilder::Settings &p_settings) {
@@ -240,7 +388,7 @@ TEST_CASE("[Nanite] DAG debug output covers every level") {
 	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
 	REQUIRE(dag.is_valid());
 
-	// The per-level table is the artefact DAG quality is judged from, so it
+	// The per-level table is the artifact DAG quality is judged from, so it
 	// has to list every level rather than silently stopping short.
 	const String report = dag->get_report();
 	CHECK(report.contains("clusters"));
@@ -253,7 +401,7 @@ TEST_CASE("[Nanite] DAG debug output covers every level") {
 		REQUIRE_MESSAGE(debug_mesh.is_valid(), vformat("Level %d produced no debug mesh.", level));
 		REQUIRE(debug_mesh->get_surface_count() == 1);
 
-		// Triangles are expanded so each one can carry its cluster's colour.
+		// Triangles are expanded so each one can carry its cluster's color.
 		const Array arrays = debug_mesh->surface_get_arrays(0);
 		const PackedVector3Array vertices = arrays[Mesh::ARRAY_VERTEX];
 		const PackedColorArray colors = arrays[Mesh::ARRAY_COLOR];
@@ -264,6 +412,223 @@ TEST_CASE("[Nanite] DAG debug output covers every level") {
 	const Ref<ArrayMesh> cut_mesh = dag->create_cut_debug_mesh(dag->get_level_max_error(dag->get_level_count() - 1) * 0.5f);
 	REQUIRE(cut_mesh.is_valid());
 	CHECK(cut_mesh->get_surface_count() == 1);
+}
+
+TEST_CASE("[Nanite] LOD spheres are real volumes that grow towards the root") {
+	const TestMesh mesh = make_displaced_grid(48);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	REQUIRE(dag.is_valid());
+
+	// Regression: level 0 was left with a default-constructed LOD sphere, so
+	// every sphere in the hierarchy collapsed to a zero-radius point at the
+	// origin. Containment held trivially and the checks all passed, but the
+	// runtime had nothing to project an error from.
+	for (uint32_t i = dag->level_offsets[0]; i < dag->level_offsets[1]; i++) {
+		const NaniteDAG::Cluster &cluster = dag->clusters[i];
+		CHECK_MESSAGE(cluster.lod_bounds.radius > 0.0f, "A level 0 cluster has a degenerate LOD sphere.");
+		CHECK(cluster.lod_bounds.radius == cluster.bounds.radius);
+	}
+
+	for (const NaniteDAG::Group &group : dag->groups) {
+		CHECK_MESSAGE(group.lod_bounds.radius > 0.0f, "A group has a degenerate LOD sphere.");
+	}
+
+	// A cluster's own geometry must sit inside the sphere its error is
+	// projected from, or the projection understates the error on screen.
+	//
+	// Note this is a statement about the vertices, not about nesting the
+	// cluster's bounding sphere inside its LOD sphere: neither sphere is
+	// minimal, so a loose one can poke outside its parent while every point it
+	// covers is still comfortably within.
+	uint32_t outside = 0;
+	for (const NaniteDAG::Cluster &cluster : dag->clusters) {
+		for (uint32_t k = 0; k < cluster.index_count; k++) {
+			const uint32_t v = dag->indices[cluster.index_offset + k];
+			const Vector3 position = Vector3(dag->positions[v * 3 + 0], dag->positions[v * 3 + 1], dag->positions[v * 3 + 2]);
+			if ((float)cluster.lod_bounds.center.distance_to(position) > cluster.lod_bounds.radius + 1e-3f) {
+				outside++;
+			}
+		}
+	}
+	CHECK_MESSAGE(outside == 0, vformat("%d vertices fall outside the LOD sphere their error is projected from.", outside));
+}
+
+TEST_CASE("[Nanite] Degenerate triangles cannot inject a non-geometric error") {
+	// Zero-area triangles are common in real assets (a UV sphere built as a
+	// full quad grid has a fan of them at each pole). meshoptimizer stops short
+	// on them and the error it reports is then not a distance: measured, a step
+	// that removed one triangle reported half the mesh radius. Accumulated, it
+	// corrupts the LOD error of every level above.
+	TestMesh mesh = make_displaced_grid(48);
+	const uint32_t side = 49;
+	for (uint32_t i = 0; i < side - 1; i++) {
+		mesh.indices.push_back(i);
+		mesh.indices.push_back(i);
+		mesh.indices.push_back(i + 1);
+	}
+
+	NaniteDAGBuilder::Settings settings;
+	ERR_PRINT_OFF;
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	ERR_PRINT_ON;
+	REQUIRE_MESSAGE(dag.is_valid(), "Degenerate input must still produce a DAG, not a failure.");
+	CHECK(dag->validate().is_empty());
+
+	// The bound is physical: a simplification cannot displace the surface
+	// further than the extent of the geometry it was handed.
+	for (const NaniteDAG::Group &group : dag->groups) {
+		CHECK_MESSAGE(group.error <= 2.0f * group.lod_bounds.radius,
+				vformat("Group error %f exceeds its own LOD diameter %f.", group.error, 2.0f * group.lod_bounds.radius));
+	}
+}
+
+TEST_CASE("[Nanite] Spatial clustering stays inside its meshlet buffers") {
+	// meshopt_buildMeshletsSpatial emits clusters as small as min_triangles, so
+	// its worst-case count must be bounded with min_triangles rather than max.
+	// Sizing the buffers from max_triangles under-allocates by that ratio and
+	// lets the builder write past them. Nothing exercised this path before,
+	// because spatial clustering is off by default.
+	const TestMesh mesh = make_displaced_grid(64);
+	NaniteDAGBuilder::Settings settings;
+	settings.spatial_clustering = true;
+
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	REQUIRE(dag.is_valid());
+	CHECK(dag->validate().is_empty());
+	CHECK(dag->get_level_count() >= 2);
+
+	for (const NaniteDAG::Cluster &cluster : dag->clusters) {
+		CHECK(cluster.index_count / 3 <= settings.max_cluster_triangles);
+		CHECK(cluster.index_count > 0);
+	}
+}
+
+TEST_CASE("[Nanite] DAG survives a save and reload") {
+	const TestMesh mesh = make_displaced_grid(32);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> original = build_test_dag(mesh, settings);
+	REQUIRE(original.is_valid());
+
+	// Round-trip through the storage property the same way saving a scene does.
+	const Variant stored = original->get("data");
+	REQUIRE(stored.get_type() == Variant::PACKED_BYTE_ARRAY);
+	REQUIRE(!((PackedByteArray)stored).is_empty());
+
+	Ref<NaniteDAG> reloaded;
+	reloaded.instantiate();
+	reloaded->set("data", stored);
+
+	// A DAG that reloads empty is worse than one that fails to load: every
+	// consumer would read zero clusters and render nothing, silently.
+	REQUIRE(reloaded->get_cluster_count() == original->get_cluster_count());
+	REQUIRE(reloaded->get_group_count() == original->get_group_count());
+	REQUIRE(reloaded->get_level_count() == original->get_level_count());
+	CHECK(reloaded->validate().is_empty());
+
+	for (uint32_t i = 0; i < original->get_cluster_count(); i++) {
+		const NaniteDAG::Cluster &a = original->clusters[i];
+		const NaniteDAG::Cluster &b = reloaded->clusters[i];
+		CHECK(a.index_offset == b.index_offset);
+		CHECK(a.index_count == b.index_count);
+		CHECK(a.error == b.error);
+		CHECK(a.lod_bounds.radius == b.lod_bounds.radius);
+		// Roots carry an infinite parent error; if that does not survive the
+		// round-trip they stop being drawn at coarse thresholds.
+		CHECK(Math::is_inf(a.parent_error) == Math::is_inf(b.parent_error));
+	}
+	CHECK(reloaded->select_cut(0.0f).size() == original->select_cut(0.0f).size());
+}
+
+TEST_CASE("[Nanite] Skinned surfaces are refused") {
+	// The DAG is built from rest-pose positions. A skinned surface moves at
+	// runtime, so its cluster bounds and LOD errors would describe a pose the
+	// mesh is never in. S1 is static-only and must say so rather than produce a
+	// confidently wrong DAG.
+	const TestMesh mesh = make_displaced_grid(8);
+
+	Array arrays;
+	arrays.resize(Mesh::ARRAY_MAX);
+	PackedVector3Array vertices;
+	PackedInt32Array indices;
+	for (uint32_t i = 0; i < mesh.vertex_count; i++) {
+		vertices.push_back(Vector3(mesh.positions[i * 3], mesh.positions[i * 3 + 1], mesh.positions[i * 3 + 2]));
+	}
+	for (uint32_t index : mesh.indices) {
+		indices.push_back((int32_t)index);
+	}
+	arrays[Mesh::ARRAY_VERTEX] = vertices;
+	arrays[Mesh::ARRAY_INDEX] = indices;
+
+	NaniteDAGBuilder::Settings settings;
+	ERR_PRINT_OFF;
+	CHECK_MESSAGE(NaniteDAGBuilder::build_from_surface(arrays, settings).is_valid(), "A static surface must still build.");
+
+	PackedInt32Array bones;
+	PackedFloat32Array weights;
+	for (uint32_t i = 0; i < mesh.vertex_count * 4; i++) {
+		bones.push_back(0);
+		weights.push_back(i % 4 == 0 ? 1.0f : 0.0f);
+	}
+	arrays[Mesh::ARRAY_BONES] = bones;
+	arrays[Mesh::ARRAY_WEIGHTS] = weights;
+	CHECK_MESSAGE(NaniteDAGBuilder::build_from_surface(arrays, settings).is_null(), "A skinned surface must be refused.");
+	ERR_PRINT_ON;
+}
+
+TEST_CASE("[Nanite] Every cut of a closed mesh is watertight") {
+	// This is the property the whole S1 design exists to guarantee, stated
+	// directly rather than through its ingredients: pick any threshold, take
+	// the clusters it selects, and the surface they form must have no holes.
+	//
+	// A crack shows up as an edge used by one triangle where a closed surface
+	// requires two -- exactly what happens if two sides of a seam end up at
+	// different LODs, or if a cluster left behind by a failed group keeps a
+	// seam that the other side has since simplified away.
+	const TestMesh mesh = make_closed_sphere(96, 48);
+	NaniteDAGBuilder::Settings settings;
+	settings.group_size = 2; // Small groups strand more clusters, which is the interesting case.
+
+	ERR_PRINT_OFF;
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	ERR_PRINT_ON;
+	REQUIRE(dag.is_valid());
+	CHECK(dag->validate().is_empty());
+
+	const LocalVector<uint32_t> weld = weld_by_position(**dag);
+	const float top_error = dag->get_level_max_error(dag->get_level_count() - 1);
+	const float thresholds[] = { 0.0f, top_error * 0.05f, top_error * 0.25f, top_error * 0.5f, top_error, top_error * 4.0f };
+
+	for (const float threshold : thresholds) {
+		const LocalVector<uint32_t> cut = dag->select_cut(threshold);
+		REQUIRE(!cut.is_empty());
+
+		HashMap<uint64_t, uint32_t> edge_use;
+		for (const uint32_t cluster_id : cut) {
+			const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
+			for (uint32_t t = 0; t < cluster.index_count; t += 3) {
+				for (uint32_t e = 0; e < 3; e++) {
+					const uint32_t a = weld[dag->indices[cluster.index_offset + t + e]];
+					const uint32_t b = weld[dag->indices[cluster.index_offset + t + (e + 1) % 3]];
+					if (a == b) {
+						continue; // Degenerate edge, carries no surface.
+					}
+					const uint64_t key = ((uint64_t)MIN(a, b) << 32) | (uint64_t)MAX(a, b);
+					edge_use[key] = edge_use.has(key) ? edge_use[key] + 1 : 1;
+				}
+			}
+		}
+
+		uint32_t open_edges = 0;
+		for (const KeyValue<uint64_t, uint32_t> &edge : edge_use) {
+			if (edge.value != 2) {
+				open_edges++;
+			}
+		}
+		CHECK_MESSAGE(open_edges == 0,
+				vformat("Cut at threshold %f has %d edges not shared by exactly two triangles, out of %d edges across %d clusters.",
+						threshold, open_edges, edge_use.size(), cut.size()));
+	}
 }
 
 TEST_CASE("[Nanite] DAG builder is deterministic") {
