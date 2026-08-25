@@ -187,10 +187,14 @@ def all_fixtures():
 
     Maps name -> (image bytes, should_parse, note).
     """
-    sec_va, sec_size = 0x1000, 0xC00
-    dir_rva = sec_va + 0x10
-    # Ends exactly on the section boundary: the containment check must use <=, not <.
-    exact_fit = sec_va + sec_size - dir_rva
+    # For the boundary case the span from the directory's RVA to the section end must
+    # itself be a whole number of 28-byte entries, otherwise rounding the size down
+    # leaves a gap and the fixture stops touching the boundary it is named for.
+    # build_pe puts the directory at sec_va + 0x10, so pick a section size with
+    # (size - 0x10) % 28 == 0.
+    boundary_sec_size = 0xBFC  # 3068; 3068 - 16 = 3052 = 28 * 109
+    exact_fit = boundary_sec_size - 0x10
+    assert exact_fit % 28 == 0, "boundary fixture would not end on the section edge"
 
     return {
         "ok_pe32plus": (build_pe(magic=PE32_PLUS), True, "well-formed PE32+"),
@@ -198,9 +202,9 @@ def all_fixtures():
         "ok_notfirst": (build_pe(extra_entries=2), True, "CodeView is not the first entry"),
         "ok_age9": (build_pe(age=9), True, "age must reach the debug id"),
         "ok_dir_ends_at_section_end": (
-            build_pe(dir_size_override=exact_fit - (exact_fit % 28)),
+            build_pe(dir_size_override=exact_fit, sec_raw_size_override=boundary_sec_size),
             True,
-            "directory ends exactly at section end; boundary must be inclusive",
+            "directory ends exactly at section end; containment must be <=, not <",
         ),
         "bad_size0": (build_pe(size_of_data=0), False, "entry SizeOfData zero"),
         "bad_trunc": (build_pe(size_of_data=20), False, "entry shorter than an RSDS header"),

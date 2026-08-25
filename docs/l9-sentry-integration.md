@@ -116,7 +116,7 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 > **파싱 로직 시험 — 픽스처 14종, 두 구현 모두에서:**
 > `validate_pe_codeview.all_fixtures()`가 **단일 케이스 표**이고 Python 스위트와 PowerShell 러너가 **둘 다 여기서** 만든다. 한쪽만 적게 커버하는 일이 구조적으로 불가능하다 — 실제로 zero-size·section-overrun 케이스가 PowerShell 쪽에서 빠져 있었고, 그래서 표를 중앙화했다.
 >
-> 정상 5종(PE32 / PE32+ / CodeView 비-선두 / age 반영 / **디렉터리가 섹션 끝에 정확히 맞닿는 경계**) + malformed 9종(엔트리 `SizeOfData` 0·절단·이름 미종료·RSDS 아님, 디렉터리 28배수 아님·크기 0·섹션 초과·RVA 미매핑·**섹션 매핑은 되지만 파일 끝을 넘음**). **실패 시 non-zero 종료.**
+> 정상 5종(PE32 / PE32+ / CodeView 비-선두 / age 반영 / **디렉터리가 섹션 끝에 정확히 맞닿는 경계** — `section_end - dbg_rva`가 28의 배수라 틈이 0이고, containment를 `<=`에서 `<`로 바꾸면 실제로 실패하는 것을 확인했다) + malformed 9종(엔트리 `SizeOfData` 0·절단·이름 미종료·RSDS 아님, 디렉터리 28배수 아님·크기 0·섹션 초과·RVA 미매핑·**섹션 매핑은 되지만 파일 끝을 넘음**). **실패 시 non-zero 종료.**
 >
 > **두 스크립트 모두 pre-commit 훅**이다:
 > - `validate_pe_codeview.py` — Python 미러
