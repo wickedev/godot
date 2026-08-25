@@ -864,10 +864,19 @@ IPLsize IPLCALL iplSerializedObjectGetSize(IPLSerializedObject serializedObject)
 
 IPLbyte* IPLCALL iplSerializedObjectGetData(IPLSerializedObject serializedObject)
 {
-    if (!serializedObject)
-        return 0;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!serializedObject)
+            return 0;
 
-    return reinterpret_cast<api::ISerializedObject*>(serializedObject)->getData();
+        return reinterpret_cast<api::ISerializedObject*>(serializedObject)->getData();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 IPLerror IPLCALL iplEmbreeDeviceCreate(IPLContext context,
@@ -4212,26 +4221,53 @@ IPLint32 IPLCALL iplEnergyFieldGetNumBins(IPLEnergyField energyField)
 
 IPLfloat32* IPLCALL iplEnergyFieldGetData(IPLEnergyField energyField)
 {
-    if (!energyField)
-        return nullptr;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!energyField)
+            return nullptr;
 
-    return reinterpret_cast<api::IEnergyField*>(energyField)->getData();
+        return reinterpret_cast<api::IEnergyField*>(energyField)->getData();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 IPLfloat32* IPLCALL iplEnergyFieldGetChannel(IPLEnergyField energyField, IPLint32 channelIndex)
 {
-    if (!energyField)
-        return nullptr;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!energyField)
+            return nullptr;
 
-    return reinterpret_cast<api::IEnergyField*>(energyField)->getChannel(channelIndex);
+        return reinterpret_cast<api::IEnergyField*>(energyField)->getChannel(channelIndex);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 IPLfloat32* IPLCALL iplEnergyFieldGetBand(IPLEnergyField energyField, IPLint32 channelIndex, IPLint32 bandIndex)
 {
-    if (!energyField)
-        return nullptr;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!energyField)
+            return nullptr;
 
-    return reinterpret_cast<api::IEnergyField*>(energyField)->getBand(channelIndex, bandIndex);
+        return reinterpret_cast<api::IEnergyField*>(energyField)->getBand(channelIndex, bandIndex);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 void IPLCALL iplEnergyFieldReset(IPLEnergyField energyField)
@@ -4424,18 +4460,36 @@ IPLint32 IPLCALL iplImpulseResponseGetNumSamples(IPLImpulseResponse impulseRespo
 
 IPLfloat32* IPLCALL iplImpulseResponseGetData(IPLImpulseResponse impulseResponse)
 {
-    if (!impulseResponse)
-        return nullptr;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!impulseResponse)
+            return nullptr;
 
-    return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getData();
+        return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getData();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 IPLfloat32* IPLCALL iplImpulseResponseGetChannel(IPLImpulseResponse impulseResponse, int channelIndex)
 {
-    if (!impulseResponse)
-        return nullptr;
+    // [godot] C API boundary hardening: the engine builds without exceptions,
+    // so nothing may unwind past this function. See patches/0001.
+    try
+    {
+        if (!impulseResponse)
+            return nullptr;
 
-    return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getChannel(channelIndex);
+        return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getChannel(channelIndex);
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 
 void IPLCALL iplImpulseResponseReset(IPLImpulseResponse impulseResponse)

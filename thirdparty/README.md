@@ -1077,7 +1077,7 @@ Bundled dependencies (see their own directories for licenses):
 
 - `flatbuffers/`: FlatBuffers runtime headers 25.12.19 (matching the flatc above).
 - `pffft/`: PFFFT from https://github.com/marton78/pffft (a4b0359) — pffft.{c,h},
-  pffft_common.c, pffft_priv_impl.h, fmv.h, sse2neon.h, simd/.
+  pffft_common.c, pffft_priv_impl.h, fmv.h, simd/.
 - `mysofa/`: libmysofa from https://github.com/hoene/libmysofa (90531bd) —
   `src/hrtf`, `src/hdf`, `src/resampler`. `hrtf/config.h` and
   `hrtf/mysofa_export.h` are hand-generated replacements for the CMake
@@ -1085,9 +1085,10 @@ Bundled dependencies (see their own directories for licenses):
 
 Patches:
 
-- `0001-harden-c-api-exception-boundary.patch` — wraps every exported C API
-  function body in `try { ... } catch (...)` with a type-appropriate failure
-  return. The engine builds without exceptions, so nothing may unwind past
+- `0001-harden-c-api-exception-boundary.patch` — wraps all 216 exported C API
+  functions (`phonon_interfaces.h` wrappers, pointer-returning accessors
+  included, plus the real `iplContextCreate` in `api_context.cpp`) in
+  `try { ... } catch (...)` with a type-appropriate failure return. The engine builds without exceptions, so nothing may unwind past
   the `extern "C"` boundary; upstream only catches `ipl::Exception` in
   creation wrappers and not at all in the remaining entry points.
 

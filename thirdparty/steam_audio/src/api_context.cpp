@@ -82,6 +82,16 @@ void CContext::setProfilerContext(void* profilerContext)
 IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
                           IPLContext* context)
 {
-    return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
+    // [godot] C API boundary hardening: see patches/0001. createContext catches
+    // ipl::Exception internally but e.g. std::system_error from thread setup
+    // would otherwise unwind into no-exception engine TUs.
+    try
+    {
+        return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
+    }
+    catch (...)
+    {
+        return IPL_STATUS_FAILURE;
+    }
 }
 #endif
