@@ -37,6 +37,7 @@ TEST_FORCE_LINK(test_audio_stream_wav)
 #include "core/math/math_defs.h"
 #include "core/math/math_funcs.h"
 #include "scene/resources/audio/audio_stream_wav.h"
+#include "servers/audio/audio_frame.h"
 #include "tests/test_utils.h"
 
 namespace TestAudioStreamWAV {
@@ -216,6 +217,34 @@ TEST_CASE("[Audio][AudioStreamWAV] Saving IMA ADPCM is not supported") {
 	ERR_PRINT_OFF;
 	CHECK(stream->save_to_wav(save_path) == ERR_UNAVAILABLE);
 	ERR_PRINT_ON;
+}
+
+TEST_CASE("[Audio][AudioStreamWAV] A forward loop wraps inline across many mixes") {
+	// A smoke test for the inline loop wrap: mixing well past the loop point
+	// repeatedly must keep playing without hanging.
+	constexpr int FRAMES = 1024;
+	Vector<uint8_t> data;
+	data.resize(FRAMES * 2);
+	uint8_t *w = data.ptrw();
+	for (int i = 0; i < FRAMES; i++) {
+		encode_uint16(uint16_t(i - (INT16_MAX + 1)), w + i * 2);
+	}
+	Ref<AudioStreamWAV> stream;
+	stream.instantiate();
+	stream->set_mix_rate(44100);
+	stream->set_format(AudioStreamWAV::FORMAT_16_BITS);
+	stream->set_data(data);
+	stream->set_loop_mode(AudioStreamWAV::LOOP_FORWARD);
+	stream->set_loop_end(FRAMES);
+
+	Ref<AudioStreamPlayback> playback = stream->instantiate_playback();
+	playback->start(0.0);
+	Vector<AudioFrame> buffer;
+	buffer.resize(512);
+	for (int i = 0; i < 8; i++) {
+		playback->mix(buffer.ptrw(), 1.0f, 512);
+	}
+	CHECK(playback->is_playing());
 }
 
 } // namespace TestAudioStreamWAV

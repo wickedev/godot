@@ -39,6 +39,9 @@ const float TRIM_DB_LIMIT = -50;
 const int TRIM_FADE_OUT_FRAMES = 500;
 
 void AudioStreamPlaybackWAV::start(double p_from_pos) {
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
+	bump_suspension_generation();
 	if (base->format == AudioStreamWAV::FORMAT_IMA_ADPCM) {
 		//no seeking in IMA_ADPCM
 		for (int i = 0; i < 2; i++) {
@@ -78,8 +81,12 @@ double AudioStreamPlaybackWAV::get_playback_position() const {
 }
 
 void AudioStreamPlaybackWAV::seek(double p_time) {
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
 	if (base->format == AudioStreamWAV::FORMAT_IMA_ADPCM) {
-		return; //no seeking in ima-adpcm
+		// No seeking in IMA ADPCM: nothing was mutated, so no generation bump —
+		// a wake after this no-op must not flush valid lookahead.
+		return;
 	}
 
 	double max = base->get_length();
@@ -89,6 +96,9 @@ void AudioStreamPlaybackWAV::seek(double p_time) {
 		p_time = max - 0.001;
 	}
 
+	bump_suspension_generation();
+	// Repositions without refilling the resampler: what it holds is now pre-seek.
+	mark_suspension_residuals_stale();
 	offset = int64_t(p_time * base->mix_rate);
 }
 

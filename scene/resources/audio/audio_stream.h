@@ -77,8 +77,46 @@ public:
 class AudioStreamPlayback : public RefCounted {
 	GDCLASS(AudioStreamPlayback, RefCounted);
 
+	SafeNumeric<uint64_t> suspension_generation;
+
 protected:
 	static void _bind_methods();
+	// See is_inaudible_suspension_safe(): opt-in playbacks call this from start()/seek(),
+	// AFTER their no-op early returns (a call that mutated nothing must not bump) and
+	// inside a StreamMutationScope.
+	void bump_suspension_generation() { suspension_generation.increment(); }
+	// Serializes a public stream mutation (start/seek/external mix) against the audio
+	// thread: while `audio/general/suspend_inaudible_playbacks` is enabled, the audio
+	// thread's wake path inspects the generation and flushes residuals, which must
+	// never interleave with a mutation of the same decoder. Takes the AudioServer
+	// (driver) lock in every scope — the driver mutex is recursive, so nested scopes
+	// (start() calling seek(), a decoder's internal loop seek during mix) reenter
+	// naturally. A no-op when the feature is disabled (no wake path exists then) or
+	// no AudioServer is running.
+	//
+	// The contract, in full:
+	//  - EVERY scope locks. There is no depth optimization, because a
+	//    per-playback counter does not identify the owning thread: a main-thread
+	//    mutation could see a nonzero depth left by the audio thread and skip
+	//    the lock entirely.
+	//  - Nesting is fine. The driver mutex is recursive, so start() calling
+	//    seek(), or a looping decoder seeking inside its own mix, reenters
+	//    naturally.
+	//  - The scope spans the whole mutation, not just the state write. The
+	//    generation bump and any staleness marking happen inside it, so the wake
+	//    path never observes a half-applied mutation.
+	//  - It covers every playback reached through the public entry points --
+	//    including generator, microphone, interactive and GDExtension
+	//    playbacks -- not only the file decoders that opt into suspension. Their
+	//    mix() therefore runs under the driver lock when the feature is on.
+	void begin_stream_mutation();
+	void end_stream_mutation();
+	struct StreamMutationScope {
+		AudioStreamPlayback *playback = nullptr;
+		StreamMutationScope(AudioStreamPlayback *p_playback) :
+				playback(p_playback) { playback->begin_stream_mutation(); }
+		~StreamMutationScope() { playback->end_stream_mutation(); }
+	};
 	PackedVector2Array _mix_audio_bind(float p_rate_scale, int p_frames);
 	GDVIRTUAL1_REQUIRED(_start, double)
 	GDVIRTUAL0_REQUIRED(_stop)
@@ -102,6 +140,33 @@ public:
 	virtual void seek(double p_time);
 
 	virtual void tag_used_streams();
+
+	// Whether the AudioServer may stop calling mix() entirely while this playback is inaudible
+	// (see `audio/general/suspend_inaudible_playbacks`). Only plain file decoders should opt in;
+	// generators, microphones and composite streams must keep mixing so their internal state
+	// machines and ring buffers stay live.
+	// Opt-in contract: public start()/seek() overrides MUST (a) hold a
+	// StreamMutationScope for their whole body, and (b) call
+	// bump_suspension_generation() after their no-op early returns and before
+	// mutating decoder state, so the AudioServer can detect stream mutations that
+	// happened while mixing was suspended (position comparison cannot express
+	// restart-at-same-position, and a no-op must not trigger a wake flush).
+	virtual bool is_inaudible_suspension_safe() const { return false; }
+	// Monotonic counter incremented on every mutating public start()/seek() of an
+	// opt-in playback. Written on the mutating thread, read on the audio thread.
+	uint64_t get_suspension_generation() const { return suspension_generation.get(); }
+	// Called by the AudioServer (audio thread, under the driver lock) when it wakes
+	// a suspended playback whose generation changed. Must drop internally buffered
+	// PRE-mutation audio WITHOUT advancing the decoder — and must be a no-op when
+	// the buffered audio is already post-mutation (the mutation itself refilled it,
+	// e.g. start() via begin_resample()); flushing fresh residuals would drop the
+	// first frames of the restarted stream.
+	virtual void flush_suspension_residuals() {}
+	// Called by an opt-in playback whose seek() repositioned the decoder WITHOUT
+	// refilling the internal buffer, leaving pre-mutation audio buffered. A
+	// mutation that refills (start(), which runs begin_resample()) must not call
+	// this: its buffer is already the new position's audio.
+	virtual void mark_suspension_residuals_stale() {}
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -136,6 +201,13 @@ class AudioStreamPlaybackResampled : public AudioStreamPlayback {
 	AudioFrame internal_buffer[INTERNAL_BUFFER_LEN + CUBIC_INTERP_HISTORY];
 	unsigned int internal_buffer_end = -1;
 	uint64_t mix_offset = 0;
+	// Whether the internal buffer holds PRE-mutation audio. This is a property of
+	// the buffer itself, not something derivable from the generation counter at a
+	// call boundary: the buffer can go stale (a seek that does not refill) and
+	// come back fresh (mix() consuming the stale remainder and refilling from the
+	// repositioned decoder) inside a single call. Set on a non-refilling
+	// reposition, cleared by every refill. Starts set: nothing is buffered yet.
+	SafeFlag residuals_stale{ true };
 
 protected:
 	void begin_resample();
@@ -146,10 +218,17 @@ protected:
 	GDVIRTUAL2R_REQUIRED(int, _mix_resampled, GDExtensionPtr<AudioFrame>, int)
 	GDVIRTUAL0RC_REQUIRED(float, _get_stream_sampling_rate)
 
+	// Script-facing wrapper: scripted begin_resample() advances the decoder, so it
+	// must run under the mutation protocol like any other public mutation.
+	void _begin_resample_bind();
+
 	static void _bind_methods();
 
 public:
 	virtual int mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) override;
+
+	virtual void flush_suspension_residuals() override;
+	virtual void mark_suspension_residuals_stale() override { residuals_stale.set(); }
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

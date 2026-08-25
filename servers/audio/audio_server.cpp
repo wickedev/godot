@@ -188,6 +188,75 @@ void AudioServer::_mix_step() {
 		//  A more punchy option for fading out could be to just use the lookahead buffer.
 		bool fading_out = playback->state.load() == AudioStreamPlaybackListNode::FADE_OUT_TO_DELETION || playback->state.load() == AudioStreamPlaybackListNode::FADE_OUT_TO_PAUSE;
 
+		// Inaudible-playback suspension (opt-in): if every active bus volume for this playback (current and
+		// previous, so volume ramps have finished) has been exactly zero for longer than
+		// `audio/buses/channel_disable_time`, stop mixing the stream. The playback stays in the list and
+		// resumes mixing from the stalled position as soon as any bus volume becomes nonzero again.
+		// Only playbacks that declare themselves safe opt in (plain file decoders) — generators, microphones
+		// and composite streams keep mixing so their internal state machines and ring buffers stay live.
+		// The exact-zero test makes the gate immune to downstream bus amplification: zero stays zero
+		// through any bus gain or effect chain. Note this only observes the playback's own route
+		// coefficients — bus-level mute/solo is applied further downstream and does not trigger suspension.
+		// A playback stopped through its public API must NOT be suspended: it has to reach mix() below so
+		// the zero-frame result walks it through the regular fade-out/deletion cleanup path.
+		bool waking_from_suspension = false;
+		if (suspend_inaudible_playbacks && !fading_out && playback->stream_playback->is_inaudible_suspension_safe() && playback->stream_playback->is_playing()) {
+			// Value copy of the atomic snapshot: the main thread may swap and reclaim the pointed-to
+			// details while this thread is preempted, so the pointer must not be re-dereferenced.
+			// This copy is only used for the suspension decision; the mixing path below takes its own
+			// snapshot after mix() as before, so the default-off behavior is untouched.
+			AudioStreamPlaybackBusDetails *gate_details_ptr = playback->bus_details.load();
+			ERR_FAIL_NULL(gate_details_ptr);
+			AudioStreamPlaybackBusDetails gate_details = *gate_details_ptr;
+			bool audible = false;
+			for (int idx = 0; idx < AuSC::MAX_BUSES_PER_PLAYBACK && !audible; idx++) {
+				for (int channel_idx = 0; channel_idx < channel_count && !audible; channel_idx++) {
+					if (gate_details.bus_active[idx] && (gate_details.volume[idx][channel_idx].left != 0.0f || gate_details.volume[idx][channel_idx].right != 0.0f)) {
+						audible = true;
+					}
+					if (playback->prev_bus_details->bus_active[idx] && (playback->prev_bus_details->volume[idx][channel_idx].left != 0.0f || playback->prev_bus_details->volume[idx][channel_idx].right != 0.0f)) {
+						audible = true;
+					}
+				}
+			}
+			if (audible) {
+				playback->silent_mix_blocks = 0;
+				if (playback->suspended) {
+					playback->suspended = false;
+					// Resume ramps from silence even for buses with no previous entry (see below).
+					waking_from_suspension = true;
+					// If the stream was mutated while suspended (public start()/seek() bump the
+					// generation counter — position comparison can't express restart-at-same-position),
+					// both retained buffers hold pre-mutation audio: drop the AudioServer lookahead and
+					// have the playback flush its own resampler history/staging.
+					if (playback->stream_playback->get_suspension_generation() != playback->suspend_generation) {
+						for (int i = 0; i < AuSC::LOOKAHEAD_BUFFER_SIZE; i++) {
+							playback->lookahead[i] = AudioFrame(0, 0);
+						}
+						playback->stream_playback->flush_suspension_residuals();
+					}
+				}
+			} else {
+				if (playback->silent_mix_blocks != UINT32_MAX) {
+					playback->silent_mix_blocks++;
+				}
+				if (playback->silent_mix_blocks > playback_disable_blocks) {
+					if (!playback->suspended) {
+						playback->suspended = true;
+						playback->suspend_generation = playback->stream_playback->get_suspension_generation();
+					}
+					// The lookahead buffer is deliberately left untouched: it holds already-decoded frames
+					// that will play back (ramped up from silence) on resume, so no samples are lost.
+					if (tag_used_audio_streams && playback->stream_playback->is_playing()) {
+						playback->stream_playback->tag_used_streams();
+					}
+					// Keep the volume ramp state consistent for when the playback becomes audible again.
+					*playback->prev_bus_details = gate_details;
+					continue;
+				}
+			}
+		}
+
 		AudioFrame *buf = mix_buffer.ptrw();
 
 		// Copy the old contents of the lookahead buffer into the beginning of the mix buffer.
@@ -266,6 +335,11 @@ void AudioServer::_mix_step() {
 				// If this bus was active in the previous mix step, we need to interpolate between the previous volume and the current volume to avoid pops. Set `prev_channel_volume` accordingly.
 				if (prev_bus_idx != -1) {
 					prev_channel_vol = playback->prev_bus_details->volume[prev_bus_idx][channel_idx];
+				} else if (waking_from_suspension) {
+					// A playback waking from inaudible suspension is resuming mid-stream, not starting a
+					// new sound: if it was suspended with an empty bus map (e.g. a 3D source beyond
+					// max_distance), ramp up from silence instead of jumping to full volume.
+					prev_channel_vol = AudioFrame(0, 0);
 				}
 				_mix_step_for_channel(channel_buf, buf, prev_channel_vol, channel_vol, playback->attenuation_filter_cutoff_hz.get(), playback->highshelf_gain.get(), &playback->filter_process[channel_idx * 2], &playback->filter_process[channel_idx * 2 + 1]);
 			}
@@ -1333,9 +1407,11 @@ void AudioServer::init_channels_and_buffers() {
 void AudioServer::init() {
 	channel_disable_threshold_db = GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "audio/buses/channel_disable_threshold_db", PROPERTY_HINT_RANGE, "-80,0,0.1,suffix:dB"), -60.0);
 	channel_disable_frames = float(GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "audio/buses/channel_disable_time", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater"), 2.0)) * get_mix_rate();
+	suspend_inaudible_playbacks = GLOBAL_DEF_RST("audio/general/suspend_inaudible_playbacks", false);
 	// TODO: Buffer size is hardcoded for now. This would be really nice to have as a project setting because currently it limits audio latency to an absolute minimum of 11ms with default mix rate, but there's some additional work required to make that happen. See TODOs in `_mix_step_for_channel`.
 	// When this becomes a project setting, it should be specified in milliseconds rather than raw sample count, because 512 samples at 192khz is shorter than it is at 48khz, for example.
 	buffer_size = 512;
+	playback_disable_blocks = channel_disable_frames / buffer_size + 1;
 
 	init_channels_and_buffers();
 

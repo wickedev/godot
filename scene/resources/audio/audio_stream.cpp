@@ -71,8 +71,28 @@ int AudioStreamPlayback::mix(AudioFrame *p_buffer, float p_rate_scale, int p_fra
 	return ret;
 }
 
+void AudioStreamPlayback::begin_stream_mutation() {
+	// Every scope locks: the driver mutex is recursive, so nesting (start()
+	// calling seek(), or a decoder's internal loop seek during mix on the audio
+	// thread) is naturally reentrant. A per-playback depth counter cannot be
+	// used as an optimization here — it would not distinguish the owning
+	// thread, letting a main-thread mutation skip the lock while the audio
+	// thread is inside a nested scope.
+	AudioServer *server = AudioServer::get_singleton();
+	if (server && server->is_inaudible_suspension_enabled()) {
+		server->lock();
+	}
+}
+
+void AudioStreamPlayback::end_stream_mutation() {
+	AudioServer *server = AudioServer::get_singleton();
+	if (server && server->is_inaudible_suspension_enabled()) {
+		server->unlock();
+	}
+}
+
 PackedVector2Array AudioStreamPlayback::_mix_audio_bind(float p_rate_scale, int p_frames) {
-	Vector<AudioFrame> frames = mix_audio(p_rate_scale, p_frames);
+	const Vector<AudioFrame> frames = mix_audio(p_rate_scale, p_frames);
 
 	PackedVector2Array res;
 	res.resize(frames.size());
@@ -86,11 +106,38 @@ PackedVector2Array AudioStreamPlayback::_mix_audio_bind(float p_rate_scale, int 
 }
 
 Vector<AudioFrame> AudioStreamPlayback::mix_audio(float p_rate_scale, int p_frames) {
+	// External mixing consumes stream data outside the server's mix, which is a
+	// position mutation as far as the suspension protocol is concerned. The
+	// protocol lives HERE so the scripted binding and C++ callers share one
+	// implementation.
+	//
+	// Both decisions below are deliberately biased the same way, because the two
+	// errors are not symmetric. Failing to record a mutation lets the wake path
+	// treat PRE-mutation audio as valid and play it: audible. Recording one that
+	// did not happen costs at most one internal buffer (128 frames, ~3 ms) of
+	// silence on the next wake, under a ramp that is already fading in from zero:
+	// inaudible. So when in doubt, record the mutation.
+	StreamMutationScope mutation_scope(this);
 	Vector<AudioFrame> res;
 	res.resize(p_frames);
+	if (p_frames <= 0) {
+		return res;
+	}
 
 	int frames = mix(res.ptrw(), p_rate_scale, p_frames);
 	res.resize(frames);
+
+	// Consuming frames is not repositioning: whatever lookahead is left is the
+	// continuation of what the caller just received, so this does NOT touch
+	// staleness. mix() itself clears it if it refilled from the decoder.
+	//
+	// The bump is unconditional, without inspecting what the subclass did. There
+	// is no portable predicate for "this mix consumed stream data": the returned
+	// count is frames WRITTEN, not consumed, and is_playing() is wrong for at
+	// least the microphone (records while not "playing"), the synchronized and
+	// interactive playbacks (return silence across a pending switch), and any
+	// GDExtension playback.
+	bump_suspension_generation();
 
 	return res;
 }
@@ -167,6 +214,37 @@ void AudioStreamPlaybackResampled::begin_resample() {
 	//mix buffer
 	_mix_internal(internal_buffer + 4, INTERNAL_BUFFER_LEN);
 	mix_offset = 0;
+	// The buffer now holds audio decoded at the current position, so a wake must
+	// not flush it (see flush_suspension_residuals()).
+	residuals_stale.clear();
+}
+
+void AudioStreamPlaybackResampled::flush_suspension_residuals() {
+	if (!residuals_stale.is_set()) {
+		// The buffer holds audio decoded at the current position -- either the
+		// mutation refilled it (start() via begin_resample()) or a later mix()
+		// consumed the stale audio and refilled. Flushing here would drop those
+		// frames for good: the flush does not rewind the decoder, so anything
+		// discarded is never decoded again.
+		return;
+	}
+	// Stale pre-mutation audio (seek() repositions the decoder without
+	// refilling). Drop it WITHOUT advancing the decoder: zero the buffer and
+	// history so up to one internal buffer of silence plays while the next
+	// mix() refills from the decoder's current (post-mutation) position. The
+	// wake ramp already fades in from silence, so this stays inaudible.
+	for (uint32_t i = 0; i < INTERNAL_BUFFER_LEN + CUBIC_INTERP_HISTORY; i++) {
+		internal_buffer[i] = AudioFrame(0.0, 0.0);
+	}
+	mix_offset = 0;
+	internal_buffer_end = -1;
+	residuals_stale.clear();
+}
+
+void AudioStreamPlaybackResampled::_begin_resample_bind() {
+	StreamMutationScope mutation_scope(this);
+	bump_suspension_generation();
+	begin_resample();
 }
 
 int AudioStreamPlaybackResampled::_mix_internal(AudioFrame *p_buffer, int p_frames) {
@@ -181,7 +259,7 @@ float AudioStreamPlaybackResampled::get_stream_sampling_rate() {
 }
 
 void AudioStreamPlaybackResampled::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("begin_resample"), &AudioStreamPlaybackResampled::begin_resample);
+	ClassDB::bind_method(D_METHOD("begin_resample"), &AudioStreamPlaybackResampled::_begin_resample_bind);
 
 	GDVIRTUAL_BIND(_mix_resampled, "dst_buffer", "frame_count");
 	GDVIRTUAL_BIND(_get_stream_sampling_rate);
@@ -227,6 +305,9 @@ int AudioStreamPlaybackResampled::mix(AudioFrame *p_buffer, float p_rate_scale, 
 			internal_buffer[2] = internal_buffer[INTERNAL_BUFFER_LEN + 2];
 			internal_buffer[3] = internal_buffer[INTERNAL_BUFFER_LEN + 3];
 			int mixed_frames = _mix_internal(internal_buffer + 4, INTERNAL_BUFFER_LEN);
+			// Refilled from the decoder's current position: whatever was stale
+			// here has been consumed and replaced.
+			residuals_stale.clear();
 			if (mixed_frames != INTERNAL_BUFFER_LEN) {
 				// internal_buffer[mixed_frames] is the first frame of silence.
 				internal_buffer_end = mixed_frames;

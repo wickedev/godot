@@ -67,6 +67,8 @@ private:
 
 	float channel_disable_threshold_db = 0.0f;
 	uint32_t channel_disable_frames = 0;
+	bool suspend_inaudible_playbacks = false;
+	uint32_t playback_disable_blocks = 0;
 
 	int channel_count = 0;
 	int to_mix = 0;
@@ -157,6 +159,14 @@ private:
 		AudioStreamPlaybackBusDetails *prev_bus_details = nullptr;
 		// The next few samples are stored here so we have some time to fade audio out if it ends abruptly at the beginning of the next mix.
 		AudioFrame lookahead[AuSC::LOOKAHEAD_BUFFER_SIZE];
+		// Inaudible-playback suspension state. All of these should only be accessed on the audio thread.
+		// Number of consecutive mix blocks during which every active bus volume for this playback was exactly zero (saturating).
+		uint32_t silent_mix_blocks = 0;
+		// Whether mixing is currently suspended (see `audio/general/suspend_inaudible_playbacks`).
+		bool suspended = false;
+		// Playback mutation generation captured when suspension began; a change on wake means
+		// start()/seek() happened while suspended and buffered pre-mutation audio must be dropped.
+		uint64_t suspend_generation = 0;
 	};
 
 	SafeList<AudioStreamPlaybackListNode *> playback_list;
@@ -315,6 +325,11 @@ public:
 	virtual void load_default_bus_layout();
 
 	/* MISC config */
+
+	// Whether `audio/general/suspend_inaudible_playbacks` is active (read-only at
+	// runtime; the setting is applied at startup). Used by AudioStreamPlayback's
+	// mutation protocol to decide whether public mutations must take the lock.
+	bool is_inaudible_suspension_enabled() const { return suspend_inaudible_playbacks; }
 
 	virtual void lock();
 	virtual void unlock();
