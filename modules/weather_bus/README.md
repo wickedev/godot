@@ -105,6 +105,30 @@ const Vector3 wind = WeatherBus::get_singleton()->get_wind_velocity();
 `get_wind_velocity()` and the shader's `weather_wind_velocity()` compute the same thing. Use one of
 them rather than recomputing, so the two sides cannot drift.
 
+## Producers
+
+The bus is transport. These put values on it:
+
+| Node | Drives | Notes |
+|---|---|---|
+| `TimeOfDay` | `tod_*` | Real solar position — declination from day of year, hour angle from the clock, altitude/azimuth from latitude. Gets seasons, latitude and polar night right, which a fixed rotation axis cannot. Optionally aims `DirectionalLight3D` nodes for the sun and moon. |
+| `WindDriver` | `wind_*` | Gusting, plus the bridge to `Area3D` wind so `SoftBody3D` cloth sees the same wind foliage does. |
+
+Both advance themselves once in the scene tree, and both expose `advance(delta)` so a test or a
+cutscene can step them deterministically.
+
+Nothing drives `wetness_*` or `weather_*` yet — those belong to the weather state machine.
+
+### Two sign conventions worth knowing about
+
+Both bite silently, and both are covered by tests because of it.
+
+`DirectionalLight3D` emits along its local `-Z`, so `TimeOfDay` stands the light where the sun is
+and looks back at the origin. `Area3D` reads wind direction off the `-Z` of whatever node its
+`wind_source_path` points at, so `WindDriver` aims itself along the wind and hands each listed area
+a path to itself. In both cases `look_at()` is called with `use_model_front` left false — passing
+true flips forward to `+Z` and reverses the result without erroring.
+
 ## Threading
 
 Main thread only. The setters are plain member writes with no synchronization, and
