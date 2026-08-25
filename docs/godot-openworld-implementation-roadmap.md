@@ -117,7 +117,7 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 | 레인 | 작업 |
 |------|------|
 | **L2** | **S2 — 런타임 검증 하니스**(CompositorEffect + compute cull + indirect HW raster). ⚠️ **자체 deferred-lite 라이팅은 짓지 말 것** — S4에서 버려질 코드 |
-| **L2** | **S3 — 64b atomic 활성 → R64 vis-buffer + SW/HW 하이브리드 래스터**. Metal/구세대 Apple용 HW-only 폴백 변종 유지 필수. **+ Metal `MTLIndirectCommandBuffer` 신규 도입**(드라이버 전체 ICB 사용처 0건 실측) — Metal에서 GPU-결정 드로우 카운트를 소비하는 유일한 경로. `drawIndirectCount` 스텁 해소와 S3 하이브리드 래스터가 같은 ICB 인프라를 씀 |
+| **L2** | **S3 — 64b atomic 활성 → R64 vis-buffer + SW/HW 하이브리드 래스터**. ~~Metal/구세대 Apple용 HW-only 폴백 변종 유지 필수~~ **[2026-08-25 정정, C1 훅① 실측]** Metal은 Apple8+Mac2/Apple9에서 **64b 이미지 아토믹 네이티브 지원**(`metal_device_properties.cpp:154`에 이미 계산되던 죽은 값 — 훅①이 `SUPPORTS_IMAGE_ATOMIC_64_BIT`로 노출, M2 Pro 실측 true). **R64 vis-buffer는 Metal 네이티브 경로에서 성립** — HW-only 폴백은 구세대(Apple7 이하)만. 단 **MoltenVK 경로는 32b 아토믹조차 false → macOS는 반드시 `--rendering-driver metal`.** Metal 잔여 결손은 draw-indirect-count 1건(ICB, Task #10). **+ Metal `MTLIndirectCommandBuffer` 신규 도입**(드라이버 전체 ICB 사용처 0건 실측) — Metal에서 GPU-결정 드로우 카운트를 소비하는 유일한 경로. `drawIndirectCount` 스텁 해소와 S3 하이브리드 래스터가 같은 ICB 인프라를 씀 |
 | **L1** | 비-Nanite opaque GBuffer emit 경로 + deferred 라이팅 리졸브 골격(froxel 재사용, private set 0/1) |
 | **L1** | `MODE_RESOLVE_MATERIAL` 변종 + 셰이더 컴파일러 2변경(analytic derivative) |
 | **L3** | **Phase 1 Milestone B** — 커스텀 SDF 소프트 GI(Surface Cache · screen/world-space radiance cache · 시간적 importance sampling) ／ **병행 Phase 2 착수: HW-RT 프로덕션화**(GH-99119 experimental 직접 개조, TLAS 생명주기, SBT/BDA 안정화) |
