@@ -1,3 +1,19 @@
+; Lumen S0-2 / G2 BLAS probe. See docs/lumen-s0-spike-report.md section 1.5.
+;
+; Needs a real rendering driver AND a driver with VK_KHR_acceleration_structure.
+; `--headless` selects the dummy driver (no RenderingDevice), so on a display-less
+; box use xvfb-run instead:
+;
+;   xvfb-run -a bin/godot.linuxbsd.editor.arm64 --rendering-driver vulkan \
+;       --quit-after 2000 --path misc/rt_spike
+;
+; ALWAYS pass --quit-after when automating. On a GDScript parse error _ready() is
+; never reached, so the script's own quit() never fires and the process hangs until
+; killed externally. An unbound RenderingDevice constant is a parse error too, with
+; the same symptom -- check bindings before referencing new constants.
+;
+; Apple builds compile raytracing out entirely, so this reports "unsupported" there.
+
 config_version=5
 
 [application]
