@@ -139,14 +139,62 @@ Vulkan 스펙의 AS 정점 버퍼 **필수 지원 포맷**은 다음뿐이다:
 - **단 3성분 16비트 포맷은 필수 목록에 없다.** `R16G16B16_SNORM/SFLOAT`는 쓸 수 없다 → **4성분(8바이트/정점), 넷째 성분은 패딩**이어야 한다.
 - 더 촘촘한 패킹(10:10:10:2 등)을 원하면 **런타임 `bufferFeatures` 조회가 선행**되어야 하고, 그 조회 코드는 **지금 없다**.
 
-### ⚠️ 실기 미검증
-위는 **코드 실측 + Vulkan 스펙 필수 포맷 표**에 근거한다. **런타임 확인은 못 했다** — §1대로 이 머신에서 RT가 아예 안 돈다. **BLAS 빌드를 실제로 태워본 뒤 서명하는 것이 옳다.** 현재로선 **조건부 의견**으로만 제출한다.
+### ✅ 실기 검증 완료 (2026-08-25, DGX Spark / NVIDIA GB10 / Linux aarch64 / driver 580.173.02)
+
+RT 하드웨어에서 `VK_FORMAT_FEATURE_2_ACCELERATION_STRUCTURE_VERTEX_BUFFER_BIT_KHR`를 직접 조회했다. **결과가 위 결론을 정정한다 — 정확히는 "이식성 하한"과 "이 하드웨어의 실제 능력"을 분리해야 한다.**
+
+| 포맷 | 크기 | 스펙 필수? | **GB10 실측** |
+|---|---:|:---:|:---:|
+| `R32G32B32_SFLOAT` | 12B | ✅ | YES |
+| `R16G16B16A16_SFLOAT` | 8B | ✅ | YES |
+| **`R16G16B16A16_SNORM`** | **8B** | ✅ | **YES** |
+| `R16G16B16_SNORM` | **6B** | ❌ | **YES** |
+| `R16G16B16_SFLOAT` | 6B | ❌ | **YES** |
+| `A2B10G10R10_UNORM_PACK32` | **4B** | ❌ | **YES** |
+| `R8G8B8A8_SNORM` | 4B | ❌ | **YES** |
+
+**정정:** 앞 절의 *"3성분 16비트가 필수 목록에 없으니 4성분 8바이트여야 한다"* 는 **이식성 하한으로는 맞지만 하드웨어 제약은 아니다.** NVIDIA GB10은 6B(`R16G16B16_SNORM`)도, 4B(`A2B10G10R10`)도 받는다.
+
+**⇒ G2 동결 권고 (수정):**
+- **계약(동결)은 `R16G16B16A16_SNORM` 8B — 스펙 필수 포맷이라 벤더 무관 보장.** 지오 풀 레이아웃은 이걸 기준으로 잡는다.
+- **더 촘촘한 패킹(6B/4B)은 벤더별 최적화**로 남긴다. 활성화하려면 **런타임 `bufferFeatures` 조회 + 폴백 경로**가 선행되어야 하고, **그 조회 코드는 Godot에 없다**(코드베이스 0건). 이건 별도 태스크다.
+- **1벤더 실측이다.** AMD/Intel/모바일은 미확인 — 바로 그 이유로 런타임 조회가 필요하다.
+
+**남은 미검증:** 실제 `blas_create` → `blas_build` 왕복은 아직 안 태웠다. 포맷 수용 여부는 확정됐으나 **Godot 경로 전체를 통과시킨 것은 아니다** — Godot 빌드가 선행되어야 한다(§4).
 
 ---
 
 ## 4. 다음 단계
 
-1. **[차단 해제 필요]** RT GPU 달린 Windows/Linux 머신 → S0-2 + G2 BLAS 실기 검증
+### ✅ RT 하드웨어 확보 — 드라이버 프로브 완료 (DGX Spark / NVIDIA GB10)
+
+| 확장 | GB10 |
+|---|:---:|
+| `VK_KHR_acceleration_structure` | **YES** |
+| `VK_KHR_ray_tracing_pipeline` | **YES** |
+| `VK_KHR_ray_query` | **YES** |
+| `VK_KHR_deferred_host_operations` | **YES** |
+| `VK_KHR_buffer_device_address` | **YES** |
+| `VK_EXT_descriptor_indexing` | **YES** |
+| `VK_EXT_calibrated_timestamps` | **YES** (프로파일러 P2 선행조건) |
+
+⇒ **S0-2의 하드웨어 전제는 충족됐다.** 남은 건 이 박스에서 Godot을 빌드하는 것뿐이다.
+
+### 🔗 RD 스파이크 ⓒ 판정의 하드웨어측 확증
+
+같은 프로브에서 `VkPhysicalDeviceVulkan12Features`를 읽었다:
+
+| 기능 비트 | GB10 |
+|---|:---:|
+| `shaderSampledImageArrayNonUniformIndexing` | **1** |
+| `runtimeDescriptorArray` | **1** |
+| `descriptorBindingPartiallyBound` | **1** |
+| `descriptorBindingVariableDescriptorCount` | **1** |
+| `bufferDeviceAddress` | **1** |
+
+⇒ **[RD 스파이크](./rd-capability-spike-report.md) ⓒ의 "하드웨어 한계가 아니라 디바이스 생성 누락" 판정이 실측으로 확증됐다.** 하드웨어·드라이버는 bindless를 **전부 지원한다.** Godot이 `Vulkan12Features`를 체인하지 않아 꺼져 있을 뿐이다. **L1의 "최소 nonuniform 활성화" 태스크는 없는 기능을 만드는 게 아니라 이미 있는 것을 켜는 일이다.**
+
+1. **[사용자 승인 대기]** DGX에서 Godot 빌드 → S0-2 프로브 + BLAS 왕복. 빌드에 dev 패키지 8종 apt 설치가 필요해 사용자 확인 중
 2. **[전략 결정 필요]** Apple RT 부재에 대한 (A)/(B)/(C) 판단 — G1 §5 Metal 성립성과 **묶어서**
 3. S0-1 후속: 경로 (b) 진입 시 §2(c) 개조 항목의 공수 산정
 
