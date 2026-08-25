@@ -28,7 +28,7 @@
 | **§5 고급 GPU 프로파일러** | 🟡 | 인엔진 타임스탬프 프로파일러 이미 존재, 국소 코어 확장 ([상세](./godot-gpu-profiler-implementation-research.md)) |
 | **§6 애니메이션** | 🟡 (2건 🔴) | 페이셜·물리블렌딩·클로스/헤어·압축/스트리밍 신규 격차 확인. 군중 스키닝·애니 압축만 man-year ([상세](./godot-animation-pipeline-research.md)) |
 | **§7 VFX / 시네마틱** | 🟡 (2건 🔴) | Niagara/Sequencer 패리티 재개봉(EditorPlugin, 코어 0). GPU 이벤트·유체 시뮬만 man-year ([상세](./godot-vfx-cinematic-research.md)) |
-| **§8 물리 시뮬** | 🟡 (GPU 물리 🔴) | Jolt가 거의 전부 번들. 클로스 P1(의류 XPBD), 파괴 P1(조인트 break force). GPU 물리는 CPU Jolt로 충분 ([상세](./godot-physics-simulation-research.md)) |
+| **§8 물리 시뮬** | 🟡 (GPU 물리 🔴) | Jolt가 거의 전부 번들. 클로스 P1(의류 XPBD), 파괴 P1(조인트 break force). GPU 게임플레이 물리는 자체 솔버(Wave 4 — Compute는 헤어 전용 추상화) ([상세](./godot-physics-simulation-research.md)) |
 | **§9 환경 시뮬(오션·비·대기)** | 🟡→🔴 | 오션·수면·수중은 GDExtension 가능(개념 0, `CompositorEffect`+RD 완비). 물리기반 대기·볼류메트릭 구름은 코어 개조 필요 ([오션](./godot-ocean-water-research.md) · [기상](./godot-weather-atmosphere-research.md)) |
 | **§10 오디오 전파** | 🟡→🔴 | Steam Audio 미들웨어가 정답. 실시간 회절·전파는 미들웨어 채택의 강한 근거 ([상세](./godot-audio-propagation-research.md)) |
 | **§11 기타 런타임(모션블러·업스케일러·SSS·헤어·네트워킹·텔레메트리)** | 🟡 (헤어 🔴) | 모션블러·SSS LUT·업스케일러는 애드온/GDExtension. 스트랜드 헤어는 P3 장기. Sentry는 §1 착수 전 필수 ([상세](./godot-runtime-gaps-misc-research.md)) |

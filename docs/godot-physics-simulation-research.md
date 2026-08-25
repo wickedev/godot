@@ -19,9 +19,9 @@
 | **결정론·스냅샷** | `JPH_CROSS_PLATFORM_DETERMINISTIC` **미정의**. `StateRecorder` 참조 0. 물리 스냅샷/복원 API 전무 | `StateRecorderImpl.cpp` 컴파일됨. `JoltStream{Input,Output}Wrapper` 양방향 이미 존재. `StateRecorderFilter`로 부분 저장 가능 | 🟡 **국소 코어** (SCsub 1줄 + 서버 메서드 2개) | 1~2주 | 🟡 **P1** (넷코드 필요 시 🟢 P0) |
 | **캐릭터 컨트롤러** | Jolt `CharacterVirtual` 참조 0. `PhysicsServer3D`에 `character` grep **0매치**. 계단 오르기(`stair` grep 0), 강체 밀어내기 없음 | `CharacterVirtual.cpp` 컴파일됨 — `WalkStairs`/`StickToFloor`/`ExtendedUpdate`/`SaveState`/캐릭터-vs-캐릭터/`mMaxStrength` 전부 구현돼 있음 | 🟡 **국소 코어** (신규 서버 API + 노드) / 계단만이면 🟢 GDScript 우회 | 2~4주 (계단 우회는 2일) | 🟢 **P0** |
 | **멀티스레딩·성능** | 물리 바디 스트리밍/활성 영역 개념 없음(`physics_streaming`/`activation_region`/`physics_lod` grep 각 0). `max_bodies` 기본 10240 재시작 필요 | `JoltJobSystem`이 **`WorkerThreadPool` 정상 사용**. `AddBodiesPrepare/Finalize` 배치 삽입 이미 사용. `DISABLE_MODE_REMOVE`로 노드 단위 제거 가능 | 🟢 **순수 GDScript/GDExtension** (스트리밍 매니저) | 1~2주 | 🟢 **P0** (저비용 고효과) |
-| **GPU 물리** | 파티클 충돌은 **단방향** — 월드가 반응 안 함. GPU→CPU는 AABB 전체 스톨 리드백 1개뿐. ~~Godot이 `Jolt/Compute`·`Shaders`·`Physics/Hair`를 번들에서 제외~~ [2026-08-25: 3폴더 벤더링 완료(병합 대기) — 단 Compute는 헤어 전용 추상화라 GPU 게임플레이 물리는 여전히 부재] | `buffer_get_data_async` 바인딩됨(§Nanite 문서). SDF/Heightfield 콜라이더 존재 | 🔴 **대규모 코어** (실제 양방향) / 🟡 근사 대체는 GDScript | — | 🔴 **P4 (비권장)** |
+| **GPU 물리** (최종: 자체 솔버, Wave 4) | 파티클 충돌은 **단방향** — 월드가 반응 안 함. GPU→CPU는 AABB 전체 스톨 리드백 1개뿐. 3폴더 벤더링 완료(병합 대기)이나 Compute는 헤어 전용 추상화 — 게임플레이 GPU 물리는 자체 솔버로 확정 | `buffer_get_data_async` 바인딩됨(§Nanite 문서). SDF/Heightfield 콜라이더 존재 | 🔴 **대규모 코어** (실제 양방향) / 🟡 근사 대체는 GDScript | — | 🔴 **P4 (비권장)** |
 
-**전략적 결론 미리보기:** 🟢 P0 3개(캐릭터 계단 우회 → 물리 스트리밍 → 차량)가 AAA에서도 최우선 과제다. **AAA 재평가(2026-08-18):** 기존 "원신급" 목표에서는 런타임 파괴·클로스·GPU 물리가 낮은 우선순위였으나, AAA 포토리얼 목표에서는 파괴(§3)와 클로스(§4)의 우선순위가 상승한다. GPU 물리(§8)는 여전히 P4 — AAA에서도 CPU Jolt로 충분하고 업스트림과 충돌하기 때문. **[2026-08-25 갱신: GPU 게임플레이 물리는 자체 솔버(Wave 4)이며 upstream 충돌 개념은 소멸 — §8(e) 참조.]**
+**전략적 결론 미리보기 (2026-08-25 최종):** 🟢 P0 3개(캐릭터 계단 우회 → 물리 스트리밍 → 차량)가 AAA에서도 최우선 과제다. 파괴(§3)·클로스(§4)는 AAA에서 우선순위 상승. GPU 게임플레이 물리는 자체 솔버(Wave 4, 벤더링된 헤어 전용 Compute 추상화를 토대로)이며, 과거의 "CPU Jolt로 충분/업스트림 충돌" 결론은 §8(e) 2차 정정으로 폐기됐다.
 
 ---
 
@@ -582,7 +582,7 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | **스트랜드 헤어 물리** | | | ✅ 벤더링+바람 패치 (CPU 경로, 병합 대기) |
 | GPU 게임플레이 물리 | | | 🔴 렌더러+물리 동시 개조 |
 
-**핵심 통찰:** 이 표에 **"대규모 포크"가 단 3줄뿐**이고, 그 셋의 최종 상태(2026-08-25)는: 셀프콜리전=자체 구현 · 헤어 시뮬=벤더링 확보 · GPU 게임플레이 물리=자체 솔버(Wave 4)다. 렌더러 격차 문서들(§1~3)에서 절벽이 항상 "코어 통합"에 있었던 것과 대조적으로, **물리 영역엔 절벽이 없다.** 전부 완만한 경사다. **AAA에서도 이 구조는 변하지 않는다** — 달라진 것은 우선순위(클로스 B4, 파괴 Phase C의 P1 격상)뿐.
+**핵심 통찰:** 이 표에 **"대규모 포크"가 단 3줄뿐**이고, 그 셋의 최종 상태(2026-08-25)는: 셀프콜리전=자체 구현 · 헤어 시뮬=벤더링 확보 · GPU 게임플레이 물리=자체 솔버(Wave 4)다. 렌더러 격차 문서들(§1~3)과 대조적으로 물리 영역의 경사는 대체로 완만하지만, **예외가 둘 생겼다** — GPU 게임플레이 자체 솔버(Wave 4)와 셀프 콜리전 자체 구현은 실제 절벽급 신규 작업이다 — 달라진 것은 우선순위(클로스 B4, 파괴 Phase C의 P1 격상)뿐.
 
 ---
 

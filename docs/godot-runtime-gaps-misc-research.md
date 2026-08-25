@@ -384,7 +384,7 @@ class RendererSceneOcclusionCull {
 | 카드형 헤어(원신 방식) | **0** | 아트 + 알파 정렬 셰이더 |
 | 셸 기반 퍼 | **0** | 기성 애드온 |
 | 헤어 시뮬(스트랜드) | **0** | `SpringBoneSimulator3D`(애니메이션 문서 §"이미 있는 것") + 본 체인 |
-| 스트랜드 래스터/헤어 BSDF | 🔴 대규모 코어 | **AAA 재평가:** 포토리얼 AAA 캐릭터에서 스트랜드 기반 헤어 + Marschner/Chiang BSDF는 사실상 필수다. UE Groom/Hair Strands, Frostbite Strand Hair, Horizon Forbidden West의 헤어 파이프라인이 이 레벨. 단 ~~Godot은 Jolt의 `Physics/Hair`~~ **[2026-08-25 정정: `Jolt/Physics/Hair`는 upstream Jolt 5.6.0에 실재하며 Godot이 벤더링에서 제외한 것이다 — `thirdparty/README.md:519`. 시뮬 측은 '대기'가 아니라 '벤더링'이다.]** Jolt의 `Physics/Hair` 폴더를 번들에서 제외했고(물리 문서 §8c), GPU 헤어 시뮬레이션은 Jolt 업스트림 대기. **당장은 카드형 헤어 + Kajiya-Kay로 프로토타입을 진행하고, AAA 최종 목표로 스트랜드 헤어를 계획에 포함한다.** |
+| 스트랜드 래스터/헤어 BSDF | 🔴 대규모 코어 | **AAA 재평가:** 포토리얼 AAA 캐릭터에서 스트랜드 기반 헤어 + Marschner/Chiang BSDF는 사실상 필수다. UE Groom/Hair Strands, Frostbite Strand Hair, Horizon Forbidden West의 헤어 파이프라인이 이 레벨. **[2026-08-25 최종: 헤어 시뮬은 벤더링+바람 패치로 확보(CPU 경로, 병합 대기). GPU 경로는 G5+HLSL 툴체인 선행.]** ~~Jolt의 `Physics/Hair` 폴더를 번들에서 제외했고(물리 문서 §8c), GPU 헤어 시뮬레이션은 Jolt 업스트림 대기. **당장은 카드형 헤어 + Kajiya-Kay로 프로토타입을 진행하고, AAA 최종 목표로 스트랜드 헤어를 계획에 포함한다.** |
 | 블렌드셰이프 희소 최적화 | 국소 코어 | `skeleton.glsl` + 디스패치 배선 |
 
 ### (d) 공수
