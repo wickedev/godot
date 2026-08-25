@@ -47,11 +47,54 @@ def _capture_params(text: str, open_paren: int) -> str:
     raise ValueError("unbalanced parentheses")
 
 
+def _strip_param_name(param: str) -> str:
+    """Reduce one parameter to its type: drop the trailing identifier (and fold
+    an array suffix back onto the type), keeping qualifiers and pointer levels."""
+    param = param.strip()
+    if not param:
+        return param
+    array_suffix = ""
+    m = re.search(r"(\[[^\]]*\])\s*$", param)
+    if m:
+        array_suffix = m.group(1)
+        param = param[: m.start()].rstrip()
+    tokens = param.replace("*", " * ").split()
+    # A lone token is an unnamed parameter's type (e.g. "void", "IPLContext").
+    if len(tokens) >= 2 and re.fullmatch(r"[A-Za-z_]\w*", tokens[-1]) and tokens[-1] not in ("void", "const", "unsigned", "signed", "int", "char", "float", "double", "long", "short"):
+        tokens = tokens[:-1]
+    return " ".join(tokens) + array_suffix
+
+
 def canonical_signature(ret: str, name: str, params: str) -> str:
-    sig = f"{ret} {name}({params})"
+    """ABI identity: return type + parameter types/qualifiers/pointer levels.
+
+    Parameter NAMES are stripped — an ABI-neutral rename must not fail — while a
+    type or pointer-level change must. The calling convention is IPLCALL for
+    every export by construction of the parse patterns.
+    """
+    params = re.sub(r"\s+", " ", params).strip()
+    typed = [_strip_param_name(piece) for piece in _split_top_level(params)]
+    sig = f"{ret} {name}({','.join(typed)})"
     sig = re.sub(r"\s+", " ", sig).strip()
-    sig = re.sub(r"\s*([*,()])\s*", r"\1", sig)
+    sig = re.sub(r"\s*([*,()\[\]])\s*", r"\1", sig)
     return sig
+
+
+def _split_top_level(params: str) -> list:
+    pieces, depth, cur = [], 0, ""
+    for c in params:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        if c == "," and depth == 0:
+            pieces.append(cur)
+            cur = ""
+        else:
+            cur += c
+    if cur.strip():
+        pieces.append(cur)
+    return pieces
 
 
 def parse_declarations(phonon_h: str) -> dict:
@@ -197,8 +240,10 @@ def main() -> int:
         errors.append(f"defined in the compiled core but not declared in phonon.h: {name}")
 
     # Full ABI signature comparison: name-set equality is not enough; a changed
-    # return or parameter type is an ABI break the linker will not catch (C symbols).
-    for name, _ret, _body, def_sig in core_defs:
+    # return or parameter type is an ABI break the linker will not catch (C
+    # symbols). The fallback stub is compared too — it must present the same ABI
+    # as the declaration in non-core builds.
+    for name, _ret, _body, def_sig in core_defs + fallback_stub_defs:
         if name in decls and decls[name][1] != def_sig:
             errors.append(f"{name}: definition signature does not match declaration:\n    decl: {decls[name][1]}\n    def:  {def_sig}")
 
