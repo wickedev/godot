@@ -112,7 +112,12 @@ TEST_CASE("[Logger][RotatedFileLogger] Rotates logs files") {
 
 	Vector<String> log_files;
 	get_log_files(log_files);
-	CHECK_MESSAGE(log_files.size() == number_of_files, "Did not rotate all files");
+	// REQUIRE, not CHECK: the loop below indexes all_waiting_for_godot by the
+	// log-file index, so a directory holding MORE files than this test wrote
+	// runs off the end of that array and segfaults. That happens whenever a
+	// stale log survives from an earlier run, and deterministically when two
+	// test binaries run at once -- user://logs is a fixed shared path.
+	REQUIRE_MESSAGE(log_files.size() == number_of_files, "Did not rotate all files");
 
 	for (int i = 0; i < log_files.size(); i++) {
 		Error err = Error::OK;
@@ -133,7 +138,9 @@ TEST_CASE("[Logger][RotatedFileLogger] Rotates logs files") {
 
 	log_files.clear();
 	get_log_files(log_files);
-	CHECK_MESSAGE(log_files.size() == number_of_files, "Did not remove old log file");
+	// REQUIRE for the same reason as above: the loop indexes
+	// all_waiting_for_godot by the log-file index.
+	REQUIRE_MESSAGE(log_files.size() == number_of_files, "Did not remove old log file");
 
 	for (int i = 0; i < log_files.size(); i++) {
 		Error err = Error::OK;
