@@ -30,6 +30,8 @@
 
 #include "nanite_dag_builder.h"
 
+#include "core/math/face3.h"
+#include "core/templates/hash_set.h"
 #include "scene/resources/mesh.h"
 
 #include <thirdparty/meshoptimizer/meshoptimizer.h>
@@ -93,6 +95,67 @@ NaniteDAG::Sphere enclose_spheres(const LocalVector<NaniteDAG::Sphere> &p_sphere
 	sphere.center = center;
 	sphere.radius = radius;
 	return sphere;
+}
+
+// How far the surface actually moved, measured in geometry alone.
+//
+// meshoptimizer's reported error cannot answer this. With attribute weights it
+// returns a combined position-and-attribute quadric (`simplifier.cpp` keeps the
+// positional part in `vertex_error` and returns the combined `result_error`),
+// so a crease whose normals swing hard reads as a large distance even when the
+// surface barely moved. That value is right for ordering collapses and wrong
+// for projecting to screen space, which is what the LOD cut and the GBuffer
+// contract's motion residual bound both do with it.
+//
+// Simplification only removes vertices, so survivors lie exactly on the result
+// and only the removed ones can have moved away from it.
+float measure_geometric_deviation(const float *p_positions, const LocalVector<uint32_t> &p_before,
+		const uint32_t *p_after, size_t p_after_count) {
+	HashSet<uint32_t> survivors;
+	for (size_t i = 0; i < p_after_count; i++) {
+		survivors.insert(p_after[i]);
+	}
+
+	// Per-triangle bounding spheres, so most triangles can be rejected without
+	// a point-triangle test.
+	const size_t triangle_count = p_after_count / 3;
+	LocalVector<Vector3> centroids;
+	LocalVector<float> radii;
+	centroids.resize(triangle_count);
+	radii.resize(triangle_count);
+	for (size_t t = 0; t < triangle_count; t++) {
+		const Vector3 a = get_position(p_positions, p_after[t * 3 + 0]);
+		const Vector3 b = get_position(p_positions, p_after[t * 3 + 1]);
+		const Vector3 c = get_position(p_positions, p_after[t * 3 + 2]);
+		centroids[t] = (a + b + c) / 3.0f;
+		radii[t] = MAX(MAX((float)centroids[t].distance_to(a), (float)centroids[t].distance_to(b)),
+				(float)centroids[t].distance_to(c));
+	}
+
+	HashSet<uint32_t> measured;
+	float worst = 0.0f;
+	for (const uint32_t vertex : p_before) {
+		if (survivors.has(vertex) || measured.has(vertex)) {
+			continue;
+		}
+		measured.insert(vertex);
+
+		const Vector3 point = get_position(p_positions, vertex);
+		float nearest = FLT_MAX;
+		for (size_t t = 0; t < triangle_count; t++) {
+			if ((float)point.distance_to(centroids[t]) - radii[t] >= nearest) {
+				continue;
+			}
+			const Face3 face(get_position(p_positions, p_after[t * 3 + 0]),
+					get_position(p_positions, p_after[t * 3 + 1]),
+					get_position(p_positions, p_after[t * 3 + 2]));
+			nearest = MIN(nearest, (float)point.distance_to(face.get_closest_point_to(point)));
+		}
+		if (nearest != FLT_MAX) {
+			worst = MAX(worst, nearest);
+		}
+	}
+	return worst;
 }
 
 struct BuildContext {
@@ -205,8 +268,37 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 	if (p_settings.group_size < 2) {
 		FAIL("group_size must be at least 2.");
 	}
-	if (p_settings.simplify_ratio <= 0.0f || p_settings.simplify_ratio >= 1.0f) {
-		FAIL("simplify_ratio must be in (0, 1).");
+	// Range tests alone would let NaN through, since every comparison against
+	// it is false.
+	if (!Math::is_finite(p_settings.simplify_ratio) || p_settings.simplify_ratio <= 0.0f || p_settings.simplify_ratio >= 1.0f) {
+		FAIL("simplify_ratio must be a finite value in (0, 1).");
+	}
+	if (!Math::is_finite(p_settings.min_progress_ratio) || p_settings.min_progress_ratio <= 0.0f || p_settings.min_progress_ratio > 1.0f) {
+		FAIL("min_progress_ratio must be a finite value in (0, 1].");
+	}
+	if (!Math::is_finite(p_settings.cone_weight) || p_settings.cone_weight < 0.0f || p_settings.cone_weight > 1.0f) {
+		FAIL("cone_weight must be a finite value in [0, 1].");
+	}
+	if (!Math::is_finite(p_settings.normal_weight) || p_settings.normal_weight < 0.0f ||
+			!Math::is_finite(p_settings.uv_weight) || p_settings.uv_weight < 0.0f) {
+		FAIL("attribute weights must be finite and non-negative.");
+	}
+	for (uint32_t i = 0; i < p_attribute_count; i++) {
+		if (!Math::is_finite(p_attribute_weights[i]) || p_attribute_weights[i] < 0.0f) {
+			FAIL("attribute weights must be finite and non-negative.");
+		}
+	}
+	// A single NaN position propagates into every bound and error in the DAG,
+	// and meshoptimizer's behavior on one is undefined.
+	for (uint32_t i = 0; i < p_positions.size(); i++) {
+		if (!Math::is_finite(p_positions[i])) {
+			FAIL("position buffer contains a non-finite value.");
+		}
+	}
+	for (uint32_t i = 0; i < p_attributes.size(); i++) {
+		if (!Math::is_finite(p_attributes[i])) {
+			FAIL("attribute buffer contains a non-finite value.");
+		}
 	}
 	for (uint32_t index : p_indices) {
 		if (index >= p_vertex_count) {
@@ -381,15 +473,21 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 			// The bound is physical rather than tuned: a simplification cannot
 			// displace the surface further than the extent of the geometry it
 			// was given.
+			// `simplify_error` ordered the collapses; it is not a distance, so
+			// it stops here. What the DAG stores is measured.
+			const float step_error = simplified_count >= 3
+					? measure_geometric_deviation(ctx.positions, merged, simplified.ptr(), simplified_count)
+					: 0.0f;
+
 			const uint32_t progress_ceiling = (uint32_t)(merged.size() * MIN(p_settings.min_progress_ratio, 1.0f));
 			const NaniteDAG::Sphere merged_bounds = sphere_from_indices(ctx.positions, merged.ptr(), merged.size());
 			const bool stalled = simplified_count < 3 || simplified_count > progress_ceiling;
-			const bool error_is_not_a_distance = !(simplify_error <= 2.0f * merged_bounds.radius);
+			const bool error_is_not_a_distance = !(step_error <= 2.0f * merged_bounds.radius);
 
 			if (stalled || error_is_not_a_distance) {
 				if (error_is_not_a_distance && !stalled) {
-					WARN_PRINT(vformat("Nanite: discarding a simplification of %d triangles that reported a non-geometric error of %f against an extent of %f. The group's clusters stay DAG roots.",
-							merged.size() / 3, simplify_error, 2.0f * merged_bounds.radius));
+					WARN_PRINT(vformat("Nanite: discarding a simplification of %d triangles whose measured deviation %f exceeds its own extent %f. The group's clusters stay DAG roots.",
+							merged.size() / 3, step_error, 2.0f * merged_bounds.radius));
 				}
 				// Whatever the reason, these clusters are now permanent roots, so
 				// their geometry -- and therefore every seam they share with the
@@ -407,8 +505,8 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 			NaniteDAG::Group group;
 			group.level = level;
 			// Monotonic by construction: a group's error is its worst child's
-			// error plus what this simplification added.
-			group.error = max_child_error + MAX(simplify_error, 0.0f);
+			// error plus the distance this simplification moved the surface.
+			group.error = max_child_error + MAX(step_error, 0.0f);
 			group.lod_bounds = enclose_spheres(child_bounds);
 			group.children = group_members;
 
@@ -538,7 +636,7 @@ Ref<NaniteDAG> NaniteDAGBuilder::build_from_surface(const Array &p_arrays, const
 	LocalVector<uint32_t> indices;
 	const PackedInt32Array source_indices = p_arrays[Mesh::ARRAY_INDEX];
 	if (source_indices.is_empty()) {
-		// Unindexed surfaces are a valid import product; synthesise the
+		// Unindexed surfaces are a valid import product; synthesize the
 		// trivial index buffer rather than rejecting them.
 		indices.resize(vertex_count);
 		for (uint32_t i = 0; i < vertex_count; i++) {

@@ -60,7 +60,7 @@ public:
 		float normal_weight = 0.5f;
 		float uv_weight = 0.25f;
 
-		// Optimise cluster subdivision for raytracing (meshopt_buildMeshletsSpatial).
+		// Optimize cluster subdivision for raytracing (meshopt_buildMeshletsSpatial).
 		// Relevant to the BLAS convergence point, off until that is scoped.
 		bool spatial_clustering = false;
 

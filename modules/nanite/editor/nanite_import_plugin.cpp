@@ -77,6 +77,17 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 		return;
 	}
 
+	// Drop anything a previous import left behind before deciding whether to
+	// build again. Otherwise turning the option off, or a surface that now
+	// fails to build, silently keeps serving the old DAG.
+	List<StringName> existing_meta;
+	mesh->get_meta_list(&existing_meta);
+	for (const StringName &key : existing_meta) {
+		if (String(key).begins_with(METADATA_PREFIX)) {
+			mesh->remove_meta(key);
+		}
+	}
+
 	NaniteDAGBuilder::Settings settings;
 	if (p_options.has("nanite/max_cluster_triangles")) {
 		settings.max_cluster_triangles = (uint32_t)(int)p_options["nanite/max_cluster_triangles"];
@@ -105,6 +116,17 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 	// With several surfaces the open border of each one is a seam shared with
 	// another surface that simplifies independently.
 	settings.lock_mesh_border = mesh->get_surface_count() > 1;
+
+	// This hook is the only one the scene importer offers for a mesh, and it
+	// runs before generate_lods, create_shadow_mesh, optimize_indices and any
+	// lightmap unwrap. The DAG is therefore a self-contained snapshot of the
+	// surface as it stands here: it carries its own positions and indices and
+	// does not reference the ArrayMesh that those later steps go on to reorder.
+	// Lightmap unwrapping is the one that actually diverges, since it splits
+	// vertices and adds UV2 the snapshot will not have.
+	if (p_options.has("generate/lightmap_uv") && (int)p_options["generate/lightmap_uv"] == 1) {
+		WARN_PRINT(vformat("Nanite: '%s' has lightmap unwrapping enabled. The DAG is built before unwrapping, so it does not carry UV2 and its vertex layout differs from the saved mesh.", mesh_name));
+	}
 
 	for (int surface = 0; surface < mesh->get_surface_count(); surface++) {
 		if (mesh->get_surface_primitive_type(surface) != Mesh::PRIMITIVE_TRIANGLES) {

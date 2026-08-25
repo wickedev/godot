@@ -96,6 +96,7 @@
 			<return type="Dictionary" />
 			<description>
 				Returns the same figures as [method get_report] as a [Dictionary], for programmatic use.
+				Keys are [code]level_count[/code], [code]cluster_count[/code], [code]group_count[/code], [code]triangle_count[/code], [code]vertex_count[/code], and [code]levels[/code] - an [Array] with one [Dictionary] per level holding [code]clusters[/code], [code]triangles[/code] and [code]max_error[/code].
 			</description>
 		</method>
 		<method name="get_triangle_count" qualifiers="const">

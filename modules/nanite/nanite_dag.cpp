@@ -139,6 +139,10 @@ float NaniteDAG::_compute_epsilon() const {
 
 Vector<String> NaniteDAG::validate() const {
 	Vector<String> errors;
+	if (!load_error.is_empty()) {
+		errors.push_back(load_error);
+		return errors;
+	}
 	const float epsilon = _compute_epsilon();
 
 	if (level_offsets.is_empty() || level_offsets[level_offsets.size() - 1] != clusters.size()) {
@@ -452,6 +456,18 @@ struct Reader {
 	int64_t offset = 0;
 	bool overrun = false;
 
+	// A count read from the payload is used to size an allocation, so it has
+	// to be checked against what is actually left rather than trusted. A
+	// truncated or hostile blob would otherwise ask for gigabytes.
+	uint32_t count(size_t p_element_bytes) {
+		const uint32_t value = u32();
+		if (overrun || (uint64_t)value * p_element_bytes > (uint64_t)(size - offset)) {
+			overrun = true;
+			return 0;
+		}
+		return value;
+	}
+
 	uint32_t u32() {
 		if (offset + 4 > size) {
 			overrun = true;
@@ -551,25 +567,28 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 	reader.size = p_data.size();
 
 	const uint32_t version = reader.u32();
-	ERR_FAIL_COND_V_MSG(version != FORMAT_VERSION, false,
-			vformat("NaniteDAG was saved with format version %d but this build reads version %d. Reimport the source mesh.", version, FORMAT_VERSION));
+	if (version != FORMAT_VERSION) {
+		load_error = vformat("NaniteDAG was saved with format version %d but this build reads version %d. Reimport the source mesh.", version, FORMAT_VERSION);
+		ERR_FAIL_V_MSG(false, load_error);
+	}
 
 	vertex_count = reader.u32();
 
-	positions.resize(reader.u32());
+	positions.resize(reader.count(sizeof(float)));
 	for (uint32_t i = 0; i < positions.size(); i++) {
 		positions[i] = reader.f32();
 	}
-	indices.resize(reader.u32());
+	indices.resize(reader.count(sizeof(uint32_t)));
 	for (uint32_t i = 0; i < indices.size(); i++) {
 		indices[i] = reader.u32();
 	}
-	level_offsets.resize(reader.u32());
+	level_offsets.resize(reader.count(sizeof(uint32_t)));
 	for (uint32_t i = 0; i < level_offsets.size(); i++) {
 		level_offsets[i] = reader.u32();
 	}
 
-	clusters.resize(reader.u32());
+	// 15 words per cluster; see the writer.
+	clusters.resize(reader.count(sizeof(uint32_t) * 15));
 	for (uint32_t i = 0; i < clusters.size(); i++) {
 		Cluster &cluster = clusters[i];
 		cluster.index_offset = reader.u32();
@@ -584,17 +603,18 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 		cluster.bounds = reader.sphere();
 	}
 
-	groups.resize(reader.u32());
+	// A group is at least 8 words, so that is the floor for the count check.
+	groups.resize(reader.count(sizeof(uint32_t) * 8));
 	for (uint32_t i = 0; i < groups.size(); i++) {
 		Group &group = groups[i];
 		group.level = reader.u32();
 		group.error = reader.f32();
 		group.lod_bounds = reader.sphere();
-		group.children.resize(reader.u32());
+		group.children.resize(reader.count(sizeof(uint32_t)));
 		for (uint32_t k = 0; k < group.children.size(); k++) {
 			group.children[k] = reader.u32();
 		}
-		group.produced.resize(reader.u32());
+		group.produced.resize(reader.count(sizeof(uint32_t)));
 		for (uint32_t k = 0; k < group.produced.size(); k++) {
 			group.produced[k] = reader.u32();
 		}
@@ -603,19 +623,38 @@ bool NaniteDAG::_deserialize(const PackedByteArray &p_data) {
 		}
 	}
 
-	ERR_FAIL_COND_V_MSG(reader.overrun, false, "NaniteDAG data is truncated.");
+	if (reader.overrun) {
+		load_error = "NaniteDAG data is truncated or malformed.";
+		ERR_FAIL_V_MSG(false, load_error);
+	}
 	return true;
 }
 
 bool NaniteDAG::_set(const StringName &p_name, const Variant &p_value) {
 	if (p_name == SNAME("data")) {
-		return _deserialize(p_value);
+		load_error = String();
+		if (!_deserialize(p_value)) {
+			// Leave nothing behind that could be mistaken for real geometry.
+			positions.clear();
+			indices.clear();
+			clusters.clear();
+			groups.clear();
+			level_offsets.clear();
+			vertex_count = 0;
+		}
+		// True either way: ResourceLoader discards a false return, so refusing
+		// here would change nothing. load_error is what carries the failure.
+		return true;
 	}
 	return false;
 }
 
 bool NaniteDAG::_get(const StringName &p_name, Variant &r_ret) const {
 	if (p_name == SNAME("data")) {
+		// Serializes afresh on every read. That is a full copy of the DAG, but
+		// the property exists for saving and inspection rather than for any hot
+		// path, and caching it would mean tracking every mutation to know when
+		// the cache went stale.
 		r_ret = _serialize();
 		return true;
 	}

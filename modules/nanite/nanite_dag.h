@@ -174,6 +174,12 @@ protected:
 	PackedByteArray _serialize() const;
 	bool _deserialize(const PackedByteArray &p_data);
 
+	// Set when loading failed. ResourceLoader ignores a false return from
+	// _set(), so a rejected payload would otherwise surface as a perfectly
+	// valid resource that happens to contain nothing. validate() reports this
+	// so the failure cannot be mistaken for an empty mesh.
+	String load_error;
+
 private:
 	float _compute_epsilon() const;
 	Ref<ArrayMesh> _create_debug_mesh(const LocalVector<uint32_t> &p_clusters) const;

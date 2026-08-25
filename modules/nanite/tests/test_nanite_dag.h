@@ -33,9 +33,12 @@
 #include "../nanite_dag.h"
 #include "../nanite_dag_builder.h"
 
+#include "core/io/resource_loader.h"
+#include "core/io/resource_saver.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
 #include "tests/test_macros.h"
+#include "tests/test_utils.h"
 
 namespace TestNaniteDAG {
 
@@ -240,6 +243,15 @@ inline LocalVector<uint32_t> weld_by_position(const NaniteDAG &p_dag) {
 		weld[keys[i].index] = canonical;
 	}
 	return weld;
+}
+
+// PackedByteArray's script-side encode_u32 is not on the C++ Vector<uint8_t>.
+inline void poke_u32(PackedByteArray &r_data, int p_offset, uint32_t p_value) {
+	uint8_t *w = r_data.ptrw();
+	w[p_offset + 0] = (uint8_t)(p_value & 0xFF);
+	w[p_offset + 1] = (uint8_t)((p_value >> 8) & 0xFF);
+	w[p_offset + 2] = (uint8_t)((p_value >> 16) & 0xFF);
+	w[p_offset + 3] = (uint8_t)((p_value >> 24) & 0xFF);
 }
 
 inline Ref<NaniteDAG> build_test_dag(const TestMesh &p_mesh, const NaniteDAGBuilder::Settings &p_settings) {
@@ -628,6 +640,174 @@ TEST_CASE("[Nanite] Every cut of a closed mesh is watertight") {
 		CHECK_MESSAGE(open_edges == 0,
 				vformat("Cut at threshold %f has %d edges not shared by exactly two triangles, out of %d edges across %d clusters.",
 						threshold, open_edges, edge_use.size(), cut.size()));
+	}
+}
+
+TEST_CASE("[Nanite] DAG survives a real save and load") {
+	// The in-memory property round-trip is not the same thing as going through
+	// ResourceSaver and ResourceLoader, which is how a DAG actually reaches a
+	// later session.
+	const TestMesh mesh = make_displaced_grid(32);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> original = build_test_dag(mesh, settings);
+	REQUIRE(original.is_valid());
+
+	const String path = TestUtils::get_temp_path("nanite_dag_roundtrip.res");
+	REQUIRE(ResourceSaver::save(original, path) == OK);
+
+	const Ref<NaniteDAG> loaded = ResourceLoader::load(path, "", ResourceFormatLoader::CACHE_MODE_IGNORE);
+	REQUIRE(loaded.is_valid());
+	CHECK(loaded->validate().is_empty());
+	CHECK(loaded->get_cluster_count() == original->get_cluster_count());
+	CHECK(loaded->get_group_count() == original->get_group_count());
+	CHECK(loaded->get_level_count() == original->get_level_count());
+	CHECK(loaded->get_triangle_count() == original->get_triangle_count());
+	CHECK(loaded->select_cut(0.0f).size() == original->select_cut(0.0f).size());
+
+	for (uint32_t i = 0; i < original->get_cluster_count(); i++) {
+		CHECK(loaded->clusters[i].error == original->clusters[i].error);
+		CHECK(Math::is_inf(loaded->clusters[i].parent_error) == Math::is_inf(original->clusters[i].parent_error));
+	}
+}
+
+TEST_CASE("[Nanite] A payload that cannot be read is not mistaken for an empty DAG") {
+	const TestMesh mesh = make_displaced_grid(16);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> original = build_test_dag(mesh, settings);
+	REQUIRE(original.is_valid());
+	const PackedByteArray good = original->get("data");
+	REQUIRE(good.size() > 64);
+
+	ERR_PRINT_OFF;
+
+	SUBCASE("a newer format version") {
+		// ResourceLoader discards a false return from _set(), so refusing the
+		// payload cannot stop the load. The resource has to carry the failure
+		// itself or it looks like a mesh that simply has no clusters.
+		PackedByteArray future = good.duplicate();
+		poke_u32(future, 0, NaniteDAG::FORMAT_VERSION + 1);
+
+		Ref<NaniteDAG> dag;
+		dag.instantiate();
+		dag->set("data", future);
+		CHECK(dag->get_cluster_count() == 0);
+		CHECK_MESSAGE(!dag->validate().is_empty(), "A version mismatch must be reported, not silently yield an empty DAG.");
+	}
+
+	SUBCASE("a truncated payload") {
+		PackedByteArray truncated = good.duplicate();
+		truncated.resize(good.size() / 3);
+
+		Ref<NaniteDAG> dag;
+		dag.instantiate();
+		dag->set("data", truncated);
+		CHECK(!dag->validate().is_empty());
+	}
+
+	SUBCASE("a count larger than the payload") {
+		// The position count sits right after version and vertex count. Sizing
+		// an allocation from it unchecked is how a small file asks for
+		// gigabytes of memory.
+		PackedByteArray hostile = good.duplicate();
+		poke_u32(hostile, 8, 0xFFFFFF00);
+
+		Ref<NaniteDAG> dag;
+		dag.instantiate();
+		dag->set("data", hostile);
+		CHECK(dag->get_cluster_count() == 0);
+		CHECK(!dag->validate().is_empty());
+	}
+
+	ERR_PRINT_ON;
+}
+
+TEST_CASE("[Nanite] Cuts stay watertight across a surface boundary") {
+	// Surfaces simplify independently, so the seam between two of them is not
+	// a group boundary and nothing inside one surface knows the other exists.
+	// Locking each surface's open border is what holds them together.
+	const TestMesh sphere = make_closed_sphere(64, 32);
+
+	// Split the sphere into two surfaces at the equator, sharing that ring.
+	const uint32_t stride = 65;
+	TestMesh top = sphere;
+	TestMesh bottom = sphere;
+	top.indices.clear();
+	bottom.indices.clear();
+	for (uint32_t t = 0; t < sphere.indices.size(); t += 3) {
+		const uint32_t ring = sphere.indices[t] / stride;
+		LocalVector<uint32_t> &target = ring < 16 ? top.indices : bottom.indices;
+		for (uint32_t e = 0; e < 3; e++) {
+			target.push_back(sphere.indices[t + e]);
+		}
+	}
+	REQUIRE(!top.indices.is_empty());
+	REQUIRE(!bottom.indices.is_empty());
+
+	NaniteDAGBuilder::Settings settings;
+	settings.lock_mesh_border = true;
+
+	ERR_PRINT_OFF;
+	const Ref<NaniteDAG> top_dag = build_test_dag(top, settings);
+	const Ref<NaniteDAG> bottom_dag = build_test_dag(bottom, settings);
+	ERR_PRINT_ON;
+	REQUIRE(top_dag.is_valid());
+	REQUIRE(bottom_dag.is_valid());
+
+	const LocalVector<uint32_t> weld = weld_by_position(**top_dag);
+	const float top_error = MAX(top_dag->get_level_max_error(top_dag->get_level_count() - 1),
+			bottom_dag->get_level_max_error(bottom_dag->get_level_count() - 1));
+	const float thresholds[] = { 0.0f, top_error * 0.25f, top_error * 0.5f, top_error, top_error * 4.0f };
+
+	for (const float threshold : thresholds) {
+		HashMap<uint64_t, uint32_t> edge_use;
+		const Ref<NaniteDAG> parts[2] = { top_dag, bottom_dag };
+		for (const Ref<NaniteDAG> &part : parts) {
+			for (const uint32_t cluster_id : part->select_cut(threshold)) {
+				const NaniteDAG::Cluster &cluster = part->clusters[cluster_id];
+				for (uint32_t t = 0; t < cluster.index_count; t += 3) {
+					for (uint32_t e = 0; e < 3; e++) {
+						const uint32_t a = weld[part->indices[cluster.index_offset + t + e]];
+						const uint32_t b = weld[part->indices[cluster.index_offset + t + (e + 1) % 3]];
+						if (a == b) {
+							continue;
+						}
+						const uint64_t key = ((uint64_t)MIN(a, b) << 32) | (uint64_t)MAX(a, b);
+						edge_use[key] = edge_use.has(key) ? edge_use[key] + 1 : 1;
+					}
+				}
+			}
+		}
+		// A hole and a doubled sheet are different faults and only the first is
+		// a crack. Measured on this fixture, the two halves keep every one of
+		// the 64 shared equator edges at every threshold, so there are no
+		// holes; but at the coarsest levels each half flattens onto that locked
+		// boundary plane, which leaves a few edges carrying two sheets. That is
+		// inherent to simplifying surfaces independently -- which is forced,
+		// since a surface is a material -- so it is measured, not forbidden.
+		uint32_t holes = 0;
+		uint32_t doubled = 0;
+		for (const KeyValue<uint64_t, uint32_t> &edge : edge_use) {
+			if (edge.value == 1) {
+				holes++;
+			} else if (edge.value > 2) {
+				doubled++;
+			}
+		}
+		CHECK_MESSAGE(holes == 0,
+				vformat("Two-surface cut at threshold %f has %d edges belonging to a single triangle, so the surfaces have torn apart.", threshold, holes));
+
+		// Whatever is doubled must sit on the shared border. Anywhere else
+		// would mean a surface folded onto itself away from the seam.
+		for (const KeyValue<uint64_t, uint32_t> &edge : edge_use) {
+			if (edge.value <= 2) {
+				continue;
+			}
+			const uint32_t a = (uint32_t)(edge.key >> 32);
+			const uint32_t b = (uint32_t)(edge.key & 0xFFFFFFFF);
+			const bool on_seam = Math::abs(top_dag->positions[a * 3 + 1]) < 1e-4f &&
+					Math::abs(top_dag->positions[b * 3 + 1]) < 1e-4f;
+			CHECK_MESSAGE(on_seam, "A doubled edge sits away from the shared border, so a surface has folded onto itself.");
+		}
 	}
 }
 
