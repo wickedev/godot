@@ -1869,39 +1869,54 @@ void ParticlesStorage::particles_collision_free(RID p_rid) {
 	particles_collision_owner.free(p_rid);
 }
 
+void ParticlesStorage::_particles_collision_ensure_height_field(ParticlesCollision *p_particles_collision) const {
+	if (p_particles_collision->heightfield_texture != RID()) {
+		return;
+	}
+
+	const int resolutions[RSE::PARTICLES_COLLISION_HEIGHTFIELD_RESOLUTION_MAX] = { 256, 512, 1024, 2048, 4096, 8192 };
+	Size2i size;
+	if (p_particles_collision->extents.x > p_particles_collision->extents.z) {
+		size.x = resolutions[p_particles_collision->heightfield_resolution];
+		size.y = int32_t(p_particles_collision->extents.z / p_particles_collision->extents.x * size.x);
+	} else {
+		size.y = resolutions[p_particles_collision->heightfield_resolution];
+		size.x = int32_t(p_particles_collision->extents.x / p_particles_collision->extents.z * size.y);
+	}
+
+	RD::TextureFormat tf;
+	tf.format = RD::DATA_FORMAT_D32_SFLOAT;
+	tf.width = size.x;
+	tf.height = size.y;
+	tf.texture_type = RD::TEXTURE_TYPE_2D;
+	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+	p_particles_collision->heightfield_texture = RD::get_singleton()->texture_create(tf, RD::TextureView());
+
+	Vector<RID> fb_tex;
+	fb_tex.push_back(p_particles_collision->heightfield_texture);
+	p_particles_collision->heightfield_fb = RD::get_singleton()->framebuffer_create(fb_tex);
+	p_particles_collision->heightfield_fb_size = size;
+}
+
 RID ParticlesStorage::particles_collision_get_heightfield_framebuffer(RID p_particles_collision) const {
 	ParticlesCollision *particles_collision = particles_collision_owner.get_or_null(p_particles_collision);
 	ERR_FAIL_NULL_V(particles_collision, RID());
 	ERR_FAIL_COND_V(particles_collision->type != RSE::PARTICLES_COLLISION_TYPE_HEIGHTFIELD_COLLIDE, RID());
 
-	if (particles_collision->heightfield_texture == RID()) {
-		//create
-		const int resolutions[RSE::PARTICLES_COLLISION_HEIGHTFIELD_RESOLUTION_MAX] = { 256, 512, 1024, 2048, 4096, 8192 };
-		Size2i size;
-		if (particles_collision->extents.x > particles_collision->extents.z) {
-			size.x = resolutions[particles_collision->heightfield_resolution];
-			size.y = int32_t(particles_collision->extents.z / particles_collision->extents.x * size.x);
-		} else {
-			size.y = resolutions[particles_collision->heightfield_resolution];
-			size.x = int32_t(particles_collision->extents.x / particles_collision->extents.z * size.y);
-		}
-
-		RD::TextureFormat tf;
-		tf.format = RD::DATA_FORMAT_D32_SFLOAT;
-		tf.width = size.x;
-		tf.height = size.y;
-		tf.texture_type = RD::TEXTURE_TYPE_2D;
-		tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-
-		particles_collision->heightfield_texture = RD::get_singleton()->texture_create(tf, RD::TextureView());
-
-		Vector<RID> fb_tex;
-		fb_tex.push_back(particles_collision->heightfield_texture);
-		particles_collision->heightfield_fb = RD::get_singleton()->framebuffer_create(fb_tex);
-		particles_collision->heightfield_fb_size = size;
-	}
+	_particles_collision_ensure_height_field(particles_collision);
 
 	return particles_collision->heightfield_fb;
+}
+
+RID ParticlesStorage::particles_collision_get_height_field_texture(RID p_particles_collision) const {
+	ParticlesCollision *particles_collision = particles_collision_owner.get_or_null(p_particles_collision);
+	ERR_FAIL_NULL_V(particles_collision, RID());
+	ERR_FAIL_COND_V(particles_collision->type != RSE::PARTICLES_COLLISION_TYPE_HEIGHTFIELD_COLLIDE, RID());
+
+	_particles_collision_ensure_height_field(particles_collision);
+
+	return particles_collision->heightfield_texture;
 }
 
 void ParticlesStorage::particles_collision_set_collision_type(RID p_particles_collision, RSE::ParticlesCollisionType p_type) {

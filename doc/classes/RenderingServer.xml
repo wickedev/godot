@@ -3028,6 +3028,14 @@
 				[b]Note:[/b] The equivalent nodes are [GPUParticlesCollision3D] and [GPUParticlesAttractor3D].
 			</description>
 		</method>
+		<method name="particles_collision_get_height_field_texture" qualifiers="const">
+			<return type="RID" />
+			<param index="0" name="particles_collision" type="RID" />
+			<description>
+				Returns the [RenderingDevice] [RID] of the depth texture a height field particle collider renders into, allocating it on first use. Wrap it in a [Texture2DRD] to sample the height field from a shader, which makes the engine's existing top-down depth pass reusable for effects such as rain occlusion, foliage bending and wetness masks at no additional render cost.
+				The collider must be of type [constant PARTICLES_COLLISION_TYPE_HEIGHTFIELD_COLLIDE]; otherwise an empty [RID] is returned. Returns an empty [RID] on the OpenGL renderer, which stores the height field outside of the [RenderingDevice].
+			</description>
+		</method>
 		<method name="particles_collision_height_field_update">
 			<return type="void" />
 			<param index="0" name="particles_collision" type="RID" />

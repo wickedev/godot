@@ -429,6 +429,10 @@ private:
 		bool active = false;
 	};
 
+	// Allocates the heightfield texture and its framebuffer on first use. Both the framebuffer and
+	// the texture getter go through this, so neither has to be called before the other.
+	void _particles_collision_ensure_height_field(ParticlesCollision *p_particles_collision) const;
+
 	mutable RID_Owner<ParticlesCollision, true> particles_collision_owner;
 
 	mutable RID_Owner<ParticlesCollisionInstance> particles_collision_instance_owner;
@@ -598,6 +602,7 @@ public:
 	Vector3 particles_collision_get_extents(RID p_particles_collision) const;
 	virtual bool particles_collision_is_heightfield(RID p_particles_collision) const override;
 	RID particles_collision_get_heightfield_framebuffer(RID p_particles_collision) const;
+	virtual RID particles_collision_get_height_field_texture(RID p_particles_collision) const override;
 	virtual uint32_t particles_collision_get_height_field_mask(RID p_particles_collision) const override;
 	virtual void particles_collision_set_height_field_mask(RID p_particles_collision, uint32_t p_heightfield_mask) override;
 	virtual uint32_t particles_collision_get_cull_mask(RID p_particles_collision) const override;

@@ -1477,6 +1477,13 @@ bool ParticlesStorage::particles_collision_is_heightfield(RID p_particles_collis
 	return particles_collision->type == RSE::PARTICLES_COLLISION_TYPE_HEIGHTFIELD_COLLIDE;
 }
 
+RID ParticlesStorage::particles_collision_get_height_field_texture(RID p_particles_collision) const {
+	// The GL backend keeps the height field as a raw GL texture name rather than a RenderingDevice
+	// resource, so there is no RID to hand out. Callers that need to sample it must use the
+	// RenderingDevice renderer.
+	return RID();
+}
+
 uint32_t ParticlesStorage::particles_collision_get_height_field_mask(RID p_particles_collision) const {
 	const ParticlesCollision *particles_collision = particles_collision_owner.get_or_null(p_particles_collision);
 	ERR_FAIL_NULL_V(particles_collision, false);

@@ -505,6 +505,7 @@ public:
 
 	virtual void particles_collision_set_height_field_resolution(RID p_particles_collision, RSE::ParticlesCollisionHeightfieldResolution p_resolution) = 0; // For SDF and vector field.
 	virtual void particles_collision_set_height_field_mask(RID p_particles_collision, uint32_t p_heightfield_mask) = 0;
+	virtual RID particles_collision_get_height_field_texture(RID p_particles_collision) const = 0;
 
 	/* FOG VOLUME API */
 

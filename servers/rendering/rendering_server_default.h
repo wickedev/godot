@@ -678,6 +678,7 @@ public:
 	FUNC2(particles_collision_set_field_texture, RID, RID)
 	FUNC1(particles_collision_height_field_update, RID)
 	FUNC2(particles_collision_set_height_field_mask, RID, uint32_t)
+	FUNC1RC(RID, particles_collision_get_height_field_texture, RID)
 	FUNC2(particles_collision_set_height_field_resolution, RID, RSE::ParticlesCollisionHeightfieldResolution)
 
 	/* FOG VOLUME */

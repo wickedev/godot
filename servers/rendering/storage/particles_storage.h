@@ -132,6 +132,7 @@ public:
 	virtual AABB particles_collision_get_aabb(RID p_particles_collision) const = 0;
 	virtual bool particles_collision_is_heightfield(RID p_particles_collision) const = 0;
 	virtual uint32_t particles_collision_get_height_field_mask(RID p_particles_collision) const = 0;
+	virtual RID particles_collision_get_height_field_texture(RID p_particles_collision) const = 0;
 	virtual void particles_collision_set_height_field_mask(RID p_particles_collision, uint32_t p_heightfield_mask) = 0;
 	virtual uint32_t particles_collision_get_cull_mask(RID p_particles_collision) const = 0;
 
