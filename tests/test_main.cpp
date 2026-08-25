@@ -94,13 +94,18 @@ int test_main(int argc, char *argv[]) {
 
 	WorkerThreadPool::get_singleton()->init();
 
-	// Acquire this run's unique, validated temp root before anything can fail,
-	// and remove it on every exit path — the custom test command branch below
-	// returns early and must not leak the root either. There is deliberately no
-	// automatic reclamation of other runs' leftovers here: proving another run
-	// dead requires an owner-aware janitor (locks/leases), and age or PID
-	// heuristics can delete a live run's state or follow a symlinked root into
-	// foreign directories. A crashed run therefore leaks one directory.
+	// Acquire this run's unique, validated temp root before anything can fail.
+	// There is deliberately NO recursive cleanup anywhere: path-based recursive
+	// deletion cannot be made safe against a concurrent symlink/junction swap of
+	// the root (or any subdirectory) without no-follow handle-relative deletion
+	// primitives, which DirAccess does not provide. Every run that created files
+	// therefore leaks its unique root; reclamation is left to an owner-aware
+	// janitor outside this binary (CI reclaims via workspace disposal). The
+	// destructor below only attempts a single non-recursive removal, which
+	// succeeds solely for a run that created no files — rmdir/RemoveDirectory
+	// do not follow symlinks into their targets, so no foreign path can be
+	// affected. The early-returning custom test command branch below is covered
+	// by the same guard.
 	const String temp_root = TestUtils::get_temp_path(""); // CRASH_COND inside on failure.
 	struct TempRootCleanup {
 		// Captured once, validated; never re-derived at destruction time.
@@ -109,10 +114,7 @@ int test_main(int argc, char *argv[]) {
 			if (root.is_empty() || !root.is_absolute_path()) {
 				return;
 			}
-			Ref<DirAccess> da = DirAccess::open(root);
-			if (da.is_valid() && !da->is_link(root) && da->erase_contents_recursive() == OK) {
-				DirAccess::remove_absolute(root);
-			}
+			DirAccess::remove_absolute(root); // Non-recursive; fails (harmlessly) unless empty.
 		}
 	} temp_root_cleanup{ temp_root };
 
