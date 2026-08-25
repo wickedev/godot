@@ -42,7 +42,7 @@
 **무엇이 없나 (실측)**
 - **월드 파티션/스트리밍** — `ResourceLoader.load_threaded_request()`만 존재. 자동 공간 파티션·셀 단위 비동기 로드/언로드·LOD 통합·우선순위 기반 스트리밍 전무. → 🔴 man-year(스트리밍 매니저 신설 + IO 파이프라인).
 - **지형** — Terrain3D(클립맵, 최대 65,536m/side)와 godot_voxel(복셀 옥트리, 동굴 가능)이 GDExtension으로 존재하나 **리전 스트리밍(PR #1020 unmerged)·인스턴스 충돌(PR #699 draft)·동굴/오버행**이 미구현. → 🟡 국소 코어(직접 구현).
-- **폴리지/인스턴싱** — `MultiMesh`는 AABB all-or-nothing 컬링(개별 인스턴스 프러스텀 컬링 불가). **핵심:** GPU 구동 인스턴싱의 `drawIndirectCount`가 드라이버 3백엔드(Vulkan/D3D12/Metal)에 **전부 구현 완료**인데 `RenderingDevice` 상위에 미배선(0매치). HZB 인프라(`renderer_scene_occlusion_cull.h:45` HZBuffer)도 이미 존재. → 🟡 국소 코어(HZB GPU 컬링 compute 패스 + drawIndirect 상위배선).
+- **폴리지/인스턴싱** — `MultiMesh`는 AABB all-or-nothing 컬링(개별 인스턴스 프러스텀 컬링 불가). **핵심:** GPU 구동 인스턴싱의 `drawIndirectCount`가 `RenderingDevice` 상위에 미배선(0매치). ~~드라이버 3백엔드 전부 구현 완료~~ **[2026-08-25 정정]** RDD 심볼은 3백엔드에 있으나 **D3D12만 진짜 구현** — Metal은 `ERR_FAIL_MSG` 스텁(ICB 도입 필요), Vulkan은 feature 게이팅 전무. HZB 인프라(`renderer_scene_occlusion_cull.h:45` HZBuffer)도 이미 존재. → 🟡 국소 코어(HZB GPU 컬링 compute 패스 + drawIndirect 상위배선).
 - **오브젝트/메시 스트리밍** — `lod_bias` per-instance만 있고 **HLOD 전무**. → 🔴 man-year(LOD 관리자 + HLOD 빌더 + 스트리밍 IO).
 - **충돌/내비게이션 스트리밍** — Jolt `space_create`/`space_set_active` 분할, 내비게이션 `map_create`/`map_set_active` 분할 가능. → 🟢 GDExtension.
 

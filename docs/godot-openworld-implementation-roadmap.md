@@ -65,7 +65,7 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 | **G2** | M6 | **지오 풀 버퍼 계약 동결** — BDA + AS-build usage 플래그 | L2 스트리밍 레이어 / L3 BLAS 직접 빌드 | 나중 변경 시 스트리밍 레이어 전체 개조(nanite-impl §10.4-3) |
 | **G3** | M10 | Nanite S2 하니스 판정 (컬링·LOD 컷·HZB 실증) | S3/S4 진입 | DAG 품질 미달 → S1으로 회귀 |
 | **G4** | M18 | **S4 리졸브 라이브 — opaque 전면 deferred 전환 완료** | L7 AOV·L3 HW-RT가 GBuffer 소비 시작 / L9 모션블러·업스케일러 착수 | 롤백 지점: 하이브리드(비-Nanite opaque는 포워드 유지) |
-| **G5** | M25 | async compute 멀티큐 + 타임라인 세마포어 | S5 스트리밍 · TLAS 오버랩 · 부력 리드백 병렬화 | 단일 큐 유지 → 프레임 예산 재조정 |
+| **G5** | M25 | async compute 멀티큐 + 타임라인 세마포어 | S5 스트리밍 · TLAS 오버랩 · 부력 리드백 병렬화 · **L5 GPU 헤어/컴퓨트**(Jolt `ComputeSystemVK::Initialize`가 컴퓨트 큐 인덱스 요구 — `max_queue_count_per_family = 1`이 여기도 막음) | 단일 큐 유지 → 프레임 예산 재조정 |
 
 > **G1은 이 프로젝트에서 가장 중요한 단일 결정이다.** 스키마를 못 정한 채 L2/L3/L7을 진행시키지 말 것.
 
@@ -79,7 +79,7 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 |------|------|------|------|
 | **L9** | **Sentry + CI 심볼 업로드** | 2~5일 | 자작 렌더러의 하드 크래시를 필드에서 수집할 수단 없이 §1 착수는 무모 (runtime-misc §9) |
 | **L9** | GPU 프로파일러 **P0**(label 강제 활성 + `depth`/`parent` 계층화) + **P1**(Tracy GPU context 배선) | 3~4주 | 성능 우선 구현인데 측정 수단이 먼저 (gpu-profiler §8) |
-| **L1** | **코어 훅 3건 일괄:** ① 64b image atomic 3-site ② `drawIndirectCount` 상위배선(~80줄, 3백엔드 구현 완료·미배선) ③ `maxStorageBufferRange` LIMIT(1줄) | 1~2주 | 저비용·고효과, 이후 전 스테이지의 토대 (nanite-perf §4-1) |
+| **L1** | **코어 훅 3건 일괄:** ① 64b image atomic 3-site ② `drawIndirectCount` 상위배선 + `SUPPORTS_DRAW_INDIRECT_COUNT` 케이퍼빌리티 게이팅 ③ `maxStorageBufferRange` LIMIT enum(4-site) | 1~2주 | 저비용·고효과, 이후 전 스테이지의 토대 (nanite-perf §4-1). ⚠️ **[2026-08-25 정정, C1 실측]** “3백엔드 구현 완료”는 오류 — **Metal은 스텁**(`metal3_objects` `render_draw_indirect_count` = `ERR_FAIL_MSG`, 인덱스/비인덱스 양쪽), **Vulkan은 feature 활성화·게이팅 전무**(1.1 디바이스에서 함수포인터 null 크래시 잠복). D3D12만 진짜 구현. → `has_feature` 게이팅 + 미지원 시 보수적 max-count `draw_indirect` 폴백이 필수 패턴 |
 | **L1** | 코어 훅 ④ `particles_collision_get_heightfield_texture` getter(~10줄) | 수일 | 레인 오클루전·폴리지 벤딩·젖음 마스크 **3개가 여기 하나에 물림** (weather §0-1) |
 | **전 레인** | **통합 RD 능력 스파이크 1회** — ⓐ `buffer_get_data_async` 왕복 무스톨 ⓑ 스레드 가드 #99750 현재 상태 ⓒ bindless/descriptor indexing 노출 여부 | 1~2주 | VT S0.1~S0.3 + Lumen S0-2 + Nanite 스트리밍 전제의 **합집합**. 산출: `docs/rd-capability-spike-report.md` |
 | **L3** | Lumen 스파이크 **S0-1**(SDFGI 재사용률 실측) · **S0-2**(GH-99119 RT API로 프로브 1발) | 1~2주 | 경로 (c) 진입 가능 여부 판정 (lumen-roadmap §1) |
@@ -115,7 +115,7 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 | 레인 | 작업 |
 |------|------|
 | **L2** | **S2 — 런타임 검증 하니스**(CompositorEffect + compute cull + indirect HW raster). ⚠️ **자체 deferred-lite 라이팅은 짓지 말 것** — S4에서 버려질 코드 |
-| **L2** | **S3 — 64b atomic 활성 → R64 vis-buffer + SW/HW 하이브리드 래스터**. Metal/구세대 Apple용 HW-only 폴백 변종 유지 필수 |
+| **L2** | **S3 — 64b atomic 활성 → R64 vis-buffer + SW/HW 하이브리드 래스터**. Metal/구세대 Apple용 HW-only 폴백 변종 유지 필수. **+ Metal `MTLIndirectCommandBuffer` 신규 도입**(드라이버 전체 ICB 사용처 0건 실측) — Metal에서 GPU-결정 드로우 카운트를 소비하는 유일한 경로. `drawIndirectCount` 스텁 해소와 S3 하이브리드 래스터가 같은 ICB 인프라를 씀 |
 | **L1** | 비-Nanite opaque GBuffer emit 경로 + deferred 라이팅 리졸브 골격(froxel 재사용, private set 0/1) |
 | **L1** | `MODE_RESOLVE_MATERIAL` 변종 + 셰이더 컴파일러 2변경(analytic derivative) |
 | **L3** | **Phase 1 Milestone B** — 커스텀 SDF 소프트 GI(Surface Cache · screen/world-space radiance cache · 시간적 importance sampling) ／ **병행 Phase 2 착수: HW-RT 프로덕션화**(GH-99119 experimental 직접 개조, TLAS 생명주기, SBT/BDA 안정화) |
@@ -288,8 +288,8 @@ L9 인프라      [Sentry+프로파일러P0/P1]──[P2]──[P3]────�
 
 | 항목 | 기존 판정 | 재판정 |
 |------|-----------|--------|
-| **GPU 게임플레이 물리** | 🔴 P4 "자체 구현 금지, 업스트림과 충돌" | 🟡 **P2.** `Jolt/Compute`+`Jolt/Shaders` 벤더링. 충돌 대상 자체가 없음(포크·디스커넥트) |
-| **스트랜드 헤어 물리** | 🔴 P3 장기 "Jolt `Physics/Hair` 대기" | 🟡 **스코프 내.** 시뮬 = 벤더링 / 렌더 = 스트랜드 래스터 + Marschner·Chiang BSDF(L1+L6) |
+| **GPU 게임플레이 물리** | 🔴 P4 "자체 구현 금지, 업스트림과 충돌" | 🔴 **자체 솔버 (2026-08-25 재판정, C4 upstream 실측).** `Jolt/Compute`(51파일/4,967줄)는 범용 GPU 물리가 아니라 **헤어 솔버 전용 컴퓨트 추상화** — `Physics/` 전체에서 소비자가 `Hair/` 하나뿐, GPU 리지드바디/브로드페이즈/콜리전/소프트바디 전무. 벤더링으로 얻는 건 **추상화 토대**(외부 VkDevice 주입·순수가상 얼로케이터)이고 솔버는 우리가 쓴다. Wave 4(G5 이후) 배치 |
+| **스트랜드 헤어 물리** | 🔴 P3 장기 "Jolt `Physics/Hair` 대기" | 🟡 **스코프 내.** 시뮬 = 벤더링(`Hair/` 8파일/2,611줄 실존 확인) / 렌더 = 스트랜드 래스터 + Marschner·Chiang BSDF(L1+L6). ⚠️ **벤더링 즉시 얻는 건 CPU 경로뿐**(`JPH_USE_CPU_COMPUTE` — upstream 주석 "debugging purposes, not optimized") — **GPU 경로는 G5(컴퓨트 큐) + HLSL→SPIR-V/metallib 오프라인 툴체인 신설 선행**(셰이더가 HLSL, upstream이 빌드 미제공, Godot에 DXC 의존 없음) |
 | **소프트바디 셀프 콜리전** | 🔴 "Jolt 업스트림 대기" | 🔴 **자체 구현 확정 (2026-08-25 실측, C4).** 번들 5.6.0의 `SoftBody/` 전체에서 셀프 콜리전 심볼 0건 — 있는 것은 `Shape::CollideSoftBodyVertices`(버텍스 vs 외부 shape) + `SoftBodyShape.cpp:118`(바디 A 버텍스 vs 바디 B shape)뿐, **인트라바디 경로 부재**. constraint도 Edge/DihedralBend/Volume/LRA/Skinned뿐. (B)에서 유일하게 벤더링으로 안 풀리는 항목 — L5 자체 구현, XPBD 셀프 콜리전 브로드페이즈 신설 |
 
 ### (C) 기술적으로 틀린 *수단* → 목표는 유지, **수단만 교체** (뒤집지 않음)
@@ -323,7 +323,7 @@ L9 인프라      [Sentry+프로파일러P0/P1]──[P2]──[P3]────�
 | FTE | 14~17 | **16~19** |
 | 주 증가 레인 | — | **L5**(GPU 물리·파티클 피드백) · **L6+L1**(스트랜드 헤어 시뮬+래스터) · **L8**(회절 자작 분기) |
 
-**(B)가 증분을 크게 줄였다** — GPU 물리와 스트랜드 헤어 시뮬을 man-year 신규 개발로 잡았다면 +12개월이었을 것이 벤더링 작업으로 바뀌었다.
+~~**(B)가 증분을 크게 줄였다** — GPU 물리와 스트랜드 헤어 시뮬을 man-year 신규 개발로 잡았다면 +12개월이었을 것이 벤더링 작업으로 바뀌었다.~~ **[2026-08-25 재정정, C4 upstream 실측]** (B)의 절감은 **헤어 몫만 유효**하다. GPU 게임플레이 물리는 `Jolt/Compute`가 헤어 전용 추상화로 판명되어 **자체 솔버로 되살아났다** — 단 컴퓨트 추상화 토대·디바이스 공유 설계는 공짜로 확보되므로 완전 원점은 아님. Wave 4 배치로 캘린더 영향 없음(G5 이후 슬랙 구간).
 
 ---
 
