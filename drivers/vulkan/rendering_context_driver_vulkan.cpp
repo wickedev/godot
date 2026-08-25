@@ -451,14 +451,15 @@ Error RenderingContextDriverVulkan::_initialize_instance_extensions() {
 	// End users would get spammed with messages of varying verbosity due to the
 	// mess that thirdparty layers/extensions and drivers seem to leave in their
 	// wake, making the Windows registry a bottomless pit of broken layer JSON.
-#if defined(DEV_ENABLED) || defined(GODOT_USE_TRACY)
-	// GODOT_USE_TRACY: a profiler-enabled build exists to be measured, and GPU debug
-	// labels are what make the capture readable. Without this, a profiling build that
-	// is neither DEV nor verbose silently drops every draw_command_begin_label.
+#ifdef DEV_ENABLED
 	bool want_debug_utils = true;
 #else
 	bool want_debug_utils = OS::get_singleton()->is_stdout_verbose();
 #endif
+	// Without debug utils every draw_command_begin_label is dropped, so a release
+	// profile or an external capture (RenderDoc, Nsight, PIX) shows unnamed regions.
+	// --gpu-profile implies this; --gpu-debug-labels enables it on its own.
+	want_debug_utils = want_debug_utils || Engine::get_singleton()->is_gpu_debug_labels_enabled();
 	if (want_debug_utils) {
 		_register_requested_instance_extension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, false);
 	}
@@ -732,6 +733,13 @@ Error RenderingContextDriverVulkan::_initialize_instance() {
 	VkDebugReportCallbackCreateInfoEXT debug_report_callback_create_info = {};
 	const bool has_debug_utils_extension = enabled_instance_extension_names.has(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 	const bool has_debug_report_extension = enabled_instance_extension_names.has(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+
+	// Requested but unavailable would otherwise be silent: every debug label is dropped
+	// and the capture or GPU profile comes back with unnamed regions, with nothing
+	// saying why. VK_EXT_debug_utils is an optional instance extension.
+	if (!has_debug_utils_extension && Engine::get_singleton()->is_gpu_debug_labels_enabled()) {
+		WARN_PRINT("GPU debug labels were requested, but VK_EXT_debug_utils is not available on this Vulkan instance. Render pass labels will not appear in captures or GPU profiles.");
+	}
 	if (has_debug_utils_extension) {
 		debug_messenger_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
 		debug_messenger_create_info.pNext = nullptr;

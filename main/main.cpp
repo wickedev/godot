@@ -606,6 +606,7 @@ void Main::print_help(const char *p_binary) {
 	print_help_option("--profiling", "Enable profiling in the script debugger.\n");
 #endif
 	print_help_option("--gpu-profile", "Show a GPU profile of the tasks that took the most time during frame rendering.\n");
+	print_help_option("--gpu-debug-labels", "Emit graphics API debug labels for render passes, so external capture tools (RenderDoc, Nsight, PIX) and GPU profilers show named regions. Implied by --gpu-profile.\n");
 	print_help_option("--gpu-validation", "Enable graphics API validation layers for debugging.\n");
 #ifdef DEBUG_ENABLED
 	print_help_option("--gpu-abort", "Abort on graphics API usage errors (usually validation layer errors). May help see the problem if your system freezes.\n", CLI_OPTION_AVAILABILITY_TEMPLATE_DEBUG);
@@ -1956,6 +1957,10 @@ Error Main::setup(const char *execpath, int argc, char *argv[], bool p_second_ph
 #endif // TOOLS_ENABLED
 		} else if (arg == "--gpu-profile") {
 			profile_gpu = true;
+			// A GPU profile without pass labels is a list of unnamed timings.
+			Engine::singleton->use_gpu_debug_labels = true;
+		} else if (arg == "--gpu-debug-labels") {
+			Engine::singleton->use_gpu_debug_labels = true;
 		} else if (arg == "--disable-crash-handler") {
 			OS::get_singleton()->disable_crash_handler();
 #if defined(DEBUG_ENABLED) || defined(TOOLS_ENABLED)
