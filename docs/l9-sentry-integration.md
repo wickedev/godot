@@ -103,11 +103,23 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 |---|---|
 | Linux | `readelf -n`으로 바이너리와 `.debugsymbols`의 **build ID 동일성** 대조. 미존재/불일치 시 실패 |
 | macOS | 두 arch를 `lipo`로 합쳐 **실제 출하 형태(universal)를 만든 뒤**, `dwarfdump --uuid`로 **모든 슬라이스 UUID가 dSYM에 커버되는지** 확인 |
-| Windows | `.exe`↔`.pdb` 베이스네임 짝 확인. **PDB GUID+age 동일성은 `sentry-cli`가 업로드 시 검증**한다(불일치 PDB는 거부됨) |
+| Windows | **PE CodeView 레코드를 직접 파싱**해 GUID+age와 링커가 기록한 PDB 파일명을 얻고, `.exe`·`.pdb` 양쪽의 debug id를 추출해 **셋을 상호 대조** |
 
 > **macOS에 대한 근거:** `lipo`는 Mach-O 슬라이스의 UUID를 변경하지 않는다. 따라서 arch별 dSYM은 universal 바이너리에 대해 유효하다 — 다만 이 리포트는 그걸 **가정하지 않고 실제로 대조해서 증명**한다.
 >
+> **Windows 검증을 sentry-cli에 위임하지 않는 이유:** `sentry-cli`는 DIF를 **파일 단위로 각자의 debug id에 따라** 받는다. 따라서 **이름만 맞고 내용이 다른 PDB(stale PDB)도 업로드는 정상 성공**한다 — 자기 debug id로 등록될 뿐이다. 그러면 크래시가 왔을 때 EXE의 debug id에 맞는 DIF가 없어 심볼이 안 붙는다. **업로드 성공은 대응 검증이 아니다.** 그래서 PE 디버그 디렉터리(directory 6, `IMAGE_DEBUG_TYPE_CODEVIEW`, `RSDS` 레코드)를 직접 읽어 대조한다.
+>
 > ⚠️ **범위 한정:** 이 워크플로는 export template 바이너리와 그 심볼까지만 다룬다. `generate_bundle`을 통한 **완전한 `.app`/export-template zip 조립은 하지 않는다** — `generate_bundle`은 release와 debug 바이너리가 **같은 잡에 함께** 있어야 동작하는데 현재 매트릭스는 target별로 잡이 분리돼 있다. 패키징까지 필요하면 별도 태스크로 분리 요청.
+
+### (c-2) exact-binary promotion 계약 (`dist/MANIFEST.sha256`)
+
+검증된 바이너리와 **실제로 출하되는 바이너리가 같은 바이트임을 증명할 수단**이 없으면, 후속 패키저가 소스에서 재빌드하는 순간 debug id가 달라지고 **여기서 올린 심볼이 전부 무효**가 된다 — 그리고 그 사실은 첫 필드 크래시까지 드러나지 않는다.
+
+그래서 검증 스텝이 실제 산출물만 `dist/`에 스테이징하고, `MANIFEST.sha256`(전 파일 SHA-256) + `MANIFEST.txt`(커밋·플랫폼·타깃·지시문)를 함께 남긴다. **아티팩트와 Sentry 업로드는 모두 `dist/`에서만** 이뤄진다.
+
+후속 패키징 단계는 **재빌드가 아니라 이 아티팩트를 받아** `shasum -a 256 -c MANIFEST.sha256`으로 검증한 뒤 그 바이트를 그대로 출하해야 한다.
+
+> 부수 효과: `bin/`에는 `bin/build_deps`(ANGLE·AccessKit·D3D12 SDK)가 들어 있다. 이전 판의 `bin/*` 글롭은 이것까지 Sentry와 아티팩트에 실어 보냈다. `dist/` 스테이징이 이 오염도 함께 제거한다.
 
 ### (d) 업로드 / 릴리스 마감
 
@@ -150,7 +162,7 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
   | 어긋나면 | 결과 |
   |---|---|
   | **디버그 식별자**(build ID/UUID/GUID+age) | **심볼이 안 붙는다** — 주소 나열만 온다. **이것이 진짜 최우선 항목이며, §2(c) 게이트가 CI에서 강제한다.** |
-  | **release 문자열** | 심볼은 정상적으로 붙는다. 대신 이슈 그룹핑·리그레션 추적·release health·`set-commits`의 suspect commit 연결이 어긋난다 |
+  | **release 문자열** | 심볼은 정상적으로 붙는다. 어긋나는 것은 **release health**(채택률·crash-free 세션), **리그레션 추적**(어느 릴리스에서 재발했는지), **`set-commits` suspect commit 연결** 세 가지다. **이슈 그룹핑 자체는 스택트레이스 기반이라 영향받지 않는다** — 초판이 "그룹핑 분리"라 적었던 것은 부정확하다 |
 
   게임 측은 워크플로와 같은 값(`inputs.sentry-release \|\| github.sha`)을 쓰는 것이 여전히 옳다 — 다만 그 이유는 **심볼리케이션이 아니라 릴리스 추적**이다.
 - **(c) 초기화 실패 가시화** — §1의 결론대로 출하 빌드에는 폴백이 없다. Sentry init 실패를 조용히 넘기면 안 된다.
