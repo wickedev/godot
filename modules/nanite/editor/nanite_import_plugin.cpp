@@ -33,11 +33,27 @@
 #include "../nanite_dag.h"
 #include "../nanite_dag_builder.h"
 
+#include "core/io/file_access.h"
 #include "core/io/resource_importer.h"
+#include "core/io/resource_loader.h"
+#include "core/io/resource_saver.h"
+#include "core/io/resource_uid.h"
 #include "core/string/print_string.h"
+#include "scene/main/node.h"
 #include "scene/resources/3d/importer_mesh.h"
 
 const char *NaniteImportPlugin::METADATA_PREFIX = "nanite_dag_";
+
+void NaniteImportPlugin::pre_process(Node *p_scene, const HashMap<StringName, Variant> &p_options) {
+	const Variant *bake_mode = p_options.getptr("meshes/light_baking");
+	scene_light_bake_mode = bake_mode ? (int)*bake_mode : 0;
+
+	// The source path is not available to any plugin hook during import -- the
+	// importer knows it but does not pass it on, and the scene root's path is
+	// empty at this point. The root's name is the closest thing there is, and
+	// it is stored only as a hint for a human reading a stray artifact.
+	scene_root_name = p_scene ? String(p_scene->get_name()) : String();
+}
 
 void NaniteImportPlugin::get_internal_import_options(InternalImportCategory p_category, List<ResourceImporter::ImportOption> *r_options) {
 	if (p_category != INTERNAL_IMPORT_CATEGORY_MESH) {
@@ -54,6 +70,8 @@ void NaniteImportPlugin::get_internal_import_options(InternalImportCategory p_ca
 	r_options->push_back(ResourceImporter::ImportOption(PropertyInfo(Variant::FLOAT, "nanite/simplify_ratio", PROPERTY_HINT_RANGE, "0.1,0.9,0.05"), 0.5f));
 	r_options->push_back(ResourceImporter::ImportOption(PropertyInfo(Variant::BOOL, "nanite/spatial_clustering"), false));
 	r_options->push_back(ResourceImporter::ImportOption(PropertyInfo(Variant::BOOL, "nanite/print_report"), false));
+	r_options->push_back(ResourceImporter::ImportOption(PropertyInfo(Variant::BOOL, "nanite/save_to_file"), false));
+	r_options->push_back(ResourceImporter::ImportOption(PropertyInfo(Variant::STRING, "nanite/save_path", PROPERTY_HINT_SAVE_FILE, "*.res,*.tres"), ""));
 }
 
 Variant NaniteImportPlugin::get_internal_option_visibility(InternalImportCategory p_category, const String &p_scene_import_type, const String &p_option, const HashMap<StringName, Variant> &p_options) const {
@@ -69,23 +87,24 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 	if (p_category != INTERNAL_IMPORT_CATEGORY_MESH) {
 		return;
 	}
-	if (!p_options.has("nanite/enabled") || !(bool)p_options["nanite/enabled"]) {
-		return;
-	}
 	Ref<ImporterMesh> mesh = p_resource;
 	if (mesh.is_null()) {
 		return;
 	}
 
-	// Drop anything a previous import left behind before deciding whether to
-	// build again. Otherwise turning the option off, or a surface that now
-	// fails to build, silently keeps serving the old DAG.
+	// Cleared before the enabled check, not after: turning the option off has
+	// to stop serving the previous DAG, and that only happens if the cleanup
+	// runs on the disabled path too.
 	List<StringName> existing_meta;
 	mesh->get_meta_list(&existing_meta);
 	for (const StringName &key : existing_meta) {
 		if (String(key).begins_with(METADATA_PREFIX)) {
 			mesh->remove_meta(key);
 		}
+	}
+
+	if (!p_options.has("nanite/enabled") || !(bool)p_options["nanite/enabled"]) {
+		return;
 	}
 
 	NaniteDAGBuilder::Settings settings;
@@ -102,6 +121,19 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 		settings.spatial_clustering = (bool)p_options["nanite/spatial_clustering"];
 	}
 	const bool print_report = p_options.has("nanite/print_report") && (bool)p_options["nanite/print_report"];
+
+	// An import plugin cannot register generated files with the import system,
+	// so the artifact follows the precedent set by per-mesh mesh saving: an
+	// explicit path, written as an ordinary resource. Without one the DAG stays
+	// in memory for inspection during this session only.
+	String save_path;
+	if (p_options.has("nanite/save_to_file") && (bool)p_options["nanite/save_to_file"]) {
+		save_path = p_options.has("nanite/save_path") ? String(p_options["nanite/save_path"]) : String();
+		if (!save_path.is_empty() && !ResourceUID::ensure_path(save_path).is_resource_file()) {
+			WARN_PRINT(vformat("Nanite: '%s' is not a usable resource path, so the DAG will not be saved.", save_path));
+			save_path = String();
+		}
+	}
 
 	const String mesh_name = mesh->get_name().is_empty() ? String("<unnamed>") : mesh->get_name();
 
@@ -124,8 +156,14 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 	// does not reference the ArrayMesh that those later steps go on to reorder.
 	// Lightmap unwrapping is the one that actually diverges, since it splits
 	// vertices and adds UV2 the snapshot will not have.
-	if (p_options.has("generate/lightmap_uv") && (int)p_options["generate/lightmap_uv"] == 1) {
-		WARN_PRINT(vformat("Nanite: '%s' has lightmap unwrapping enabled. The DAG is built before unwrapping, so it does not carry UV2 and its vertex layout differs from the saved mesh.", mesh_name));
+	// Two ways to reach unwrapping: the scene-wide baking mode, which is only
+	// visible from pre_process, and a per-mesh override of it. Checking just
+	// the override misses every mesh that inherits the scene setting.
+	const int per_mesh_override = p_options.has("generate/lightmap_uv") ? (int)p_options["generate/lightmap_uv"] : 0;
+	const bool unwrapping = per_mesh_override == 1 ||
+			(per_mesh_override != 2 && scene_light_bake_mode == 2);
+	if (unwrapping) {
+		WARN_PRINT(vformat("Nanite: '%s' has lightmap unwrapping enabled. The DAG is built before unwrapping, so it carries no UV2 and its vertex layout differs from the saved mesh. Baked lightmaps on Nanite meshes are not supported.", mesh_name));
 	}
 
 	for (int surface = 0; surface < mesh->get_surface_count(); surface++) {
@@ -143,7 +181,36 @@ void NaniteImportPlugin::internal_process(InternalImportCategory p_category, Nod
 			continue;
 		}
 
+		dag->surface_index = (uint32_t)surface;
+		dag->source_hint = scene_root_name;
 		mesh->set_meta(String(METADATA_PREFIX) + itos(surface), dag);
+
+		if (!save_path.is_empty()) {
+			const String surface_path = mesh->get_surface_count() > 1
+					? save_path.get_basename() + "_" + itos(surface) + "." + save_path.get_extension()
+					: save_path;
+
+			// save_path is a namespace the user owns, so two meshes can be
+			// pointed at one file and the last import wins. That is how the
+			// engine's own per-mesh saving behaves, so it is not prevented --
+			// but replacing an artifact that describes different geometry is
+			// worth saying out loud, because it is almost always a mistake.
+			if (FileAccess::exists(surface_path)) {
+				const Ref<NaniteDAG> previous = ResourceLoader::load(surface_path, "", ResourceFormatLoader::CACHE_MODE_IGNORE);
+				const bool same_artifact = previous.is_valid() &&
+						previous->surface_index == dag->surface_index &&
+						previous->settings_hash == dag->settings_hash &&
+						previous->geometry_hash == dag->geometry_hash;
+				if (!same_artifact) {
+					WARN_PRINT(vformat("Nanite: '%s' already holds a different DAG and is being overwritten by surface %d of '%s'. Two meshes writing to one path is usually unintended.", surface_path, surface, mesh_name));
+				}
+			}
+
+			const Error err = ResourceSaver::save(dag, surface_path);
+			if (err != OK) {
+				WARN_PRINT(vformat("Nanite: failed to save the DAG for surface %d of '%s' to '%s'.", surface, mesh_name, surface_path));
+			}
+		}
 
 		if (print_report) {
 			print_line(vformat("Nanite DAG for surface %d of '%s':\n%s", surface, mesh_name, dag->get_report()));

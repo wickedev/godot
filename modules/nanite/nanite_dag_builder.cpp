@@ -32,6 +32,7 @@
 
 #include "core/math/face3.h"
 #include "core/templates/hash_set.h"
+#include "core/templates/hashfuncs.h"
 #include "scene/resources/mesh.h"
 
 #include <thirdparty/meshoptimizer/meshoptimizer.h>
@@ -107,8 +108,19 @@ NaniteDAG::Sphere enclose_spheres(const LocalVector<NaniteDAG::Sphere> &p_sphere
 // for projecting to screen space, which is what the LOD cut and the GBuffer
 // contract's motion residual bound both do with it.
 //
-// Simplification only removes vertices, so survivors lie exactly on the result
-// and only the removed ones can have moved away from it.
+// Scope of the measure, stated precisely because a bound is only as good as
+// what it actually covers:
+//
+// Simplification only removes vertices, so every survivor lies exactly on the
+// original surface -- the deviation in that direction is identically zero, not
+// merely small. Measuring the removed vertices against the result therefore
+// gives the two-sided *vertex-to-surface* Hausdorff distance, not a one-sided
+// approximation of it.
+//
+// What it does not cover is interior separation: a simplified triangle whose
+// middle departs from the original surface with no original vertex sitting at
+// the gap to witness it. That term is bounded by neither direction of the
+// vertex measure and would need edge-edge sampling to capture.
 float measure_geometric_deviation(const float *p_positions, const LocalVector<uint32_t> &p_before,
 		const uint32_t *p_after, size_t p_after_count) {
 	HashSet<uint32_t> survivors;
@@ -158,6 +170,51 @@ float measure_geometric_deviation(const float *p_positions, const LocalVector<ui
 	return worst;
 }
 
+uint64_t hash_buffer_64(const void *p_data, int p_length, uint64_t p_carry) {
+	const uint32_t low = hash_murmur3_buffer(p_data, p_length, (uint32_t)(p_carry & 0xFFFFFFFF));
+	const uint32_t high = hash_murmur3_buffer(p_data, p_length, (uint32_t)(p_carry >> 32) ^ 0x9E3779B9u);
+	return (uint64_t)low | ((uint64_t)high << 32);
+}
+
+// Only the settings that change the output. A diagnostic toggle must not
+// invalidate a stored artifact.
+uint64_t hash_settings(const NaniteDAGBuilder::Settings &p_settings) {
+	const float values[] = {
+		(float)p_settings.max_cluster_vertices, (float)p_settings.max_cluster_triangles,
+		p_settings.cone_weight, (float)p_settings.group_size, p_settings.simplify_ratio,
+		p_settings.normal_weight, p_settings.uv_weight, p_settings.min_progress_ratio,
+		p_settings.spatial_clustering ? 1.0f : 0.0f, p_settings.lock_mesh_border ? 1.0f : 0.0f
+	};
+	return hash_buffer_64(values, (int)sizeof(values), 0x1234567890ABCDEFull);
+}
+
+// What the builder actually consumed, which is not the same thing as the source
+// file: scene import options reshape this geometry without changing a byte on
+// disk, and hashing the file would leave a stale artifact alive in that case.
+uint64_t hash_geometry(const LocalVector<float> &p_positions, const LocalVector<float> &p_normals,
+		const LocalVector<float> &p_uvs, const LocalVector<uint32_t> &p_indices) {
+	uint64_t carry = 0xC0FFEE0000000001ull;
+	carry = hash_buffer_64(p_positions.ptr(), (int)(p_positions.size() * sizeof(float)), carry);
+	if (!p_normals.is_empty()) {
+		carry = hash_buffer_64(p_normals.ptr(), (int)(p_normals.size() * sizeof(float)), carry);
+	}
+	if (!p_uvs.is_empty()) {
+		carry = hash_buffer_64(p_uvs.ptr(), (int)(p_uvs.size() * sizeof(float)), carry);
+	}
+	carry = hash_buffer_64(p_indices.ptr(), (int)(p_indices.size() * sizeof(uint32_t)), carry);
+	return carry;
+}
+
+// Global index buffer for one cluster, which is what the partitioner and the
+// simplifier both consume.
+void append_cluster_indices(const NaniteDAG &p_dag, uint32_t p_cluster, LocalVector<uint32_t> &r_out) {
+	const NaniteDAG::Cluster &cluster = p_dag.clusters[p_cluster];
+	for (uint32_t k = 0; k < cluster.triangle_count * 3; k++) {
+		const uint8_t local = p_dag.cluster_indices[cluster.triangle_offset + k];
+		r_out.push_back(p_dag.cluster_vertices[cluster.vertex_offset + local]);
+	}
+}
+
 struct BuildContext {
 	Ref<NaniteDAG> dag;
 	const NaniteDAGBuilder::Settings *settings = nullptr;
@@ -205,19 +262,23 @@ struct BuildContext {
 			}
 			NaniteDAG::Cluster cluster;
 			cluster.level = p_level;
-			cluster.index_offset = dag->indices.size();
-			cluster.index_count = meshlet.triangle_count * 3;
-			for (uint32_t k = 0; k < cluster.index_count; k++) {
-				// Meshlet locals index into the meshlet's vertex slice, which
-				// in turn holds indices into the shared vertex buffer.
-				const uint8_t local = meshlet_triangles[meshlet.triangle_offset + k];
-				dag->indices.push_back(meshlet_vertices[meshlet.vertex_offset + local]);
+			// meshoptimizer already emits a vertex slice plus 8-bit locals,
+			// which is the pool layout, so it is kept rather than flattened.
+			cluster.vertex_offset = dag->cluster_vertices.size();
+			cluster.vertex_count = meshlet.vertex_count;
+			cluster.triangle_offset = dag->cluster_indices.size();
+			cluster.triangle_count = meshlet.triangle_count;
+
+			for (uint32_t k = 0; k < meshlet.vertex_count; k++) {
+				dag->cluster_vertices.push_back(meshlet_vertices[meshlet.vertex_offset + k]);
 			}
-			cluster.bounds = sphere_from_indices(positions, &dag->indices[cluster.index_offset], cluster.index_count);
-			// Level 0 projects its (zero) error from its own geometry. Clusters
-			// produced by a simplification overwrite this with their group's
-			// sphere, so that a whole group shares one LOD decision.
-			cluster.lod_bounds = cluster.bounds;
+			LocalVector<uint32_t> global;
+			for (uint32_t k = 0; k < meshlet.triangle_count * 3; k++) {
+				const uint8_t local = meshlet_triangles[meshlet.triangle_offset + k];
+				dag->cluster_indices.push_back(local);
+				global.push_back(meshlet_vertices[meshlet.vertex_offset + local]);
+			}
+			cluster.bounds = sphere_from_indices(positions, global.ptr(), global.size());
 			r_created.push_back(dag->clusters.size());
 			dag->clusters.push_back(cluster);
 		}
@@ -237,10 +298,48 @@ struct BuildContext {
 		ERR_FAIL_V_MSG(Ref<NaniteDAG>(), "Nanite DAG builder: " + _nanite_message); \
 	}
 
-Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, uint32_t p_vertex_count,
-		const LocalVector<float> &p_attributes, uint32_t p_attribute_count,
-		const LocalVector<float> &p_attribute_weights, const LocalVector<uint32_t> &p_indices,
+Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, const LocalVector<float> &p_normals,
+		const LocalVector<float> &p_uvs, uint32_t p_vertex_count, const LocalVector<uint32_t> &p_indices,
 		const Settings &p_settings, String *r_error) {
+	const bool has_normals = p_normals.size() == (uint64_t)p_vertex_count * 3;
+	const bool has_uvs = p_uvs.size() == (uint64_t)p_vertex_count * 2;
+	if (!p_normals.is_empty() && !has_normals) {
+		FAIL("normal buffer size does not match the vertex count.");
+	}
+	if (!p_uvs.is_empty() && !has_uvs) {
+		FAIL("UV buffer size does not match the vertex count.");
+	}
+
+	// The simplifier's attribute metric runs on the same values the DAG stores.
+	const uint32_t p_attribute_count = (has_normals ? 3 : 0) + (has_uvs ? 2 : 0);
+	LocalVector<float> p_attributes;
+	LocalVector<float> p_attribute_weights;
+	if (p_attribute_count > 0) {
+		p_attributes.resize((uint64_t)p_vertex_count * p_attribute_count);
+		for (uint32_t i = 0; i < p_vertex_count; i++) {
+			uint32_t offset = i * p_attribute_count;
+			if (has_normals) {
+				for (uint32_t k = 0; k < 3; k++) {
+					p_attributes[offset++] = p_normals[i * 3 + k];
+				}
+			}
+			if (has_uvs) {
+				for (uint32_t k = 0; k < 2; k++) {
+					p_attributes[offset++] = p_uvs[i * 2 + k];
+				}
+			}
+		}
+		if (has_normals) {
+			for (uint32_t i = 0; i < 3; i++) {
+				p_attribute_weights.push_back(p_settings.normal_weight);
+			}
+		}
+		if (has_uvs) {
+			for (uint32_t i = 0; i < 2; i++) {
+				p_attribute_weights.push_back(p_settings.uv_weight);
+			}
+		}
+	}
 	if (p_vertex_count < 3) {
 		FAIL("mesh has fewer than 3 vertices.");
 	}
@@ -259,11 +358,14 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 	if (p_attribute_count > 32) {
 		FAIL("attribute count exceeds the 32 attributes meshoptimizer supports.");
 	}
-	if (p_settings.max_cluster_vertices < 3 || p_settings.max_cluster_vertices > 256) {
-		FAIL("max_cluster_vertices must be in [3, 256].");
+	// Ceilings come from the geometry pool contract, not from meshoptimizer's
+	// wider limits: exceeding them produces clusters the rasterizer cannot
+	// address and a local index that does not fit a byte.
+	if (p_settings.max_cluster_vertices < 3 || p_settings.max_cluster_vertices > NaniteDAG::MAX_CLUSTER_VERTICES) {
+		FAIL(vformat("max_cluster_vertices must be in [3, %d].", NaniteDAG::MAX_CLUSTER_VERTICES));
 	}
-	if (p_settings.max_cluster_triangles < 1 || p_settings.max_cluster_triangles > 512) {
-		FAIL("max_cluster_triangles must be in [1, 512].");
+	if (p_settings.max_cluster_triangles < 1 || p_settings.max_cluster_triangles > NaniteDAG::MAX_CLUSTER_TRIANGLES) {
+		FAIL(vformat("max_cluster_triangles must be in [1, %d].", NaniteDAG::MAX_CLUSTER_TRIANGLES));
 	}
 	if (p_settings.group_size < 2) {
 		FAIL("group_size must be at least 2.");
@@ -316,6 +418,24 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 
 	const Ref<NaniteDAG> dag = ctx.dag;
 
+	// The vertex record the pool contract asks for. Absent inputs get a
+	// well-defined placeholder rather than an empty buffer, so the record is
+	// always complete.
+	dag->normals.resize(p_vertex_count);
+	dag->uvs.resize(p_vertex_count);
+	for (uint32_t i = 0; i < p_vertex_count; i++) {
+		dag->normals[i] = NaniteDAG::encode_normal(has_normals
+						? Vector3(p_normals[i * 3 + 0], p_normals[i * 3 + 1], p_normals[i * 3 + 2])
+						: Vector3(0, 0, 1));
+		dag->uvs[i] = has_uvs ? NaniteDAG::encode_uv(p_uvs[i * 2 + 0], p_uvs[i * 2 + 1]) : NaniteDAG::encode_uv(0.0f, 0.0f);
+	}
+
+	// Identity, per the artifact contract. The geometry hash covers what the
+	// builder actually consumed rather than the source file, because scene
+	// import options change this geometry without touching the file.
+	dag->settings_hash = hash_settings(p_settings);
+	dag->geometry_hash = hash_geometry(p_positions, p_normals, p_uvs, p_indices);
+
 	// Position-only weld map. Vertices split for UV/normal seams sit at the
 	// same point in space, so the group boundary has to be reasoned about in
 	// position space; locking only one of a seam's copies would let the other
@@ -354,11 +474,9 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		LocalVector<uint32_t> cluster_indices;
 		LocalVector<uint32_t> cluster_index_counts;
 		for (uint32_t cluster_id : current) {
-			const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
-			for (uint32_t k = 0; k < cluster.index_count; k++) {
-				cluster_indices.push_back(dag->indices[cluster.index_offset + k]);
-			}
-			cluster_index_counts.push_back(cluster.index_count);
+			const uint32_t before = cluster_indices.size();
+			append_cluster_indices(**dag, cluster_id, cluster_indices);
+			cluster_index_counts.push_back(cluster_indices.size() - before);
 		}
 
 		LocalVector<uint32_t> partition;
@@ -391,9 +509,10 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		}
 		for (uint32_t i = 0; i < current.size(); i++) {
 			const int64_t group_id = (int64_t)partition[i];
-			const NaniteDAG::Cluster &cluster = dag->clusters[current[i]];
-			for (uint32_t k = 0; k < cluster.index_count; k++) {
-				const uint32_t welded = weld[dag->indices[cluster.index_offset + k]];
+			LocalVector<uint32_t> cluster_global;
+			append_cluster_indices(**dag, current[i], cluster_global);
+			for (const uint32_t index : cluster_global) {
+				const uint32_t welded = weld[index];
 				if (position_owner[welded] < 0) {
 					position_owner[welded] = group_id;
 				} else if (position_owner[welded] != group_id) {
@@ -416,7 +535,8 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		// 3. Simplify each group and re-cluster the result. Everything lands
 		//    in the DAG immediately but is rolled back below if the level as a
 		//    whole made no progress.
-		const uint32_t restore_indices = dag->indices.size();
+		const uint32_t restore_vertices = dag->cluster_vertices.size();
+		const uint32_t restore_indices = dag->cluster_indices.size();
 		const uint32_t restore_clusters = dag->clusters.size();
 		const uint32_t restore_groups = dag->groups.size();
 
@@ -433,12 +553,9 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 			LocalVector<NaniteDAG::Sphere> child_bounds;
 			float max_child_error = 0.0f;
 			for (uint32_t cluster_id : group_members) {
-				const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
-				for (uint32_t k = 0; k < cluster.index_count; k++) {
-					merged.push_back(dag->indices[cluster.index_offset + k]);
-				}
-				child_bounds.push_back(cluster.lod_bounds);
-				max_child_error = MAX(max_child_error, cluster.error);
+				append_cluster_indices(**dag, cluster_id, merged);
+				child_bounds.push_back(dag->get_cluster_lod_bounds(cluster_id));
+				max_child_error = MAX(max_child_error, dag->get_cluster_error(cluster_id));
 			}
 
 			uint32_t target_index_count = (uint32_t)(merged.size() * p_settings.simplify_ratio);
@@ -494,9 +611,10 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 				// rest of the mesh -- must survive untouched through every level
 				// above.
 				for (uint32_t cluster_id : group_members) {
-					const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
-					for (uint32_t k = 0; k < cluster.index_count; k++) {
-						permanently_locked[weld[dag->indices[cluster.index_offset + k]]] = 1;
+					LocalVector<uint32_t> cluster_global;
+					append_cluster_indices(**dag, cluster_id, cluster_global);
+					for (const uint32_t index : cluster_global) {
+						permanently_locked[weld[index]] = 1;
 					}
 				}
 				continue;
@@ -521,10 +639,9 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 			}
 
 			for (uint32_t cluster_id : produced) {
-				NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
-				cluster.source_group = group_id;
-				cluster.error = group.error;
-				cluster.lod_bounds = group.lod_bounds;
+				// Error and bounds are read back from the group, so there is
+				// nothing to copy onto the cluster.
+				dag->clusters[cluster_id].source_group = group_id;
 				next.push_back(cluster_id);
 			}
 			dag->groups[group_id].produced = produced;
@@ -534,7 +651,8 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		// 4. Commit only on strict progress. Cluster count is a positive
 		//    integer, so strict reduction is what guarantees termination.
 		if (next.is_empty() || next.size() >= current.size()) {
-			dag->indices.resize(restore_indices);
+			dag->cluster_vertices.resize(restore_vertices);
+			dag->cluster_indices.resize(restore_indices);
 			dag->clusters.resize(restore_clusters);
 			dag->groups.resize(restore_groups);
 			break;
@@ -543,10 +661,7 @@ Ref<NaniteDAG> NaniteDAGBuilder::build(const LocalVector<float> &p_positions, ui
 		for (uint32_t group_id : created_groups) {
 			const NaniteDAG::Group &group = dag->groups[group_id];
 			for (uint32_t cluster_id : group.children) {
-				NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
-				cluster.parent_group = group_id;
-				cluster.parent_error = group.error;
-				cluster.parent_lod_bounds = group.lod_bounds;
+				dag->clusters[cluster_id].parent_group = group_id;
 			}
 		}
 
@@ -593,8 +708,6 @@ Ref<NaniteDAG> NaniteDAGBuilder::build_from_surface(const Array &p_arrays, const
 
 	const PackedVector3Array source_normals = p_arrays[Mesh::ARRAY_NORMAL];
 	const PackedVector2Array source_uvs = p_arrays[Mesh::ARRAY_TEX_UV];
-	const bool has_normals = source_normals.size() == (int)vertex_count;
-	const bool has_uvs = source_uvs.size() == (int)vertex_count;
 
 	LocalVector<float> positions;
 	positions.resize((uint64_t)vertex_count * 3);
@@ -604,40 +717,30 @@ Ref<NaniteDAG> NaniteDAGBuilder::build_from_surface(const Array &p_arrays, const
 		positions[i * 3 + 2] = (float)source_positions[i].z;
 	}
 
-	const uint32_t attribute_count = (has_normals ? 3 : 0) + (has_uvs ? 2 : 0);
-	LocalVector<float> attributes;
-	LocalVector<float> attribute_weights;
-	if (attribute_count > 0) {
-		attributes.resize((uint64_t)vertex_count * attribute_count);
+	LocalVector<float> normals;
+	if (source_normals.size() == (int)vertex_count) {
+		normals.resize((uint64_t)vertex_count * 3);
 		for (uint32_t i = 0; i < vertex_count; i++) {
-			uint32_t offset = i * attribute_count;
-			if (has_normals) {
-				attributes[offset++] = (float)source_normals[i].x;
-				attributes[offset++] = (float)source_normals[i].y;
-				attributes[offset++] = (float)source_normals[i].z;
-			}
-			if (has_uvs) {
-				attributes[offset++] = (float)source_uvs[i].x;
-				attributes[offset++] = (float)source_uvs[i].y;
-			}
+			normals[i * 3 + 0] = (float)source_normals[i].x;
+			normals[i * 3 + 1] = (float)source_normals[i].y;
+			normals[i * 3 + 2] = (float)source_normals[i].z;
 		}
-		if (has_normals) {
-			for (uint32_t i = 0; i < 3; i++) {
-				attribute_weights.push_back(p_settings.normal_weight);
-			}
-		}
-		if (has_uvs) {
-			for (uint32_t i = 0; i < 2; i++) {
-				attribute_weights.push_back(p_settings.uv_weight);
-			}
+	}
+
+	LocalVector<float> uvs;
+	if (source_uvs.size() == (int)vertex_count) {
+		uvs.resize((uint64_t)vertex_count * 2);
+		for (uint32_t i = 0; i < vertex_count; i++) {
+			uvs[i * 2 + 0] = (float)source_uvs[i].x;
+			uvs[i * 2 + 1] = (float)source_uvs[i].y;
 		}
 	}
 
 	LocalVector<uint32_t> indices;
 	const PackedInt32Array source_indices = p_arrays[Mesh::ARRAY_INDEX];
 	if (source_indices.is_empty()) {
-		// Unindexed surfaces are a valid import product; synthesize the
-		// trivial index buffer rather than rejecting them.
+		// Unindexed surfaces are a valid import product; synthesize the trivial
+		// index buffer rather than rejecting them.
 		indices.resize(vertex_count);
 		for (uint32_t i = 0; i < vertex_count; i++) {
 			indices[i] = i;
@@ -649,7 +752,7 @@ Ref<NaniteDAG> NaniteDAGBuilder::build_from_surface(const Array &p_arrays, const
 		}
 	}
 
-	return build(positions, vertex_count, attributes, attribute_count, attribute_weights, indices, p_settings, r_error);
+	return build(positions, normals, uvs, vertex_count, indices, p_settings, r_error);
 }
 
 #undef FAIL

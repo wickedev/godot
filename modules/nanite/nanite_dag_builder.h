@@ -45,8 +45,11 @@ public:
 	struct Settings {
 		// Cluster shape. 128 triangles is the Nanite/Bevy figure; 255 vertices
 		// is the mesh-shading friendly ceiling that still fits 8-bit locals.
-		uint32_t max_cluster_vertices = 255;
-		uint32_t max_cluster_triangles = 128;
+		// Both are frozen by the geometry pool contract and cannot simply be
+		// raised: the visibility buffer spends 7 bits on the triangle index and
+		// the pool spends 8 on the local vertex index.
+		uint32_t max_cluster_vertices = NaniteDAG::MAX_CLUSTER_VERTICES;
+		uint32_t max_cluster_triangles = NaniteDAG::MAX_CLUSTER_TRIANGLES;
 		float cone_weight = 0.0f;
 
 		// Clusters per group. Karis groups ~4-32; 8 balances edge-cut against
@@ -86,10 +89,12 @@ public:
 	// Builds from a Mesh surface array set (Mesh::ARRAY_*). Triangles only.
 	static Ref<NaniteDAG> build_from_surface(const Array &p_arrays, const Settings &p_settings, String *r_error = nullptr);
 
-	// Builds from raw buffers. `p_positions` holds 3 floats per vertex,
-	// `p_attributes` holds `p_attribute_count` floats per vertex.
-	static Ref<NaniteDAG> build(const LocalVector<float> &p_positions, uint32_t p_vertex_count,
-			const LocalVector<float> &p_attributes, uint32_t p_attribute_count,
-			const LocalVector<float> &p_attribute_weights, const LocalVector<uint32_t> &p_indices,
+	// Builds from raw buffers. Positions hold 3 floats per vertex; normals hold
+	// 3 and UVs 2, and either may be empty. The vertex record the pool contract
+	// asks for is exactly these three, so they are named rather than passed as
+	// an opaque attribute block: the same values drive the simplifier's
+	// attribute metric and end up stored in the DAG.
+	static Ref<NaniteDAG> build(const LocalVector<float> &p_positions, const LocalVector<float> &p_normals,
+			const LocalVector<float> &p_uvs, uint32_t p_vertex_count, const LocalVector<uint32_t> &p_indices,
 			const Settings &p_settings, String *r_error = nullptr);
 };
