@@ -46,6 +46,10 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/RegisterTypes.h>
 
+#ifdef GODOT_JOLT_HAIR
+#include <Jolt/Physics/Hair/RegisterHair.h>
+#endif
+
 #include <cstdarg>
 
 void *jolt_alloc(size_t p_size) {
@@ -107,6 +111,13 @@ void jolt_initialize() {
 	JPH::Factory::sInstance = new JPH::Factory();
 
 	JPH::RegisterTypes();
+
+#ifdef GODOT_JOLT_HAIR
+	// RegisterTypes() does not cover the hair system; it needs its own call. Keyed on the hair
+	// sources being compiled rather than on which compute backend is selected -- HairSettings has
+	// to reach the factory the same way whichever backend ends up running the solver.
+	JPH::RegisterHair();
+#endif
 
 	JoltCustomRayShape::register_type();
 	JoltCustomUserDataShape::register_type();

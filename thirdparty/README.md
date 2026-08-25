@@ -517,7 +517,7 @@ Files generated from upstream source:
 Files extracted from upstream source:
 
 - All files in `Jolt/`, except `Jolt/Jolt.cmake` and any files dependent on `ENABLE_OBJECT_STREAM` as seen in `Jolt/Jolt.cmake`.
-- `Jolt/Physics/Hair/`, `Jolt/Compute/` and `Jolt/Shaders/` are vendored in full, unlike upstream Godot which omits them. Only the CPU compute backend is compiled (`jolt_hair_compute=cpu`); the DX12/Vulkan/Metal backends are vendored but not built, as they require an offline HLSL compile step that does not exist yet.
+- `Jolt/Physics/Hair/`, `Jolt/Compute/` and `Jolt/Shaders/` are vendored in full, unlike upstream Godot which omits them. None of them are compiled by default; `jolt_hair_compute=cpu` builds the hair solver on its CPU compute backend. The DX12/Vulkan/Metal backends are vendored but not built, as they require an offline HLSL compile step that does not exist yet.
 - `LICENSE`
 
 Patches:
