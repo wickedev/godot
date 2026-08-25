@@ -7377,6 +7377,10 @@ uint64_t RenderingDeviceDriverVulkan::get_resource_native_handle(DriverResource 
 			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
 			return (uint64_t)tex_info->vk_view_create_info.format;
 		}
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_driver_id.id;
+			return (uint64_t)cmd_buf_info->vk_command_buffer;
+		}
 		case DRIVER_RESOURCE_SAMPLER:
 		case DRIVER_RESOURCE_UNIFORM_SET:
 		case DRIVER_RESOURCE_BUFFER:

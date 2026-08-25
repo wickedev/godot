@@ -5779,6 +5779,10 @@ uint64_t RenderingDeviceDriverD3D12::get_resource_native_handle(DriverResource p
 			const TextureInfo *tex_info = (const TextureInfo *)p_driver_id.id;
 			return (uint64_t)tex_info->resource;
 		} break;
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			const CommandBufferInfo *cmd_buf_info = (const CommandBufferInfo *)p_driver_id.id;
+			return (uint64_t)cmd_buf_info->cmd_list.Get();
+		}
 		case DRIVER_RESOURCE_COMPUTE_PIPELINE:
 		case DRIVER_RESOURCE_RENDER_PIPELINE: {
 			return p_driver_id.id;

@@ -2516,6 +2516,13 @@ uint64_t RenderingDeviceDriverMetal::get_resource_native_handle(DriverResource p
 			MDRenderPipeline *pipeline = (MDRenderPipeline *)(p_driver_id.id);
 			return (uint64_t)(uintptr_t)pipeline->state.get();
 		}
+		case DRIVER_RESOURCE_COMMAND_BUFFER: {
+			// MDCommandBufferBase exposes no native handle, and the concrete MDCommandBuffer lives
+			// behind the Metal 3 objects header. Adding a virtual accessor to the shared base would
+			// only serve a consumer that does not exist yet: GPU profiler zones are Vulkan and
+			// Direct3D 12 for now, and Metal timing is tracked separately.
+			return 0;
+		}
 		default: {
 			return 0;
 		}
