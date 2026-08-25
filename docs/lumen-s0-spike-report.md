@@ -28,7 +28,15 @@ RESULT blas[snorm16x4]=OK (stride=8B)
 RESULT blas[snorm16x3]=OK (stride=6B)
 ```
 
-**판정: 경로 (c) 진입 조건 충족.** `RenderingDevice`의 RT 표면이 GDScript에서 그대로 동작한다 — `has_feature` 두 종 모두 `true`, `blas_create` → `blas_build` 왕복 성공.
+**판정: 경로 (c) 진입 조건 충족 — 단 아래 범위 단서 하에서.**
+
+> ### ⚠️ 범위 단서 — 이 판정은 **파이프라인과 ray query를 둘 다 지원하는 디바이스**에서 측정됐다
+>
+> GB10은 `SUPPORTS_RAYTRACING_PIPELINE`·`SUPPORTS_RAY_QUERY`가 **둘 다 true**다. **ray query만 지원하는 디바이스에서는 현재 이 판정이 성립하지 않을 수 있다** — RD의 레이트레이싱 케이퍼빌리티 가드가 전부 OR(`!파이프라인 && !ray_query`)이라, 파이프라인 전용 연산(`raytracing_pipeline_create`·`hit_sbt_create`)이 ray-query-only 디바이스에서 가드를 통과해 미지원 드라이버로 내려간다. 그리고 §아래 발견 3대로 `tlas_build`가 **모든 BLAS 인스턴스에 hit SBT 범위를 무조건 요구**하므로, hit SBT를 만들 수 없으면 **TLAS 빌드 자체가 실패한다**.
+>
+> **즉 ray query만 지원하는 디바이스에서 ray query를 쓸 수 없다.** 지금은 발현하지 않는다(GB10이 둘 다 지원). **Metal RT 백엔드가 들어오면 실물이 된다** — Apple은 ray query 상당만 제공하고 파이프라인이 없다.
+>
+> ⇒ **이 판정은 "Vulkan/데스크톱 디스크리트 GPU에서 진입 가능"으로 읽어야 하고, macOS로 일반화하면 안 된다.** 해당 결함은 C1이 조사 중이다. `RenderingDevice`의 RT 표면이 GDScript에서 그대로 동작한다 — `has_feature` 두 종 모두 `true`, `blas_create` → `blas_build` 왕복 성공.
 
 ### G2 §6 답변이 여기서 **끝까지** 검증됐다
 
