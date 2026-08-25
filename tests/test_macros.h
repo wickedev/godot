@@ -80,6 +80,22 @@
 // the rest of the test depends on. Only usable in a void-returning scope; a
 // value-returning helper needs its own sentinel return.
 //
+// Two scope hazards, both measured rather than assumed:
+//
+//  - Inside a SUBCASE, returning skips EVERY SIBLING SUBCASE, not just the
+//    rest of this one. doctest never reaches the later SUBCASE statements in
+//    that pass, so it does not learn they exist. A probe with three subcases
+//    that returns from the first records only the first as visited. Do not use
+//    this inside a subcase unless losing the siblings on failure is acceptable.
+//
+//  - Inside a helper or lambda, it returns from THAT function, not from the
+//    test case. The caller keeps running, so the caller needs its own guard on
+//    whatever the helper handed back.
+//
+// It also returns past any manual cleanup between the guard and the end of the
+// scope. Use RAII for anything that must be undone, or do not use the macro
+// there.
+//
 // The control flow is separated from the reporting so that the control flow can
 // be tested without producing a real assertion failure -- see
 // tests/core/test_macros_guard.cpp. Pass a different reporter to

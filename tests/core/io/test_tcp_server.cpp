@@ -109,6 +109,7 @@ TEST_CASE("[TCPServer] Accept a connection and receive/send data") {
 	Ref<TCPServer> server = create_server(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client = create_client(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client_from_server = accept_connection(server);
+	REQUIRE_OR_RETURN(client_from_server.is_valid());
 
 	wait_for_condition([&]() {
 		return client->poll() != Error::OK || client->get_status() == StreamPeerTCP::STATUS_CONNECTED;
@@ -141,7 +142,9 @@ TEST_CASE("[TCPServer] Handle multiple clients at the same time") {
 
 	Vector<Ref<StreamPeerTCP>> clients_from_server;
 	for (int i = 0; i < clients.size(); i++) {
-		clients_from_server.push_back(accept_connection(server));
+		const Ref<StreamPeerTCP> accepted = accept_connection(server);
+		REQUIRE_OR_RETURN(accepted.is_valid());
+		clients_from_server.push_back(accepted);
 	}
 
 	wait_for_condition([&]() {
@@ -182,6 +185,7 @@ TEST_CASE("[TCPServer] When stopped shouldn't accept new connections") {
 	Ref<TCPServer> server = create_server(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client = create_client(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client_from_server = accept_connection(server);
+	REQUIRE_OR_RETURN(client_from_server.is_valid());
 
 	wait_for_condition([&]() {
 		return client->poll() != Error::OK || client->get_status() == StreamPeerTCP::STATUS_CONNECTED;
@@ -224,6 +228,7 @@ TEST_CASE("[TCPServer] Should disconnect client") {
 	Ref<TCPServer> server = create_server(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client = create_client(LOCALHOST, PORT);
 	Ref<StreamPeerTCP> client_from_server = accept_connection(server);
+	REQUIRE_OR_RETURN(client_from_server.is_valid());
 
 	wait_for_condition([&]() {
 		return client->poll() != Error::OK || client->get_status() == StreamPeerTCP::STATUS_CONNECTED;
