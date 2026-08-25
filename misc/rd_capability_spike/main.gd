@@ -33,6 +33,11 @@ var _b2_thread: Thread
 var _b2_result := "not run"
 
 var _phase := 0
+var _mutex := Mutex.new()
+
+## Watchdog: every probe must reach a terminal state. Without this an error path that
+## never fires its callback hangs the harness instead of reporting a failure.
+const WATCHDOG_FRAMES := 900
 
 
 func _ready() -> void:
@@ -49,9 +54,16 @@ func _ready() -> void:
 	print("=== RD capability spike ===")
 	print("RESULT vsync_mode_after_disable=%d (0=disabled)" % DisplayServer.window_get_vsync_mode())
 	print("RESULT device_name=%s" % RenderingServer.get_video_adapter_name())
-	print("RESULT rendering_driver=%s" % ProjectSettings.get_setting("rendering/rendering_device/driver", "?"))
-	print("RESULT thread_model=%s (0=single-safe 1=single-unsafe 2=multi-threaded)" % ProjectSettings.get_setting(
-		"rendering/driver/threads/thread_model", "unset(default 1)"))
+	# The ACTIVE driver, not the project setting -- they differ (Apple silicon defaults
+	# to Metal regardless of the "vulkan" setting), and attributing results to the wrong
+	# backend invalidates them.
+	print("RESULT rendering_driver_active=%s" % RenderingServer.get_current_rendering_driver_name())
+	print("RESULT rendering_method_active=%s" % RenderingServer.get_current_rendering_method())
+	print("RESULT rendering_driver_setting=%s" % ProjectSettings.get_setting("rendering/rendering_device/driver", "unset"))
+	print("RESULT cmdline=%s" % " ".join(OS.get_cmdline_args()))
+	# project_settings.cpp:1851 -> "Unsafe (deprecated),Safe,Separate"; default is Safe(1).
+	print("RESULT thread_model=%s (0=unsafe-deprecated 1=safe-single 2=separate-render-thread)" % ProjectSettings.get_setting(
+		"rendering/driver/threads/thread_model", "unset(default 1=safe)"))
 	print("RESULT is_render_thread_same_as_main=%s" % str(
 		OS.get_thread_caller_id() == OS.get_main_thread_id()))
 	print("RESULT frame_queue_size=%s" % ProjectSettings.get_setting(
@@ -79,7 +91,7 @@ func _process(_delta: float) -> void:
 				if _a1_issued < A1_SAMPLES:
 					_a1_issued += 1
 					RenderingServer.call_on_render_thread(_a1_request)
-				elif _a1_latencies.size() >= A1_SAMPLES:
+				elif _a1_sample_count() >= A1_SAMPLES:
 					_a1_report()
 					_phase = 1
 		1:
@@ -104,20 +116,31 @@ func _process(_delta: float) -> void:
 
 # --- A1 ----------------------------------------------------------------------
 func _a1_request() -> void:
+	_mutex.lock()
 	_a1_request_frames.push_back(Engine.get_frames_drawn())
+	_mutex.unlock()
 	var err := _rd.buffer_get_data_async(_buffer, _a1_callback, 0, READBACK_BYTES)
 	if err != OK:
-		print("RESULT a1_error=%d" % err)
+		print("RESULT a1=FAILED err=%d" % err)
 		_a1_done = true
 
 
 func _a1_callback(data: PackedByteArray) -> void:
+	var landed := Engine.get_frames_drawn()
+	_mutex.lock()
 	var idx := _a1_latencies.size()
-	if idx >= _a1_request_frames.size():
-		return
-	_a1_latencies.push_back(Engine.get_frames_drawn() - _a1_request_frames[idx])
+	if idx < _a1_request_frames.size():
+		_a1_latencies.push_back(landed - _a1_request_frames[idx])
+	_mutex.unlock()
 	if data.size() != READBACK_BYTES:
 		print("RESULT a1_short_read=%d" % data.size())
+
+
+func _a1_sample_count() -> int:
+	_mutex.lock()
+	var n := _a1_latencies.size()
+	_mutex.unlock()
+	return n
 
 
 func _a1_report() -> void:

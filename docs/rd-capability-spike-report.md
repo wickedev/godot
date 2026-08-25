@@ -15,9 +15,19 @@
 | **ⓑ** | 스레드 가드 #99750 현재 상태 | 🟡 **가드 존속 / 우회 경로 있음** | 백그라운드 워커에서 메인 RD 직접 호출은 **여전히 불가**. 승인 경로는 `call_on_render_thread` 마셜링 |
 | **ⓒ** | bindless / descriptor indexing 노출 | 🔴 **FAIL** | 로드맵 G0의 "bindless 불가 → VT 축소 설계" 분기 **발동** |
 
-**측정 상태:** ⓐ 왕복 지연·ⓑ 가드 동작은 **실측 완료**(macOS/M2 Pro/MoltenVK, `misc/rd_capability_spike/`). ⓒ는 코드 구조 문제라 정적 확정. 잔여 미측정 항목은 §5.
+**측정 상태:** ⓐ 왕복 지연·ⓑ 가드 동작 **실측 완료 — 2개 백엔드 교차 확인.** ⓒ는 코드 구조 문제라 정적 확정. 잔여 미측정은 §5.
 
-> **⚠️ 실측은 macOS/MoltenVK 단일 플랫폼이다.** Windows/Linux 재측정 필요. 하니스를 동봉했으니 각 레인이 자기 플랫폼에서 그대로 돌릴 수 있다.
+| 실측 환경 | 백엔드 | 확인 |
+|---|---|---|
+| Apple M2 Pro / macOS | **Metal** | `rendering_driver_active=metal` |
+| NVIDIA GB10 / Linux aarch64 | **Vulkan** | `rendering_driver_active=vulkan` |
+
+> ### ⚠️ 초판 정정 — 백엔드 귀속이 틀렸었다
+> 초판은 macOS 측정을 **"MoltenVK/Vulkan"** 이라고 적었다. **틀렸다.** 하니스가 *프로젝트 설정*(`rendering/rendering_device/driver` = `"vulkan"`)을 출력했을 뿐, 실제 초기화된 드라이버는 **Metal**이었다. Apple Silicon에서는 설정과 무관하게 Metal로 해석된다.
+>
+> 하니스를 `RenderingServer.get_current_rendering_driver_name()`(**실제 활성 드라이버**)를 찍도록 고쳤고, 이후 모든 측정에 백엔드를 명시한다. **초판의 macOS 수치를 MoltenVK 근거로 인용한 곳이 있다면 전부 무효다.**
+>
+> 다행히 결론은 살아남았다 — Linux/Vulkan에서 재측정한 결과가 §ⓐ의 법칙을 **그대로 재현**했다. 이제 근거는 Metal·Vulkan **2개 독립 백엔드**다.
 
 ---
 
@@ -31,18 +41,32 @@
 
 ### 📏 왕복 지연 — 실측 (⚠️ 코드 분석 예측이 틀렸다)
 
-이 리포트 초안은 메커니즘만 보고 *"왕복 지연 = `frames.size()`"* 라고 적었다. **실측 결과 틀렸다.** 4개 구성 × 각 10샘플, 정상상태(60프레임 워밍업 후) 측정, **편차 0**:
+이 리포트 초안은 메커니즘만 보고 *"왕복 지연 = `frames.size()`"* 라고 적었다. **실측 결과 틀렸다.**
 
-| `thread_model` | `frame_queue_size` | 왕복 프레임 |
-|:---:|:---:|:---:|
-| 1 (단일) | 2 (기본) | **1** |
-| 1 (단일) | 3 | **2** |
-| 2 (멀티스레드) | 2 | **2** |
-| 2 (멀티스레드) | 3 | **3** |
+4구성 × 각 10샘플, 정상상태(60프레임 워밍업 후), **편차 0**. **두 백엔드에서 동일한 값이 나왔다:**
 
-⇒ **단일 스레드 = `frame_queue_size - 1` · 멀티스레드 = `frame_queue_size`**
+| `thread_model` | `frame_queue_size` | Metal (M2 Pro) | **Vulkan (GB10)** |
+|:---:|:---:|:---:|:---:|
+| 1 = Safe (단일, 기본) | 2 (기본) | 1 | **1** |
+| 1 = Safe | 3 | 2 | **2** |
+| 2 = Separate (렌더 스레드 분리) | 2 | 2 | **2** |
+| 2 = Separate | 3 | 3 | **3** |
 
-멀티스레드의 +1은 메인 스레드가 렌더 스레드보다 한 프레임 앞서는 파이프라이닝 오프셋이다.
+⇒ **단일 = `frame_queue_size - 1` · 렌더 스레드 분리 = `frame_queue_size`**
+
+분리 모델의 +1은 메인 스레드가 렌더 스레드보다 한 프레임 앞서는 파이프라이닝 오프셋이다.
+
+> **`thread_model` 값 정정:** 초판 범례가 0/1을 뒤집어 적었다. 정본은 `core/config/project_settings.cpp:1851` — **`Unsafe (deprecated)=0, Safe=1, Separate=2`**, 기본 `Safe`(1). 표의 매핑(1=단일, 2=분리)은 처음부터 옳았고 범례 텍스트만 틀렸다.
+>
+> **재현 명령** (구성별로 `project.godot`에 두 줄 추가 후 실행):
+> ```
+> [rendering]
+> rendering_device/vsync/frame_queue_size=<2|3>
+> driver/threads/thread_model=<1|2>
+> ```
+> ```
+> xvfb-run -a bin/godot.linuxbsd.editor.arm64 --rendering-driver vulkan --path misc/rd_capability_spike
+> ```
 
 **설계에 쓸 숫자는 멀티스레드 쪽이다.** 기본값(`thread_model=1`, `fq=2`)에서는 1프레임이지만 AAA 타이틀은 거의 확실히 스레드 렌더링을 켜므로 **2~3프레임을 전제로 팝인 예산을 잡아야 한다.** 1프레임 기준으로 설계하면 안 된다.
 
@@ -62,6 +86,10 @@
 | `block_size` | `staging_buffer/block_size_kb` **기본 256 KB** | `project_settings.cpp:1899` |
 | `max_size` | `staging_buffer/max_size_mb` **기본 128 MB** | `project_settings.cpp:1900` |
 | 다운로드 풀 설정 | **업로드 값을 그대로 복사** | `rendering_device.cpp:8612-8613` |
+
+> **`max_size`는 프레임당 예산이 아니다.** 풀 **전체의 상한**이고, 블록은 `frame_used <= frames_drawn - frames.size()`일 때만 재활용된다(`:993`) — 즉 **in-flight 프레임들이 합산 점유**한다. 프레임당 실효 여유는 대략 `max_size / frames.size()`이며 업로드 트래픽 패턴에 따라 달라진다. 128 MB를 "프레임당 128 MB 써도 된다"로 읽으면 안 된다.
+>
+> 업로드와 다운로드는 **물리적으로 별개 풀**이다(`upload_staging_buffers` / `download_staging_buffers`). 공유되는 것은 **크기 설정 두 개**뿐이다.
 
 ### 📏 스톨 임계 — **측정 시도했으나 수치를 얻지 못했다 (정직한 실패)**
 
@@ -138,7 +166,9 @@ ERROR: This function (buffer_get_data_async) can only be called from the render 
 ```
 **4개 구성(단일/멀티 × fq 2/3) 전부 동일.** 가드는 살아 있다.
 
-**그리고 `call_on_render_thread` 마셜링 지연은 4개 구성 모두 0프레임이었다** — 밀어 넣은 콜러블이 *같은 프레임의 렌더 중에* 실행된다. **우회 경로에 프레임 비용이 붙지 않는다는 뜻으로, 이 스파이크에서 가장 반가운 결과다.**
+**`call_on_render_thread` 마셜링 지연은 8회 측정(2백엔드 × 4구성) 전부 0프레임이었다.**
+
+> ⚠️ **범위 한정:** 이 0프레임은 **`_process`에서 enqueue한 경우**에 한한다. `_process`는 프레임의 커맨드 큐가 아직 플러시되기 전에 돌므로 같은 프레임 안에서 소화된다. **다른 시점(물리 틱, 워커 스레드, 프레임 후반)에서 밀어 넣으면 다를 수 있고 측정하지 않았다.** "마셜링은 항상 공짜"로 일반화하지 말 것.
 
 ### 승인된 우회 경로 두 가지
 
@@ -251,9 +281,10 @@ vis-buffer 리졸브에서 머티리얼 인덱스는 **픽셀마다 다르다 = 
 
 ## 4. 백엔드 범위 한정
 
-본 리포트는 **Vulkan 백엔드만** 조사했다. `drivers/metal/`·`drivers/d3d12/`의 동등 경로는 미조사다.
-- D3D12는 descriptor heap 모델이라 bindless 사정이 다를 수 있다.
+**ⓒ의 코드 조사는 Vulkan 백엔드에 한정된다.** `drivers/metal/`·`drivers/d3d12/`의 동등 경로는 **미조사이며, "미지원"이 아니라 "확인하지 않음"이다** — 이 둘을 혼동하면 안 된다.
+- D3D12는 descriptor heap 모델이라 bindless 사정이 다를 수 있다(SM6.6 ResourceDescriptorHeap 등).
 - Metal은 argument buffer 모델이다.
+- ⓐ·ⓑ는 Metal에서도 실측했다(위 표) — 코드 조사만 Vulkan 한정이라는 뜻이다.
 - 다만 **ⓒ의 RD 추상화 레벨 결론(`UniformType`에 bindless 개념 부재)은 백엔드 무관하게 성립한다.**
 
 콘솔(W4)은 범위 밖.
