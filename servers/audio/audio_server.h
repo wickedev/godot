@@ -67,6 +67,9 @@ private:
 
 	float channel_disable_threshold_db = 0.0f;
 	uint32_t channel_disable_frames = 0;
+	bool skip_silent_playbacks = false;
+	float playback_disable_threshold_linear = 0.0f;
+	uint32_t playback_disable_blocks = 0;
 
 	int channel_count = 0;
 	int to_mix = 0;
@@ -157,6 +160,8 @@ private:
 		AudioStreamPlaybackBusDetails *prev_bus_details = nullptr;
 		// The next few samples are stored here so we have some time to fade audio out if it ends abruptly at the beginning of the next mix.
 		AudioFrame lookahead[AuSC::LOOKAHEAD_BUFFER_SIZE];
+		// Number of consecutive mix blocks during which every active bus volume for this playback stayed below the disable threshold. Should only be accessed on the audio thread.
+		uint32_t silent_mix_blocks = 0;
 	};
 
 	SafeList<AudioStreamPlaybackListNode *> playback_list;

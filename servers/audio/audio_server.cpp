@@ -188,6 +188,46 @@ void AudioServer::_mix_step() {
 		//  A more punchy option for fading out could be to just use the lookahead buffer.
 		bool fading_out = playback->state.load() == AudioStreamPlaybackListNode::FADE_OUT_TO_DELETION || playback->state.load() == AudioStreamPlaybackListNode::FADE_OUT_TO_PAUSE;
 
+		// Get the bus details for this playback. This contains information about which buses the playback is assigned to and the volume of the playback on each bus.
+		AudioStreamPlaybackBusDetails *bus_details_ptr = playback->bus_details.load();
+		ERR_FAIL_NULL(bus_details_ptr);
+		// Make a copy of the bus details so we can modify it without worrying about other threads.
+		AudioStreamPlaybackBusDetails bus_details = *bus_details_ptr;
+
+		// Virtual-voice decode skip: if enabled and every active bus volume for this playback (current and
+		// previous, so volume ramps have finished) has stayed below the channel disable threshold for longer
+		// than `audio/buses/channel_disable_time`, skip decoding the stream entirely. The playback stays in the
+		// list and resumes decoding from the stalled position as soon as it becomes audible again.
+		if (skip_silent_playbacks && !fading_out) {
+			bool audible = false;
+			for (int idx = 0; idx < AuSC::MAX_BUSES_PER_PLAYBACK && !audible; idx++) {
+				for (int channel_idx = 0; channel_idx < channel_count && !audible; channel_idx++) {
+					if (bus_details.bus_active[idx] && MAX(bus_details.volume[idx][channel_idx].left, bus_details.volume[idx][channel_idx].right) > playback_disable_threshold_linear) {
+						audible = true;
+					}
+					if (playback->prev_bus_details->bus_active[idx] && MAX(playback->prev_bus_details->volume[idx][channel_idx].left, playback->prev_bus_details->volume[idx][channel_idx].right) > playback_disable_threshold_linear) {
+						audible = true;
+					}
+				}
+			}
+			if (audible) {
+				playback->silent_mix_blocks = 0;
+			} else {
+				playback->silent_mix_blocks++;
+				if (playback->silent_mix_blocks > playback_disable_blocks) {
+					if (playback->silent_mix_blocks == playback_disable_blocks + 1) {
+						// First skipped block: drop the stale lookahead tail so nothing pops when the playback resumes.
+						for (int i = 0; i < AuSC::LOOKAHEAD_BUFFER_SIZE; i++) {
+							playback->lookahead[i] = AudioFrame(0, 0);
+						}
+					}
+					// Keep the volume ramp state consistent for when the playback becomes audible again.
+					*playback->prev_bus_details = bus_details;
+					continue;
+				}
+			}
+		}
+
 		AudioFrame *buf = mix_buffer.ptrw();
 
 		// Copy the old contents of the lookahead buffer into the beginning of the mix buffer.
@@ -224,13 +264,7 @@ void AudioServer::_mix_step() {
 			}
 		}
 
-		// Get the bus details for this playback. This contains information about which buses the playback is assigned to and the volume of the playback on each bus.
-		AudioStreamPlaybackBusDetails *bus_details_ptr = playback->bus_details.load();
-		ERR_FAIL_NULL(bus_details_ptr);
-		// Make a copy of the bus details so we can modify it without worrying about other threads.
-		AudioStreamPlaybackBusDetails bus_details = *bus_details_ptr;
-
-		// Mix to any active buses.
+		// Mix to any active buses. Note: `bus_details` was snapshotted before the decode-skip gate above.
 		for (int idx = 0; idx < AuSC::MAX_BUSES_PER_PLAYBACK; idx++) {
 			if (!bus_details.bus_active[idx]) {
 				continue;
@@ -1333,9 +1367,12 @@ void AudioServer::init_channels_and_buffers() {
 void AudioServer::init() {
 	channel_disable_threshold_db = GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "audio/buses/channel_disable_threshold_db", PROPERTY_HINT_RANGE, "-80,0,0.1,suffix:dB"), -60.0);
 	channel_disable_frames = float(GLOBAL_DEF_RST(PropertyInfo(Variant::FLOAT, "audio/buses/channel_disable_time", PROPERTY_HINT_RANGE, "0,5,0.01,or_greater"), 2.0)) * get_mix_rate();
+	skip_silent_playbacks = GLOBAL_DEF_RST("audio/general/skip_silent_playback_decode", false);
+	playback_disable_threshold_linear = Math::db_to_linear(channel_disable_threshold_db);
 	// TODO: Buffer size is hardcoded for now. This would be really nice to have as a project setting because currently it limits audio latency to an absolute minimum of 11ms with default mix rate, but there's some additional work required to make that happen. See TODOs in `_mix_step_for_channel`.
 	// When this becomes a project setting, it should be specified in milliseconds rather than raw sample count, because 512 samples at 192khz is shorter than it is at 48khz, for example.
 	buffer_size = 512;
+	playback_disable_blocks = channel_disable_frames / buffer_size + 1;
 
 	init_channels_and_buffers();
 
