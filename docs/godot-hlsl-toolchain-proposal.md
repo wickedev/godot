@@ -1,5 +1,34 @@
 # HLSL 셰이더 툴체인 — Task #11 (7b) 제안서
 
+> ## ⛔ 정정 (2026-08-25, 실측 후) — 아래 §0의 결론은 **채택되지 않았다**
+>
+> **"새 외부 의존 0"은 런타임 기준으로만 참이었다.** glslang의 HLSL 프론트엔드는 벤더링으로 공짜지만,
+> **그 출력을 쓸 수 있게 만드는 legalization(SPIRV-Tools)은 공짜가 아니다.** glslang의 HLSL 출력은
+> `spirv-opt --legalize-hlsl`을 전제로 설계돼 있는데, Godot은 `ENABLE_OPT=0`이고 SPIRV-Tools를
+> 벤더링하지 않는다(`spirv-headers`·`spirv-reflect`·`spirv-cross`·`re-spirv`는 있으나 본체는 없다).
+>
+> **벤더링된 Jolt 커널 17개 전수 실측:**
+>
+> | 경로 | 컴파일 | spirv-val |
+> |---|---|---|
+> | glslang HLSL 프론트엔드 (`ForbidIncluder`) | **0/17** | — |
+> | glslang HLSL + VFS includer | 16/17 | 측정 불가 (검증기 없음) |
+> | **DXC 오프라인** | **17/17** | **17/17** |
+>
+> → **채택된 방향은 ③이 아니라 오프라인 툴체인이다.** 커널은 벤더링된 고정 자산이라 런타임 컴파일이
+> 필요 없고, 사용자 셰이더는 GLSL 경로를 쓴다. DXC를 **오프라인 도구로** 쓰고 `.spv` 산출물을 커밋한다.
+> 런타임 HLSL 경로는 수요자가 없어 폐기한다. SPIRV-Tools 벤더링도 `ENABLE_OPT` 전환도 불요.
+>
+> **§1(e)의 판정도 축을 잘못 잡았다.** "SM6 전용 기능 grep 0매치 → 프론트엔드 사정권"이라 썼으나,
+> 문제는 SM 레벨이 아니라 **프론트엔드 성숙도**였다. `HairSkinVertices`는 SM5 문법
+> (`typedef float4 JPH_Mat44[4]` — 배열 매개변수)인데도 glslang이 오버로드를 못 푼다. DXC는 처리한다.
+> **기능 목록 grep으로는 이 축이 보이지 않으며, 실제 커널을 컴파일해봐야 나온다.**
+>
+> 아래 본문은 판단 경위 기록으로 남긴다. §2의 glslang 벤더링 실측(16파일 실존·`ENABLE_HLSL` 코드
+> 경로 잔존)과 §4의 spirv-cross 조사는 여전히 유효하다.
+
+---
+
 > **결정 요청:** Jolt 헤어의 GPU 백엔드(7c)를 켜려면 HLSL을 SPIR-V/metallib로 컴파일하는 수단이 필요하다.
 > 7a 보고 시점에는 선택지를 "① DXC를 빌드 의존으로 추가 vs ② 사전 컴파일 바이너리 벤더링" 둘로 봤다.
 > **실측 결과 셋째 선택지가 있고, 그게 답이다.**
