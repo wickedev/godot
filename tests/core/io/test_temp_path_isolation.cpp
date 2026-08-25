@@ -55,7 +55,13 @@ TEST_CASE("[TempPathIsolation] Acquisition skips occupied candidates and adopts 
 	REQUIRE((taken_dir_err == OK || taken_dir_err == ERR_ALREADY_EXISTS));
 	{
 		Ref<FileAccess> f = FileAccess::open(base.path_join("taken_file"), FileAccess::WRITE);
+		// Explicit return, not just REQUIRE: see the logger commit -- a failed
+		// REQUIRE does not leave the case in this build, so f->store_8() would
+		// still run and dereference null.
 		REQUIRE(f.is_valid());
+		if (f.is_null()) {
+			return;
+		}
 		f->store_8(0);
 	}
 	Vector<String> candidates;
@@ -65,6 +71,9 @@ TEST_CASE("[TempPathIsolation] Acquisition skips occupied candidates and adopts 
 	{
 		Ref<DirAccess> da = DirAccess::open(base);
 		REQUIRE(da.is_valid());
+		if (da.is_null()) {
+			return;
+		}
 		if (!da->is_link(base.path_join("taken_link"))) {
 			REQUIRE(da->create_link(base.path_join("taken_dir"), base.path_join("taken_link")) == OK);
 		}

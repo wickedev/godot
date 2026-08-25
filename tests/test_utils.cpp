@@ -67,12 +67,16 @@ static const String &_get_run_root() {
 	// Platform scope: the exclusivity in (1) relies on mkdir's atomic
 	// EEXIST-on-existing behavior (DirAccessUnix / DirAccessWindows). Android
 	// routes absolute filesystem paths to DirAccessJAndroid
-	// (os_android.cpp:135), whose make_dir is a non-atomic dir_exists check
+	// (os_android.cpp:135), whose make_dir is a dir_exists() check
 	// (dir_access_jandroid.cpp:221) followed by Kotlin
 	// `dirFile.isDirectory || dirFile.mkdirs()`
-	// (FilesystemDirectoryAccess.kt:177) — which reports success for an
-	// ALREADY-EXISTING directory, so it cannot be exclusive even without the
-	// race. The guarantee is only claimed for desktop test runners.
+	// (FilesystemDirectoryAccess.kt:177). The two steps are not atomic
+	// together: a directory created by someone else BETWEEN the C++ check and
+	// the Kotlin call is reported as success, so a raced candidate can be
+	// adopted. That is a narrower claim than "reports success for any existing
+	// directory" -- the C++ check does reject one that already existed when it
+	// ran. Android is therefore outside the scope of guarantee (1); it is not
+	// excluded from running these tests.
 	// Scope: this isolates state that goes through this helper. Separately,
 	// test_logger.cpp keys its project name on get_run_id() so its user://
 	// namespace is per-run too -- but that is that one fixture's doing, not a
