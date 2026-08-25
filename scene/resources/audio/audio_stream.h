@@ -78,11 +78,31 @@ class AudioStreamPlayback : public RefCounted {
 	GDCLASS(AudioStreamPlayback, RefCounted);
 
 	SafeNumeric<uint64_t> suspension_generation;
+	// Depth of nested begin/end_stream_mutation() scopes on the mutating thread
+	// (e.g. start() calling seek()). Mutations of one playback must not be
+	// issued from multiple threads at once (that is already undefined upstream).
+	int stream_mutation_nesting = 0;
 
 protected:
 	static void _bind_methods();
-	// See is_inaudible_suspension_safe(): opt-in playbacks call this from start()/seek().
+	// See is_inaudible_suspension_safe(): opt-in playbacks call this from start()/seek(),
+	// AFTER their no-op early returns (a call that mutated nothing must not bump) and
+	// inside a StreamMutationScope.
 	void bump_suspension_generation() { suspension_generation.increment(); }
+	// Serializes a public stream mutation (start/seek/scripted mix) against the audio
+	// thread: while `audio/general/suspend_inaudible_playbacks` is enabled, the audio
+	// thread's wake path inspects the generation and flushes residuals, which must
+	// never interleave with a mutation of the same decoder. Takes the AudioServer
+	// (driver) lock once per outermost scope; a no-op when the feature is disabled
+	// (no wake path exists then) or no AudioServer is running.
+	void begin_stream_mutation();
+	void end_stream_mutation();
+	struct StreamMutationScope {
+		AudioStreamPlayback *playback = nullptr;
+		StreamMutationScope(AudioStreamPlayback *p_playback) :
+				playback(p_playback) { playback->begin_stream_mutation(); }
+		~StreamMutationScope() { playback->end_stream_mutation(); }
+	};
 	PackedVector2Array _mix_audio_bind(float p_rate_scale, int p_frames);
 	GDVIRTUAL1_REQUIRED(_start, double)
 	GDVIRTUAL0_REQUIRED(_stop)
@@ -111,17 +131,23 @@ public:
 	// (see `audio/general/suspend_inaudible_playbacks`). Only plain file decoders should opt in;
 	// generators, microphones and composite streams must keep mixing so their internal state
 	// machines and ring buffers stay live.
-	// Opt-in contract: implementations MUST call bump_suspension_generation() from their public
-	// start() and seek() overrides so the AudioServer can detect stream mutations that happened
-	// while mixing was suspended (position comparison cannot express restart-at-same-position).
+	// Opt-in contract: public start()/seek() overrides MUST (a) hold a
+	// StreamMutationScope for their whole body, and (b) call
+	// bump_suspension_generation() after their no-op early returns and before
+	// mutating decoder state, so the AudioServer can detect stream mutations that
+	// happened while mixing was suspended (position comparison cannot express
+	// restart-at-same-position, and a no-op must not trigger a wake flush).
 	virtual bool is_inaudible_suspension_safe() const { return false; }
-	// Monotonic counter incremented on every public start()/seek() of an opt-in playback.
-	// Written on the main thread, read on the audio thread.
+	// Monotonic counter incremented on every mutating public start()/seek() of an
+	// opt-in playback. Written on the mutating thread, read on the audio thread.
 	uint64_t get_suspension_generation() const { return suspension_generation.get(); }
-	// Called by the AudioServer (audio thread, while mixing is not running for this playback)
-	// when it wakes a suspended playback whose generation changed: any internally buffered
-	// pre-mutation audio (resampler history, staging buffers) must be dropped.
-	virtual void reset_suspension_residuals() {}
+	// Called by the AudioServer (audio thread, under the driver lock) when it wakes
+	// a suspended playback whose generation changed. Must drop internally buffered
+	// PRE-mutation audio WITHOUT advancing the decoder — and must be a no-op when
+	// the buffered audio is already post-mutation (the mutation itself refilled it,
+	// e.g. start() via begin_resample()); flushing fresh residuals would drop the
+	// first frames of the restarted stream.
+	virtual void flush_suspension_residuals() {}
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -156,6 +182,10 @@ class AudioStreamPlaybackResampled : public AudioStreamPlayback {
 	AudioFrame internal_buffer[INTERNAL_BUFFER_LEN + CUBIC_INTERP_HISTORY];
 	unsigned int internal_buffer_end = -1;
 	uint64_t mix_offset = 0;
+	// Generation the internal buffer's contents belong to: set by begin_resample()
+	// AFTER the caller bumped, so flush_suspension_residuals() can tell fresh
+	// (post-mutation) residuals from stale ones. See flush_suspension_residuals().
+	SafeNumeric<uint64_t> residual_generation;
 
 protected:
 	void begin_resample();
@@ -166,12 +196,16 @@ protected:
 	GDVIRTUAL2R_REQUIRED(int, _mix_resampled, GDExtensionPtr<AudioFrame>, int)
 	GDVIRTUAL0RC_REQUIRED(float, _get_stream_sampling_rate)
 
+	// Script-facing wrapper: scripted begin_resample() advances the decoder, so it
+	// must run under the mutation protocol like any other public mutation.
+	void _begin_resample_bind();
+
 	static void _bind_methods();
 
 public:
 	virtual int mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) override;
 
-	virtual void reset_suspension_residuals() override { begin_resample(); }
+	virtual void flush_suspension_residuals() override;
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

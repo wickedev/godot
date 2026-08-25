@@ -230,8 +230,10 @@ bool AudioStreamPlaybackOggVorbis::_alloc_vorbis() {
 }
 
 void AudioStreamPlaybackOggVorbis::start(double p_from_pos) {
-	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
 	ERR_FAIL_COND(!ready);
+	bump_suspension_generation();
 	loop_fade_remaining = FADE_SIZE;
 	active = true;
 	seek(p_from_pos);
@@ -279,17 +281,19 @@ Variant AudioStreamPlaybackOggVorbis::get_parameter(const StringName &p_name) co
 }
 
 void AudioStreamPlaybackOggVorbis::seek(double p_time) {
-	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
 	ERR_FAIL_COND(!ready);
 	ERR_FAIL_COND(vorbis_stream.is_null());
 	if (!active) {
-		return;
+		return; // No-op: no generation bump.
 	}
 
 	if (p_time >= vorbis_stream->get_length()) {
 		p_time = 0;
 	}
 
+	bump_suspension_generation();
 	frames_mixed = uint32_t(vorbis_data->get_sampling_rate() * p_time);
 
 	const int64_t desired_sample = p_time * get_stream_sampling_rate();

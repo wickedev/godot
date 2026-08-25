@@ -108,7 +108,9 @@ float AudioStreamPlaybackMP3::get_stream_sampling_rate() {
 }
 
 void AudioStreamPlaybackMP3::start(double p_from_pos) {
-	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
+	bump_suspension_generation();
 	active = true;
 	seek(p_from_pos);
 	loops = 0;
@@ -132,15 +134,17 @@ double AudioStreamPlaybackMP3::get_playback_position() const {
 }
 
 void AudioStreamPlaybackMP3::seek(double p_time) {
-	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	// Inaudible-suspension opt-in contract (see AudioStreamPlayback).
+	StreamMutationScope mutation_scope(this);
 	if (!active) {
-		return;
+		return; // No-op: no generation bump.
 	}
 
 	if (p_time >= mp3_stream->get_length()) {
 		p_time = 0;
 	}
 
+	bump_suspension_generation();
 	frames_mixed = uint32_t(mp3_stream->sample_rate * p_time);
 	drmp3_seek_to_pcm_frame(&mp3d, (uint64_t)frames_mixed);
 }

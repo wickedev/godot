@@ -233,7 +233,7 @@ void AudioServer::_mix_step() {
 						for (int i = 0; i < AuSC::LOOKAHEAD_BUFFER_SIZE; i++) {
 							playback->lookahead[i] = AudioFrame(0, 0);
 						}
-						playback->stream_playback->reset_suspension_residuals();
+						playback->stream_playback->flush_suspension_residuals();
 					}
 				}
 			} else {

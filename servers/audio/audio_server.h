@@ -326,6 +326,11 @@ public:
 
 	/* MISC config */
 
+	// Whether `audio/general/suspend_inaudible_playbacks` is active (read-only at
+	// runtime; the setting is applied at startup). Used by AudioStreamPlayback's
+	// mutation protocol to decide whether public mutations must take the lock.
+	bool is_inaudible_suspension_enabled() const { return suspend_inaudible_playbacks; }
+
 	virtual void lock();
 	virtual void unlock();
 

@@ -71,7 +71,31 @@ int AudioStreamPlayback::mix(AudioFrame *p_buffer, float p_rate_scale, int p_fra
 	return ret;
 }
 
+void AudioStreamPlayback::begin_stream_mutation() {
+	if (stream_mutation_nesting++ > 0) {
+		return; // Nested (e.g. start() calling seek()); the outermost scope holds the lock.
+	}
+	AudioServer *server = AudioServer::get_singleton();
+	if (server && server->is_inaudible_suspension_enabled()) {
+		server->lock();
+	}
+}
+
+void AudioStreamPlayback::end_stream_mutation() {
+	if (--stream_mutation_nesting > 0) {
+		return;
+	}
+	AudioServer *server = AudioServer::get_singleton();
+	if (server && server->is_inaudible_suspension_enabled()) {
+		server->unlock();
+	}
+}
+
 PackedVector2Array AudioStreamPlayback::_mix_audio_bind(float p_rate_scale, int p_frames) {
+	// Scripted mixing consumes stream data outside the server's mix, which is a
+	// position mutation as far as the suspension protocol is concerned.
+	StreamMutationScope mutation_scope(this);
+	bump_suspension_generation();
 	Vector<AudioFrame> frames = mix_audio(p_rate_scale, p_frames);
 
 	PackedVector2Array res;
@@ -167,6 +191,35 @@ void AudioStreamPlaybackResampled::begin_resample() {
 	//mix buffer
 	_mix_internal(internal_buffer + 4, INTERNAL_BUFFER_LEN);
 	mix_offset = 0;
+	// The buffer now holds audio produced under the caller's (post-bump)
+	// generation: a wake must not flush it (see flush_suspension_residuals()).
+	residual_generation.set(get_suspension_generation());
+}
+
+void AudioStreamPlaybackResampled::flush_suspension_residuals() {
+	if (residual_generation.get() == get_suspension_generation()) {
+		// The mutation that woke us already refilled the buffer (start() path):
+		// these residuals are the first frames of the new stream position, not
+		// stale audio. Flushing them would drop the start of the sound.
+		return;
+	}
+	// Stale pre-mutation audio (seek() repositions the decoder without
+	// refilling). Drop it WITHOUT advancing the decoder: zero the buffer and
+	// history so up to one internal buffer of silence plays while the next
+	// mix() refills from the decoder's current (post-mutation) position. The
+	// wake ramp already fades in from silence, so this stays inaudible.
+	for (uint32_t i = 0; i < INTERNAL_BUFFER_LEN + CUBIC_INTERP_HISTORY; i++) {
+		internal_buffer[i] = AudioFrame(0.0, 0.0);
+	}
+	mix_offset = 0;
+	internal_buffer_end = -1;
+	residual_generation.set(get_suspension_generation());
+}
+
+void AudioStreamPlaybackResampled::_begin_resample_bind() {
+	StreamMutationScope mutation_scope(this);
+	bump_suspension_generation();
+	begin_resample();
 }
 
 int AudioStreamPlaybackResampled::_mix_internal(AudioFrame *p_buffer, int p_frames) {
@@ -181,7 +234,7 @@ float AudioStreamPlaybackResampled::get_stream_sampling_rate() {
 }
 
 void AudioStreamPlaybackResampled::_bind_methods() {
-	ClassDB::bind_method(D_METHOD("begin_resample"), &AudioStreamPlaybackResampled::begin_resample);
+	ClassDB::bind_method(D_METHOD("begin_resample"), &AudioStreamPlaybackResampled::_begin_resample_bind);
 
 	GDVIRTUAL_BIND(_mix_resampled, "dst_buffer", "frame_count");
 	GDVIRTUAL_BIND(_get_stream_sampling_rate);
