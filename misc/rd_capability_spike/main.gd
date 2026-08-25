@@ -62,10 +62,22 @@ var _a1_series: Array[String] = []
 var _a1_done := false
 var _a1_failed := false
 
-# --- B1: call_on_render_thread marshalling delay. -----------------------------
-var _b1_push_rt := -1
+# --- B1: do consecutive enqueues from _process drain in one render frame? -----
+##
+## An earlier version reported this as "call_on_render_thread marshaling latency" and
+## published 0 frames single-threaded, 1 frame with a separate render thread. That
+## number was wrong for the same reason A1's was: the push side was stamped with
+## _rt_frame read from the MAIN thread, and the two threads sit a frame apart, so the
+## "1 frame" was the clock changing hands rather than any latency.
+##
+## Main-to-render latency cannot be measured with one clock, because the push and the
+## run are on different threads by construction. Rather than invent a number, this
+## probe measures something that IS single-clock and worth knowing: whether two
+## callables enqueued back-to-back from _process are drained in the same render-thread
+## frame. Worker-thread and late-frame enqueue remain unmeasured; see the report.
+var _b1_mark_rt := -1
+var _b1_land_rt := -1
 var _b1_done := false
-var _b1_mutex := Mutex.new()
 
 # --- B2: does the thread guard reject a worker thread? ------------------------
 var _b2_thread: Thread
@@ -196,9 +208,9 @@ func _advance(next_phase: int) -> void:
 	_phase = next_phase
 	_phase_started_frame = Engine.get_frames_drawn()
 	if next_phase == 1:
-		_b1_mutex.lock()
-		_b1_push_rt = _rt_frame
-		_b1_mutex.unlock()
+		# Both stamps are taken ON the render thread, in enqueue order. Nothing reads
+		# _rt_frame from the main thread.
+		RenderingServer.call_on_render_thread(_b1_mark)
 		RenderingServer.call_on_render_thread(_b1_land)
 	elif next_phase == 2:
 		_b2_thread = Thread.new()
@@ -268,14 +280,16 @@ func _a1_finish_repeat() -> void:
 
 
 # --- B1 ----------------------------------------------------------------------
+func _b1_mark() -> void:
+	_b1_mark_rt = _rt_frame
+
+
 func _b1_land() -> void:
-	var landed := _rt_frame
-	_b1_mutex.lock()
-	var pushed := _b1_push_rt
-	_b1_mutex.unlock()
-	print("RESULT b1_call_on_render_thread_delay_rt_frames=%d (pushed_at_rt=%d ran_at_rt=%d)" % [
-		landed - pushed, pushed, landed])
-	print("RESULT b1_scope=enqueued from _process; other enqueue points not measured")
+	_b1_land_rt = _rt_frame
+	print("RESULT b1_consecutive_enqueue_same_render_frame=%s (mark_rt=%d land_rt=%d delta=%d)" % [
+		str(_b1_land_rt == _b1_mark_rt), _b1_mark_rt, _b1_land_rt, _b1_land_rt - _b1_mark_rt])
+	print("RESULT b1_scope=both stamps taken on the render thread; this is NOT main-to-render latency")
+	print("RESULT b1_unmeasured=worker-thread enqueue, late-frame enqueue, physics-tick enqueue")
 	_b1_done = true
 
 

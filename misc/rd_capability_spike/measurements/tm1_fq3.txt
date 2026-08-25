@@ -3,7 +3,7 @@ TU: error: ../src/freedreno/vulkan/tu_knl.cc:387: failed to open device /dev/dri
 Vulkan 1.4.312 - Forward+ - Using Device #0: NVIDIA - NVIDIA GB10
 
 === RD capability spike ===
-RESULT run_id=vulkan-1-1787625641
+RESULT run_id=vulkan-1-1787645393
 RESULT engine_version=4.8-dev (custom_build)
 RESULT engine_build_hash=f0337511c7cd046dd33b81a25441f9440bee5337
 RESULT executable=godot.linuxbsd.editor.arm64
@@ -16,12 +16,13 @@ RESULT frame_queue_size=3
 RESULT staging_block_size_kb=256
 RESULT staging_max_size_mb=128
 RESULT a1_repeats=3 samples_per_repeat=10 warmup_frames=60
-RESULT b1_call_on_render_thread_delay_rt_frames=0 (pushed_at_rt=99 ran_at_rt=99)
-RESULT b1_scope=enqueued from _process; other enqueue points not measured
+RESULT b1_consecutive_enqueue_same_render_frame=true (mark_rt=99 land_rt=99 delta=0)
+RESULT b1_scope=both stamps taken on the render thread; this is NOT main-to-render latency
+RESULT b1_unmeasured=worker-thread enqueue, late-frame enqueue, physics-tick enqueue
 ERROR: This function (buffer_get_data_async) can only be called from the render thread. 
    at: buffer_get_data_async (./servers/rendering/rendering_device.cpp:1351)
    GDScript backtrace (most recent call first):
-       [0] _b2_body (res://main.gd:286)
+       [0] _b2_body (res://main.gd:300)
 RESULT b2_worker_thread_direct_call=REJECTED err=2 (guard intact, as reported)
 RESULT a1_repeat=0 roundtrip_rt_frames min=2 max=2 mean=2.00 samples=10 raw=[2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
 RESULT a1_repeat=0 main_vs_render_clock_skew min=-1 max=-1
