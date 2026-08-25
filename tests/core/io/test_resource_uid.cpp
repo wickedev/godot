@@ -92,7 +92,7 @@ TEST_CASE("[ResourceUID] Loading duplicate cache records removes stale reverse m
 	const Vector<uint8_t> cache_data = ResourceUID::encode_binary_cache(entries);
 	const String cache_path = TestUtils::get_temp_path("resource_uid_duplicate_cache.bin");
 	Ref<FileAccess> cache_file = FileAccess::open(cache_path, FileAccess::WRITE);
-	REQUIRE(cache_file.is_valid());
+	REQUIRE_OR_RETURN(cache_file.is_valid());
 	CHECK(cache_file->store_buffer(cache_data.ptr(), cache_data.size()));
 	cache_file.unref();
 

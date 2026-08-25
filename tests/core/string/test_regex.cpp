@@ -77,14 +77,14 @@ TEST_CASE("[RegEx] Searching") {
 	REQUIRE(re.is_valid());
 
 	Ref<RegExMatch> match = re.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == "ea");
 
 	match = re.search(s, 1, 2);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == "e");
 	match = re.search(s, 2, 4);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == "a");
 	match = re.search(s, 3, 5);
 	CHECK(match.is_null());
@@ -94,10 +94,10 @@ TEST_CASE("[RegEx] Searching") {
 	const Array all_results = re.search_all(s);
 	CHECK(all_results.size() == 2);
 	match = all_results[0];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == "ea");
 	match = all_results[1];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == "i");
 
 	CHECK(re.compile(numerics) == OK);
@@ -241,10 +241,10 @@ TEST_CASE("[RegEx] Invalid end position") {
 	const Array all_results = re.search_all(s, 0, 10);
 	CHECK(all_results.size() == 2);
 	match = all_results[0];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == String("o"));
 	match = all_results[1];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == String("o"));
 
 	CHECK(re.sub(s, "", true, 0, 10) == "Gdt");
@@ -255,7 +255,7 @@ TEST_CASE("[RegEx] Get match string list") {
 
 	RegEx re("(Go)(dot)");
 	Ref<RegExMatch> match = re.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	PackedStringArray result;
 	result.append("Godot");
 	result.append("Go");
@@ -269,14 +269,14 @@ TEST_CASE("[RegEx] Match start and end positions") {
 	RegEx re1("pattern");
 	REQUIRE(re1.is_valid());
 	Ref<RegExMatch> match = re1.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 6);
 	CHECK(match->get_end(0) == 13);
 
 	RegEx re2("(?<vowel>[aeiou])");
 	REQUIRE(re2.is_valid());
 	match = re2.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start("vowel") == 2);
 	CHECK(match->get_end("vowel") == 3);
 }
@@ -311,7 +311,7 @@ TEST_CASE("[RegEx] Simple lookahead") {
 	RegEx re("o(?=t)");
 	REQUIRE(re.is_valid());
 	Ref<RegExMatch> match = re.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 3);
 	CHECK(match->get_end(0) == 4);
 }
@@ -329,12 +329,12 @@ TEST_CASE("[RegEx] Lookahead groups empty matches") {
 	CHECK(all_results.size() == 2);
 
 	match = all_results[0];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == String(""));
 	CHECK(match->get_string(1) == String("12"));
 
 	match = all_results[1];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_string(0) == String(""));
 	CHECK(match->get_string(1) == String("2"));
 }
@@ -345,7 +345,7 @@ TEST_CASE("[RegEx] Simple lookbehind") {
 	RegEx re("(?<=d)o");
 	REQUIRE(re.is_valid());
 	Ref<RegExMatch> match = re.search(s);
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 3);
 	CHECK(match->get_end(0) == 4);
 }
@@ -359,22 +359,22 @@ TEST_CASE("[RegEx] Simple lookbehind search all") {
 	CHECK(all_results.size() == 4);
 
 	Ref<RegExMatch> match = all_results[0];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 1);
 	CHECK(match->get_end(0) == 2);
 
 	match = all_results[1];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 3);
 	CHECK(match->get_end(0) == 4);
 
 	match = all_results[2];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 7);
 	CHECK(match->get_end(0) == 8);
 
 	match = all_results[3];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 9);
 	CHECK(match->get_end(0) == 10);
 }
@@ -390,7 +390,7 @@ TEST_CASE("[RegEx] Lookbehind groups empty matches") {
 	CHECK(all_results.size() == 3);
 
 	match = all_results[0];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 2);
 	CHECK(match->get_end(0) == 2);
 	CHECK(match->get_start(1) == 1);
@@ -399,7 +399,7 @@ TEST_CASE("[RegEx] Lookbehind groups empty matches") {
 	CHECK(match->get_string(1) == String("b"));
 
 	match = all_results[1];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 6);
 	CHECK(match->get_end(0) == 6);
 	CHECK(match->get_start(1) == 5);
@@ -408,7 +408,7 @@ TEST_CASE("[RegEx] Lookbehind groups empty matches") {
 	CHECK(match->get_string(1) == String("b"));
 
 	match = all_results[2];
-	REQUIRE(match.is_valid());
+	REQUIRE_OR_RETURN(match.is_valid());
 	CHECK(match->get_start(0) == 8);
 	CHECK(match->get_end(0) == 8);
 	CHECK(match->get_start(1) == 7);

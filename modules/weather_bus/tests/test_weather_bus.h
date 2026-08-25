@@ -182,7 +182,7 @@ TEST_CASE("[Modules][WeatherBus] Engine shader library resolves through Resource
 	REQUIRE_MESSAGE(ResourceLoader::exists(path), "Engine shader library was not published.");
 
 	Ref<ShaderInclude> include = ResourceLoader::load(path);
-	REQUIRE(include.is_valid());
+	REQUIRE_OR_RETURN(include.is_valid());
 	CHECK(include->get_code().contains("weather_wind_velocity"));
 }
 
@@ -355,7 +355,7 @@ TEST_CASE("[Modules][WeatherBus] Republishing a library a shader still holds wor
 
 	// Stand in for a live shader holding the include.
 	Ref<ShaderInclude> retained = ResourceLoader::load(path);
-	REQUIRE(retained.is_valid());
+	REQUIRE_OR_RETURN(retained.is_valid());
 
 	EngineShaderLib::unpublish(name);
 	CHECK_FALSE_MESSAGE(ResourceLoader::exists(path),
@@ -365,7 +365,7 @@ TEST_CASE("[Modules][WeatherBus] Republishing a library a shader still holds wor
 	CHECK_MESSAGE(!republished.is_empty(), "Could not republish over a retained library.");
 
 	Ref<ShaderInclude> fresh = ResourceLoader::load(path);
-	REQUIRE(fresh.is_valid());
+	REQUIRE_OR_RETURN(fresh.is_valid());
 	CHECK_MESSAGE(fresh->get_code().contains("second"), "Republish handed back the old code.");
 	// The old holder keeps working, it just no longer owns the name.
 	CHECK(retained.is_valid());
