@@ -34,6 +34,7 @@
 #include "core/input/input.h"
 #include "core/input/input_map.h"
 #include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "core/string/translation_server.h"
@@ -95,16 +96,47 @@ int test_main(int argc, char *argv[]) {
 
 	{
 		// This run works in its own unique root (see TestUtils::get_temp_path), so stale
-		// state cannot leak in; sweeping leftovers of previous crashed runs is best-effort.
+		// state cannot leak in. Reclaim only roots of runs that are provably dead: a
+		// blanket sweep would delete the root of a concurrently running test binary.
+		// Age is the proof here — anything older than a day is a crashed run's leak.
 		const String temp_base = OS::get_singleton()->get_cache_path().path_join("godot_test");
 		Ref<DirAccess> da = DirAccess::open(temp_base);
 		if (da.is_valid()) {
-			da->erase_contents_recursive();
+			const uint64_t now = OS::get_singleton()->get_unix_time();
+			const uint64_t max_age_sec = 24 * 3600;
+			da->list_dir_begin();
+			for (String entry = da->get_next(); !entry.is_empty(); entry = da->get_next()) {
+				if (!da->current_is_dir() || entry == "." || entry == "..") {
+					continue;
+				}
+				const String entry_path = temp_base.path_join(entry);
+				const uint64_t mtime = FileAccess::get_modified_time(entry_path);
+				if (mtime != 0 && now > mtime && now - mtime > max_age_sec) {
+					Ref<DirAccess> old_da = DirAccess::open(entry_path);
+					if (old_da.is_valid() && old_da->erase_contents_recursive() == OK) {
+						DirAccess::remove_absolute(entry_path);
+					}
+				}
+			}
+			da->list_dir_end();
 		}
 		const String test_path = TestUtils::get_temp_path("");
 		Ref<DirAccess> run_da = DirAccess::open(test_path); // get_temp_path() automatically creates the folder.
 		ERR_FAIL_COND_V(run_da.is_null(), 0);
 	}
+
+	// Remove this run's unique temp root on every exit path — the custom test
+	// command branch below returns early and must not leak the root either.
+	// (A crashed run is reclaimed by the age-based sweep above on a later run.)
+	struct TempRootCleanup {
+		~TempRootCleanup() {
+			const String test_path = TestUtils::get_temp_path("");
+			Ref<DirAccess> da = DirAccess::open(test_path);
+			if (da.is_valid() && da->erase_contents_recursive() == OK) {
+				DirAccess::remove_absolute(test_path);
+			}
+		}
+	} temp_root_cleanup;
 
 	// Run custom test tools.
 	if (test_commands) {
@@ -154,19 +186,7 @@ int test_main(int argc, char *argv[]) {
 		delete[] doctest_args;
 	}
 
-	const int test_res = test_context.run();
-
-	{
-		// Remove this run's unique temp root (best-effort; a crashed run's root is
-		// swept by the next run's startup sweep above).
-		const String test_path = TestUtils::get_temp_path("");
-		Ref<DirAccess> da = DirAccess::open(test_path);
-		if (da.is_valid() && da->erase_contents_recursive() == OK) {
-			DirAccess::remove_absolute(test_path);
-		}
-	}
-
-	return test_res;
+	return test_context.run();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
