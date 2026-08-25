@@ -105,6 +105,10 @@ String TestUtils::get_temp_path(const String &p_suffix) {
 	return _get_run_root().path_join(p_suffix);
 }
 
+String TestUtils::get_run_id() {
+	return _get_run_root().trim_suffix("/").get_file();
+}
+
 String TestUtils::acquire_exclusive_subdir(const String &p_base, const Vector<String> &p_candidates) {
 	for (const String &name : p_candidates) {
 		const String candidate = p_base.path_join(name);

@@ -34,7 +34,16 @@ namespace TestZip {
 
 void check_file_size(const String &p_path, int p_expected_size) {
 	Ref<FileAccess> f = FileAccess::open(p_path, FileAccess::READ);
-	CHECK(f.is_valid());
+	// The explicit return is load-bearing, and REQUIRE alone is not enough:
+	// Godot builds with -fno-exceptions, so tests/test_macros.h selects
+	// doctest's NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS mode, in which REQUIRE
+	// reports the failure and then CARRIES ON to the next line. Without the
+	// return, a failed open dereferences null and takes down the whole run
+	// instead of failing this one case.
+	REQUIRE(f.is_valid());
+	if (f.is_null()) {
+		return;
+	}
 	CHECK(f->get_length() == p_expected_size);
 }
 

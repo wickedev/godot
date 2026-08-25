@@ -38,6 +38,11 @@ namespace TestUtils {
 String get_data_path(const String &p_file);
 String get_executable_dir();
 String get_temp_path(const String &p_suffix);
+// A token unique to this test-run process, derived from the same exclusively
+// created run root as get_temp_path(). Use it to make a fixed shared name
+// unique when the state does NOT go through get_temp_path() -- see the
+// user:// logs fixture in test_logger.cpp.
+String get_run_id();
 // The run-root acquisition primitive, exposed so tests can pin the adoption
 // rule with injected candidates: returns the first candidate under `p_base`
 // that make_dir_absolute() reports as created by US (OK) — anything already
