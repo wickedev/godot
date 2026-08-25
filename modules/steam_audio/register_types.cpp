@@ -44,11 +44,12 @@ void initialize_steam_audio_module(ModuleInitializationLevel p_level) {
 	IPLContextSettings context_settings = {};
 	context_settings.version = STEAMAUDIO_VERSION;
 	IPLContext context = nullptr;
-	if (iplContextCreate(&context_settings, &context) == IPL_STATUS_SUCCESS) {
+	IPLerror err = iplContextCreate(&context_settings, &context);
+	if (err == IPL_STATUS_SUCCESS) {
 		print_verbose("Steam Audio: vendored core initialized (context create/release OK).");
 		iplContextRelease(&context);
 	} else {
-		ERR_PRINT("Steam Audio: context creation failed.");
+		ERR_PRINT(vformat("Steam Audio: context creation failed (err=%d, version=0x%x).", (int)err, (int)STEAMAUDIO_VERSION));
 	}
 }
 

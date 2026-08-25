@@ -64,6 +64,10 @@ if env["builtin_zlib"]:
 
 env_thirdparty = env_steam.Clone()
 env_thirdparty.disable_warnings()
+# Without STEAMAUDIO_BUILDING_CORE the real C API entry points are compiled
+# out and phonon_interfaces.h provides fallback stubs that return
+# IPL_STATUS_FAILURE unconditionally.
+env_thirdparty.Append(CPPDEFINES=["STEAMAUDIO_BUILDING_CORE"])
 # Steam Audio's CMake uses a precompiled header; SCons builds force-include it.
 # The library also uses C++ exceptions internally; every phonon C API entry
 # point catches at the boundary (api_*.cpp), so exceptions never cross into
