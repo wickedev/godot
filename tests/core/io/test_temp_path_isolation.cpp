@@ -39,48 +39,61 @@ TEST_FORCE_LINK(test_temp_path_isolation)
 
 namespace TestTempPathIsolation {
 
-// The run-root acquisition in TestUtils::get_temp_path() adopts a candidate
-// only when DirAccess::make_dir_absolute() reports it created the directory
-// itself (OK). These cases pin that adoption rule: anything already occupying
-// the target name — directory, file or symlink — must NOT be adopted.
+// These cases exercise the ACTUAL acquisition primitive used by
+// TestUtils::get_temp_path() — TestUtils::acquire_exclusive_subdir() — with
+// injected candidates, pinning the adoption rule end to end: anything already
+// occupying a candidate name (directory, file, symlink) is skipped, only a
+// name this process created itself is adopted, and exhaustion yields empty.
 
-TEST_CASE("[TempPathIsolation] Existing paths are not adopted by exclusive creation") {
+TEST_CASE("[TempPathIsolation] Acquisition skips occupied candidates and adopts only fresh ones") {
 	const String base = TestUtils::get_temp_path("exclusive_create_rules");
 	REQUIRE(DirAccess::make_dir_recursive_absolute(base) == OK);
 
-	SUBCASE("A pre-existing directory reports ERR_ALREADY_EXISTS") {
-		const String taken = base.path_join("taken_dir");
-		REQUIRE(DirAccess::make_dir_absolute(taken) == OK);
-		CHECK(DirAccess::make_dir_absolute(taken) == ERR_ALREADY_EXISTS);
+	// Occupy candidate names ahead of the acquisition call. The setup runs once
+	// per subcase, so every step tolerates its own leftovers.
+	const Error taken_dir_err = DirAccess::make_dir_absolute(base.path_join("taken_dir"));
+	REQUIRE((taken_dir_err == OK || taken_dir_err == ERR_ALREADY_EXISTS));
+	{
+		Ref<FileAccess> f = FileAccess::open(base.path_join("taken_file"), FileAccess::WRITE);
+		REQUIRE(f.is_valid());
+		f->store_8(0);
 	}
-
-	SUBCASE("A pre-existing regular file is not adopted") {
-		const String file_path = base.path_join("taken_file");
-		{
-			Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::WRITE);
-			REQUIRE(f.is_valid());
-			f->store_8(0);
-		}
-		CHECK(DirAccess::make_dir_absolute(file_path) != OK);
-	}
-
+	Vector<String> candidates;
+	candidates.push_back("taken_dir");
+	candidates.push_back("taken_file");
 #ifndef WINDOWS_ENABLED
-	SUBCASE("A pre-existing symlink is not adopted") {
-		const String target = base.path_join("symlink_target");
-		REQUIRE(DirAccess::make_dir_absolute(target) == OK);
-		const String link_path = base.path_join("taken_link");
+	{
 		Ref<DirAccess> da = DirAccess::open(base);
 		REQUIRE(da.is_valid());
-		REQUIRE(da->create_link(target, link_path) == OK);
-		// mkdir on an existing symlink fails with EEXIST regardless of target.
-		CHECK(DirAccess::make_dir_absolute(link_path) != OK);
+		if (!da->is_link(base.path_join("taken_link"))) {
+			REQUIRE(da->create_link(base.path_join("taken_dir"), base.path_join("taken_link")) == OK);
+		}
 	}
+	candidates.push_back("taken_link");
 #endif
+	candidates.push_back("fresh_dir");
 
-	SUBCASE("A fresh name is created and owned") {
-		const String fresh = base.path_join("fresh_dir");
-		CHECK(DirAccess::make_dir_absolute(fresh) == OK);
-		CHECK(DirAccess::dir_exists_absolute(fresh));
+	SUBCASE("Occupied names are skipped; the first fresh name is adopted") {
+		Vector<String> with_fresh = candidates;
+		with_fresh.remove_at(with_fresh.size() - 1);
+		with_fresh.push_back("fresh_adopt");
+		const String acquired = TestUtils::acquire_exclusive_subdir(base, with_fresh);
+		CHECK(acquired == base.path_join("fresh_adopt"));
+		CHECK(DirAccess::dir_exists_absolute(acquired));
+	}
+
+	SUBCASE("Exhaustion returns empty instead of adopting an occupied name") {
+		Vector<String> all_taken = candidates;
+		all_taken.remove_at(all_taken.size() - 1); // Drop the fresh one.
+		const String acquired = TestUtils::acquire_exclusive_subdir(base, all_taken);
+		CHECK(acquired.is_empty());
+	}
+
+	SUBCASE("A second acquisition of the same fresh name is refused (self-race)") {
+		Vector<String> fresh_only;
+		fresh_only.push_back("fresh_dir_2");
+		CHECK(TestUtils::acquire_exclusive_subdir(base, fresh_only) == base.path_join("fresh_dir_2"));
+		CHECK(TestUtils::acquire_exclusive_subdir(base, fresh_only).is_empty());
 	}
 }
 
