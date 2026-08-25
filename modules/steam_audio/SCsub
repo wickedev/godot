@@ -25,6 +25,8 @@ excluded = {
     # Orphaned upstream: not in the CMake source list and its octree.h
     # header does not exist in the tree.
     "octree_probes.cpp",
+    # Standalone tool with its own main() and a conflicting gDefaultHrtfData definition.
+    "hrtf2sh.cpp",
     # Apple vDSP array math backend: only used with the IPP build config upstream.
     "vdsp_array_math.cpp",
 }
@@ -64,6 +66,12 @@ if env["builtin_zlib"]:
 
 env_thirdparty = env_steam.Clone()
 env_thirdparty.disable_warnings()
+# PFFFT is built in; without the static define its header applies dllimport on Windows.
+env_thirdparty.Append(CPPDEFINES=["PFFFT_STATIC_DEFINE"])
+env_steam.Append(CPPDEFINES=["PFFFT_STATIC_DEFINE"])
+if env["arch"] == "arm64":
+    # Without this PFFFT falls back to the scalar FFT on Apple Silicon / ARM.
+    env_thirdparty.Append(CPPDEFINES=["PFFFT_ENABLE_NEON"])
 # Without STEAMAUDIO_BUILDING_CORE the real C API entry points are compiled
 # out and phonon_interfaces.h provides fallback stubs that return
 # IPL_STATUS_FAILURE unconditionally.
@@ -75,6 +83,9 @@ env_thirdparty.Append(CPPDEFINES=["STEAMAUDIO_BUILDING_CORE"])
 if env.msvc:
     env_thirdparty.Append(CCFLAGS=["/FI", "pch.h"])
     env_thirdparty.Append(CXXFLAGS=["/EHsc"])
+    # The engine builds with _HAS_EXCEPTIONS=0; these TUs use exceptions, so the
+    # inherited define must not poison the STL unwind contract here.
+    env_thirdparty["CPPDEFINES"] = [d for d in env_thirdparty["CPPDEFINES"] if not (isinstance(d, tuple) and d[0] == "_HAS_EXCEPTIONS")]
 else:
     env_thirdparty.Append(CCFLAGS=["-include", "pch.h"])
     env_thirdparty.Append(CXXFLAGS=["-fexceptions"])
@@ -86,6 +97,8 @@ env.modules_sources += thirdparty_obj
 
 module_obj = []
 env_steam.add_source_files(module_obj, "*.cpp")
+if env["tests"]:
+    env_steam.add_source_files(module_obj, "tests/*.cpp")
 env.modules_sources += module_obj
 
 env.Depends(module_obj, thirdparty_obj)

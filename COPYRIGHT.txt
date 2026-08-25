@@ -435,6 +435,32 @@ Comment: meshoptimizer
 Copyright: 2016-2026, Arseny Kapoulkine
 License: Expat
 
+Files: thirdparty/steam_audio/src/*
+Comment: Steam Audio
+Copyright: 2017-2026, Valve Corporation
+License: Apache-2.0
+
+Files: thirdparty/steam_audio/flatbuffers/*
+Comment: FlatBuffers
+Copyright: 2014, Google Inc.
+License: Apache-2.0
+
+Files: thirdparty/steam_audio/pffft/*
+Comment: PFFFT
+Copyright: 2013, Julien Pommier
+ 2004, The University Corporation for Atmospheric Research ("UCAR")
+License: FFTPACK License (BSD-like)
+
+Files: thirdparty/steam_audio/mysofa/*
+Comment: libmysofa
+Copyright: 2016-2023, Christian Hoene, Symonics GmbH
+License: BSD-3-clause
+
+Files: thirdparty/steam_audio/mysofa/resampler/*
+Comment: Speex resampler (bundled with libmysofa)
+Copyright: 2003, 2007-2008, Jean-Marc Valin
+License: BSD-3-clause
+
 Files: thirdparty/metal-cpp/*
 Comment: metal-cpp
 Copyright: 2024, Apple Inc.

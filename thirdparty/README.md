@@ -1083,6 +1083,14 @@ Bundled dependencies (see their own directories for licenses):
   `hrtf/mysofa_export.h` are hand-generated replacements for the CMake
   configure output.
 
+Patches:
+
+- `0001-harden-c-api-exception-boundary.patch` — wraps every exported C API
+  function body in `try { ... } catch (...)` with a type-appropriate failure
+  return. The engine builds without exceptions, so nothing may unwind past
+  the `extern "C"` boundary; upstream only catches `ipl::Exception` in
+  creation wrappers and not at all in the remaining entry points.
+
 ## swappy-frame-pacing
 
 - Upstream: https://android.googlesource.com/platform/frameworks/opt/gamesdk/ via https://github.com/godotengine/godot-swappy

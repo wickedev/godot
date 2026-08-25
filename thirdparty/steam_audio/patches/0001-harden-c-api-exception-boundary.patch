@@ -1,0 +1,4537 @@
+diff --git a/thirdparty/steam_audio/src/phonon_interfaces.h b/thirdparty/steam_audio/src/phonon_interfaces.h
+index 7a386a7e54..463cd4f488 100644
+--- a/thirdparty/steam_audio/src/phonon_interfaces.h
++++ b/thirdparty/steam_audio/src/phonon_interfaces.h
+@@ -720,26 +720,53 @@ public:
+ IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
+                           IPLContext* context)
+ {
+-    return IPL_STATUS_FAILURE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        return IPL_STATUS_FAILURE;
++    }
++    catch (...)
++    {
++        return IPL_STATUS_FAILURE;
++    }
+ }
+ #endif
+ 
+ IPLContext IPLCALL iplContextRetain(IPLContext context)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return nullptr;
++
++        return reinterpret_cast<IPLContext>(reinterpret_cast<api::IContext*>(context)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLContext>(reinterpret_cast<api::IContext*>(context)->retain());
++    }
+ }
+ 
+ void IPLCALL iplContextRelease(IPLContext* context)
+ {
+-    if (!context || !*context)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context || !*context)
++            return;
+ 
+-    reinterpret_cast<api::IContext*>(*context)->release();
++        reinterpret_cast<api::IContext*>(*context)->release();
+ 
+-    *context = nullptr;
++        *context = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLVector3 IPLCALL iplCalculateRelativeDirection(IPLContext context,
+@@ -748,46 +775,91 @@ IPLVector3 IPLCALL iplCalculateRelativeDirection(IPLContext context,
+                                          IPLVector3 listenerAhead,
+                                          IPLVector3 listenerUp)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPLVector3{};
++
++        return reinterpret_cast<api::IContext*>(context)->calculateRelativeDirection(sourcePosition, listenerPosition, listenerAhead, listenerUp);
++    }
++    catch (...)
++    {
+         return IPLVector3{};
+-
+-    return reinterpret_cast<api::IContext*>(context)->calculateRelativeDirection(sourcePosition, listenerPosition, listenerAhead, listenerUp);
++    }
+ }
+ 
+ IPLerror IPLCALL iplSerializedObjectCreate(IPLContext context,
+                                    IPLSerializedObjectSettings* settings,
+                                    IPLSerializedObject* serializedObject)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createSerializedObject(settings, reinterpret_cast<api::ISerializedObject**>(serializedObject));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createSerializedObject(settings, reinterpret_cast<api::ISerializedObject**>(serializedObject));
++    }
+ }
+ 
+ IPLSerializedObject IPLCALL iplSerializedObjectRetain(IPLSerializedObject serializedObject)
+ {
+-    if (!serializedObject)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!serializedObject)
++            return nullptr;
++
++        return reinterpret_cast<IPLSerializedObject>(reinterpret_cast<api::ISerializedObject*>(serializedObject)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLSerializedObject>(reinterpret_cast<api::ISerializedObject*>(serializedObject)->retain());
++    }
+ }
+ 
+ void IPLCALL iplSerializedObjectRelease(IPLSerializedObject* serializedObject)
+ {
+-    if (!serializedObject || !*serializedObject)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!serializedObject || !*serializedObject)
++            return;
+ 
+-    reinterpret_cast<api::ISerializedObject*>(*serializedObject)->release();
++        reinterpret_cast<api::ISerializedObject*>(*serializedObject)->release();
+ 
+-    *serializedObject = nullptr;
++        *serializedObject = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLsize IPLCALL iplSerializedObjectGetSize(IPLSerializedObject serializedObject)
+ {
+-    if (!serializedObject)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!serializedObject)
++            return 0;
++
++        return reinterpret_cast<api::ISerializedObject*>(serializedObject)->getSize();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::ISerializedObject*>(serializedObject)->getSize();
++    }
+ }
+ 
+ IPLbyte* IPLCALL iplSerializedObjectGetData(IPLSerializedObject serializedObject)
+@@ -802,74 +874,146 @@ IPLerror IPLCALL iplEmbreeDeviceCreate(IPLContext context,
+                                IPLEmbreeDeviceSettings* settings,
+                                IPLEmbreeDevice* device)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createEmbreeDevice(settings, reinterpret_cast<api::IEmbreeDevice**>(device));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createEmbreeDevice(settings, reinterpret_cast<api::IEmbreeDevice**>(device));
++    }
+ }
+ 
+ IPLEmbreeDevice IPLCALL iplEmbreeDeviceRetain(IPLEmbreeDevice device)
+ {
+-    if (!device)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device)
++            return nullptr;
++
++        return reinterpret_cast<IPLEmbreeDevice>(reinterpret_cast<api::IEmbreeDevice*>(device)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLEmbreeDevice>(reinterpret_cast<api::IEmbreeDevice*>(device)->retain());
++    }
+ }
+ 
+ void IPLCALL iplEmbreeDeviceRelease(IPLEmbreeDevice* device)
+ {
+-    if (!device || !*device)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device || !*device)
++            return;
+ 
+-    reinterpret_cast<api::IEmbreeDevice*>(*device)->release();
++        reinterpret_cast<api::IEmbreeDevice*>(*device)->release();
+ 
+-    *device = nullptr;
++        *device = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplOpenCLDeviceListCreate(IPLContext context,
+                                    IPLOpenCLDeviceSettings* settings,
+                                    IPLOpenCLDeviceList* deviceList)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createOpenCLDeviceList(settings, reinterpret_cast<api::IOpenCLDeviceList**>(deviceList));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createOpenCLDeviceList(settings, reinterpret_cast<api::IOpenCLDeviceList**>(deviceList));
++    }
+ }
+ 
+ IPLOpenCLDeviceList IPLCALL iplOpenCLDeviceListRetain(IPLOpenCLDeviceList deviceList)
+ {
+-    if (!deviceList)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!deviceList)
++            return nullptr;
++
++        return reinterpret_cast<IPLOpenCLDeviceList>(reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLOpenCLDeviceList>(reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->retain());
++    }
+ }
+ 
+ void IPLCALL iplOpenCLDeviceListRelease(IPLOpenCLDeviceList* deviceList)
+ {
+-    if (!deviceList || !*deviceList)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!deviceList || !*deviceList)
++            return;
+ 
+-    reinterpret_cast<api::IOpenCLDeviceList*>(*deviceList)->release();
++        reinterpret_cast<api::IOpenCLDeviceList*>(*deviceList)->release();
+ 
+-    *deviceList = nullptr;
++        *deviceList = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLint32 IPLCALL iplOpenCLDeviceListGetNumDevices(IPLOpenCLDeviceList deviceList)
+ {
+-    if (!deviceList)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!deviceList)
++            return 0;
++
++        return reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->getNumDevices();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->getNumDevices();
++    }
+ }
+ 
+ void IPLCALL iplOpenCLDeviceListGetDeviceDesc(IPLOpenCLDeviceList deviceList,
+                                       IPLint32 index,
+                                       IPLOpenCLDeviceDesc* deviceDesc)
+ {
+-    if (!deviceList)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!deviceList)
++            return;
++
++        reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->getDeviceDesc(index, deviceDesc);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IOpenCLDeviceList*>(deviceList)->getDeviceDesc(index, deviceDesc);
++    }
+ }
+ 
+ IPLerror IPLCALL iplOpenCLDeviceCreate(IPLContext context,
+@@ -877,10 +1021,19 @@ IPLerror IPLCALL iplOpenCLDeviceCreate(IPLContext context,
+                                IPLint32 index,
+                                IPLOpenCLDevice* device)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createOpenCLDevice(reinterpret_cast<api::IOpenCLDeviceList*>(deviceList), index, reinterpret_cast<api::IOpenCLDevice**>(device));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createOpenCLDevice(reinterpret_cast<api::IOpenCLDeviceList*>(deviceList), index, reinterpret_cast<api::IOpenCLDevice**>(device));
++    }
+ }
+ 
+ IPLerror IPLCALL iplOpenCLDeviceCreateFromExisting(IPLContext context,
+@@ -888,112 +1041,220 @@ IPLerror IPLCALL iplOpenCLDeviceCreateFromExisting(IPLContext context,
+                                            void* irUpdateQueue,
+                                            IPLOpenCLDevice* device)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createOpenCLDeviceFromExisting(convolutionQueue, irUpdateQueue, reinterpret_cast<api::IOpenCLDevice**>(device));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createOpenCLDeviceFromExisting(convolutionQueue, irUpdateQueue, reinterpret_cast<api::IOpenCLDevice**>(device));
++    }
+ }
+ 
+ IPLOpenCLDevice IPLCALL iplOpenCLDeviceRetain(IPLOpenCLDevice device)
+ {
+-    if (!device)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device)
++            return nullptr;
++
++        return reinterpret_cast<IPLOpenCLDevice>(reinterpret_cast<api::IOpenCLDevice*>(device)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLOpenCLDevice>(reinterpret_cast<api::IOpenCLDevice*>(device)->retain());
++    }
+ }
+ 
+ void IPLCALL iplOpenCLDeviceRelease(IPLOpenCLDevice* device)
+ {
+-    if (!device || !*device)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device || !*device)
++            return;
+ 
+-    reinterpret_cast<api::IOpenCLDevice*>(*device)->release();
++        reinterpret_cast<api::IOpenCLDevice*>(*device)->release();
+ 
+-    *device = nullptr;
++        *device = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplRadeonRaysDeviceCreate(IPLOpenCLDevice openCLDevice,
+                                    IPLRadeonRaysDeviceSettings* settings,
+                                    IPLRadeonRaysDevice* rrDevice)
+ {
+-    if (!openCLDevice)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!openCLDevice)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IOpenCLDevice*>(openCLDevice)->createRadeonRaysDevice(settings, reinterpret_cast<api::IRadeonRaysDevice**>(rrDevice));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IOpenCLDevice*>(openCLDevice)->createRadeonRaysDevice(settings, reinterpret_cast<api::IRadeonRaysDevice**>(rrDevice));
++    }
+ }
+ 
+ IPLRadeonRaysDevice IPLCALL iplRadeonRaysDeviceRetain(IPLRadeonRaysDevice device)
+ {
+-    if (!device)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device)
++            return nullptr;
++
++        return reinterpret_cast<IPLRadeonRaysDevice>(reinterpret_cast<api::IRadeonRaysDevice*>(device)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLRadeonRaysDevice>(reinterpret_cast<api::IRadeonRaysDevice*>(device)->retain());
++    }
+ }
+ 
+ void IPLCALL iplRadeonRaysDeviceRelease(IPLRadeonRaysDevice* device)
+ {
+-    if (!device || !*device)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device || !*device)
++            return;
+ 
+-    reinterpret_cast<api::IRadeonRaysDevice*>(*device)->release();
++        reinterpret_cast<api::IRadeonRaysDevice*>(*device)->release();
+ 
+-    *device = nullptr;
++        *device = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplTrueAudioNextDeviceCreate(IPLOpenCLDevice openCLDevice,
+                                       IPLTrueAudioNextDeviceSettings* settings,
+                                       IPLTrueAudioNextDevice* tanDevice)
+ {
+-    if (!openCLDevice)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!openCLDevice)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IOpenCLDevice*>(openCLDevice)->createTrueAudioNextDevice(settings, reinterpret_cast<api::ITrueAudioNextDevice**>(tanDevice));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IOpenCLDevice*>(openCLDevice)->createTrueAudioNextDevice(settings, reinterpret_cast<api::ITrueAudioNextDevice**>(tanDevice));
++    }
+ }
+ 
+ IPLTrueAudioNextDevice IPLCALL iplTrueAudioNextDeviceRetain(IPLTrueAudioNextDevice device)
+ {
+-    if (!device)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device)
++            return nullptr;
++
++        return reinterpret_cast<IPLTrueAudioNextDevice>(reinterpret_cast<api::ITrueAudioNextDevice*>(device)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLTrueAudioNextDevice>(reinterpret_cast<api::ITrueAudioNextDevice*>(device)->retain());
++    }
+ }
+ 
+ void IPLCALL iplTrueAudioNextDeviceRelease(IPLTrueAudioNextDevice* device)
+ {
+-    if (!device || !*device)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!device || !*device)
++            return;
+ 
+-    reinterpret_cast<api::ITrueAudioNextDevice*>(*device)->release();
++        reinterpret_cast<api::ITrueAudioNextDevice*>(*device)->release();
+ 
+-    *device = nullptr;
++        *device = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplSceneCreate(IPLContext context,
+                         IPLSceneSettings* settings,
+                         IPLScene* scene)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createScene(settings, reinterpret_cast<api::IScene**>(scene));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createScene(settings, reinterpret_cast<api::IScene**>(scene));
++    }
+ }
+ 
+ IPLScene IPLCALL iplSceneRetain(IPLScene scene)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return nullptr;
++
++        return reinterpret_cast<IPLScene>(reinterpret_cast<api::IScene*>(scene)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLScene>(reinterpret_cast<api::IScene*>(scene)->retain());
++    }
+ }
+ 
+ void IPLCALL iplSceneRelease(IPLScene* scene)
+ {
+-    if (!scene || !*scene)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene || !*scene)
++            return;
+ 
+-    reinterpret_cast<api::IScene*>(*scene)->release();
++        reinterpret_cast<api::IScene*>(*scene)->release();
+ 
+-    *scene = nullptr;
++        *scene = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplSceneLoad(IPLContext context,
+@@ -1003,66 +1264,129 @@ IPLerror IPLCALL iplSceneLoad(IPLContext context,
+                       void* progressCallbackUserData,
+                       IPLScene* scene)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->loadScene(settings, reinterpret_cast<api::ISerializedObject*>(serializedObject),
++                                                                    progressCallback, progressCallbackUserData,
++                                                                    reinterpret_cast<api::IScene**>(scene));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->loadScene(settings, reinterpret_cast<api::ISerializedObject*>(serializedObject),
+-                                                                progressCallback, progressCallbackUserData,
+-                                                                reinterpret_cast<api::IScene**>(scene));
++    }
+ }
+ 
+ void IPLCALL iplSceneSave(IPLScene scene,
+                   IPLSerializedObject serializedObject)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return;
++
++        reinterpret_cast<api::IScene*>(scene)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IScene*>(scene)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
+ }
+ 
+ void IPLCALL iplSceneSaveOBJ(IPLScene scene,
+                      IPLstring fileBaseName)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return;
++
++        reinterpret_cast<api::IScene*>(scene)->saveOBJ(fileBaseName);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IScene*>(scene)->saveOBJ(fileBaseName);
++    }
+ }
+ 
+ void IPLCALL iplSceneCommit(IPLScene scene)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return;
++
++        reinterpret_cast<api::IScene*>(scene)->commit();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IScene*>(scene)->commit();
++    }
+ }
+ 
+ IPLerror IPLCALL iplStaticMeshCreate(IPLScene scene,
+                              IPLStaticMeshSettings* settings,
+                              IPLStaticMesh* staticMesh)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IScene*>(scene)->createStaticMesh(settings, reinterpret_cast<api::IStaticMesh**>(staticMesh));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IScene*>(scene)->createStaticMesh(settings, reinterpret_cast<api::IStaticMesh**>(staticMesh));
++    }
+ }
+ 
+ IPLStaticMesh IPLCALL iplStaticMeshRetain(IPLStaticMesh staticMesh)
+ {
+-    if (!staticMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh)
++            return nullptr;
++
++        return reinterpret_cast<IPLStaticMesh>(reinterpret_cast<api::IStaticMesh*>(staticMesh)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLStaticMesh>(reinterpret_cast<api::IStaticMesh*>(staticMesh)->retain());
++    }
+ }
+ 
+ void IPLCALL iplStaticMeshRelease(IPLStaticMesh* staticMesh)
+ {
+-    if (!staticMesh || !*staticMesh)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh || !*staticMesh)
++            return;
+ 
+-    reinterpret_cast<api::IStaticMesh*>(*staticMesh)->release();
++        reinterpret_cast<api::IStaticMesh*>(*staticMesh)->release();
+ 
+-    *staticMesh = nullptr;
++        *staticMesh = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplStaticMeshLoad(IPLScene scene,
+@@ -1071,97 +1395,196 @@ IPLerror IPLCALL iplStaticMeshLoad(IPLScene scene,
+                            void* progressCallbackUserData,
+                            IPLStaticMesh* staticMesh)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IScene*>(scene)->loadStaticMesh(reinterpret_cast<api::ISerializedObject*>(serializedObject),
++                                                                     progressCallback, progressCallbackUserData,
++                                                                     reinterpret_cast<api::IStaticMesh**>(staticMesh));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IScene*>(scene)->loadStaticMesh(reinterpret_cast<api::ISerializedObject*>(serializedObject),
+-                                                                 progressCallback, progressCallbackUserData,
+-                                                                 reinterpret_cast<api::IStaticMesh**>(staticMesh));
++    }
+ }
+ 
+ void IPLCALL iplStaticMeshSave(IPLStaticMesh staticMesh,
+                        IPLSerializedObject serializedObject)
+ {
+-    if (!staticMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh)
++            return;
++
++        reinterpret_cast<api::IStaticMesh*>(staticMesh)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IStaticMesh*>(staticMesh)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
+ }
+ 
+ void IPLCALL iplStaticMeshAdd(IPLStaticMesh staticMesh, IPLScene scene)
+ {
+-    if (!staticMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh)
++            return;
++
++        reinterpret_cast<api::IStaticMesh*>(staticMesh)->add(reinterpret_cast<api::IScene*>(scene));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IStaticMesh*>(staticMesh)->add(reinterpret_cast<api::IScene*>(scene));
++    }
+ }
+ 
+ void IPLCALL iplStaticMeshSetMaterial(IPLStaticMesh staticMesh, IPLScene scene, IPLMaterial* newMaterial, IPLint32 index)
+ {
+-    if (!staticMesh || !scene)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh || !scene)
++            return;
+     
+-    reinterpret_cast<api::IScene*>(scene)->setStaticMeshMaterial(reinterpret_cast<api::IStaticMesh*>(staticMesh), newMaterial, index);
++        reinterpret_cast<api::IScene*>(scene)->setStaticMeshMaterial(reinterpret_cast<api::IStaticMesh*>(staticMesh), newMaterial, index);
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplStaticMeshRemove(IPLStaticMesh staticMesh, IPLScene scene)
+ {
+-    if (!staticMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!staticMesh)
++            return;
++
++        reinterpret_cast<api::IStaticMesh*>(staticMesh)->remove(reinterpret_cast<api::IScene*>(scene));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IStaticMesh*>(staticMesh)->remove(reinterpret_cast<api::IScene*>(scene));
++    }
+ }
+ 
+ IPLerror IPLCALL iplInstancedMeshCreate(IPLScene scene,
+                                 IPLInstancedMeshSettings* settings,
+                                 IPLInstancedMesh* instancedMesh)
+ {
+-    if (!scene)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!scene)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IScene*>(scene)->createInstancedMesh(settings, reinterpret_cast<api::IInstancedMesh**>(instancedMesh));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IScene*>(scene)->createInstancedMesh(settings, reinterpret_cast<api::IInstancedMesh**>(instancedMesh));
++    }
+ }
+ 
+ IPLInstancedMesh IPLCALL iplInstancedMeshRetain(IPLInstancedMesh instancedMesh)
+ {
+-    if (!instancedMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!instancedMesh)
++            return nullptr;
++
++        return reinterpret_cast<IPLInstancedMesh>(reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLInstancedMesh>(reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->retain());
++    }
+ }
+ 
+ void IPLCALL iplInstancedMeshRelease(IPLInstancedMesh* instancedMesh)
+ {
+-    if (!instancedMesh || !*instancedMesh)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!instancedMesh || !*instancedMesh)
++            return;
+ 
+-    reinterpret_cast<api::IInstancedMesh*>(*instancedMesh)->release();
++        reinterpret_cast<api::IInstancedMesh*>(*instancedMesh)->release();
+ 
+-    *instancedMesh = nullptr;
++        *instancedMesh = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplInstancedMeshAdd(IPLInstancedMesh instancedMesh, IPLScene scene)
+ {
+-    if (!instancedMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!instancedMesh)
++            return;
++
++        reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->add(reinterpret_cast<api::IScene*>(scene));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->add(reinterpret_cast<api::IScene*>(scene));
++    }
+ }
+ 
+ void IPLCALL iplInstancedMeshRemove(IPLInstancedMesh instancedMesh, IPLScene scene)
+ {
+-    if (!instancedMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!instancedMesh)
++            return;
++
++        reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->remove(reinterpret_cast<api::IScene*>(scene));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->remove(reinterpret_cast<api::IScene*>(scene));
++    }
+ }
+ 
+ void IPLCALL iplInstancedMeshUpdateTransform(IPLInstancedMesh instancedMesh, IPLScene scene, IPLMatrix4x4 transform)
+ {
+-    if (!instancedMesh)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!instancedMesh)
++            return;
++
++        reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->updateTransform(reinterpret_cast<api::IScene*>(scene), transform);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IInstancedMesh*>(instancedMesh)->updateTransform(reinterpret_cast<api::IScene*>(scene), transform);
++    }
+ }
+ 
+ IPLerror IPLCALL iplAudioBufferAllocate(IPLContext context,
+@@ -1169,59 +1592,113 @@ IPLerror IPLCALL iplAudioBufferAllocate(IPLContext context,
+                                 IPLint32 numSamples,
+                                 IPLAudioBuffer* audioBuffer)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->allocateAudioBuffer(numChannels, numSamples, audioBuffer);
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->allocateAudioBuffer(numChannels, numSamples, audioBuffer);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferFree(IPLContext context,
+                         IPLAudioBuffer* audioBuffer)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->freeAudioBuffer(audioBuffer);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->freeAudioBuffer(audioBuffer);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferInterleave(IPLContext context,
+                               IPLAudioBuffer* src,
+                               IPLfloat32* dst)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->interleaveAudioBuffer(src, dst);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->interleaveAudioBuffer(src, dst);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferDeinterleave(IPLContext context,
+                                 IPLfloat32* src,
+                                 IPLAudioBuffer* dst)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->deinterleaveAudioBuffer(src, dst);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->deinterleaveAudioBuffer(src, dst);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferMix(IPLContext context,
+                        IPLAudioBuffer* in,
+                        IPLAudioBuffer* mix)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->mixAudioBuffer(in, mix);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->mixAudioBuffer(in, mix);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferDownmix(IPLContext context,
+                            IPLAudioBuffer* in,
+                            IPLAudioBuffer* out)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->downmixAudioBuffer(in, out);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->downmixAudioBuffer(in, out);
++    }
+ }
+ 
+ void IPLCALL iplAudioBufferConvertAmbisonics(IPLContext context,
+@@ -1230,10 +1707,19 @@ void IPLCALL iplAudioBufferConvertAmbisonics(IPLContext context,
+                                      IPLAudioBuffer* in,
+                                      IPLAudioBuffer* out)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->convertAmbisonicAudioBuffer(inType, outType, in, out);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->convertAmbisonicAudioBuffer(inType, outType, in, out);
++    }
+ }
+ 
+ IPLerror IPLCALL iplHRTFCreate(IPLContext context,
+@@ -1241,28 +1727,55 @@ IPLerror IPLCALL iplHRTFCreate(IPLContext context,
+                        IPLHRTFSettings* hrtfSettings,
+                        IPLHRTF* hrtf)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createHRTF(audioSettings, hrtfSettings, reinterpret_cast<api::IHRTF**>(hrtf));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createHRTF(audioSettings, hrtfSettings, reinterpret_cast<api::IHRTF**>(hrtf));
++    }
+ }
+ 
+ IPLHRTF IPLCALL iplHRTFRetain(IPLHRTF hrtf)
+ {
+-    if (!hrtf)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!hrtf)
++            return nullptr;
++
++        return reinterpret_cast<IPLHRTF>(reinterpret_cast<api::IHRTF*>(hrtf)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLHRTF>(reinterpret_cast<api::IHRTF*>(hrtf)->retain());
++    }
+ }
+ 
+ void IPLCALL iplHRTFRelease(IPLHRTF* hrtf)
+ {
+-    if (!hrtf || !*hrtf)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!hrtf || !*hrtf)
++            return;
+ 
+-    reinterpret_cast<api::IHRTF*>(*hrtf)->release();
++        reinterpret_cast<api::IHRTF*>(*hrtf)->release();
+ 
+-    *hrtf = nullptr;
++        *hrtf = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplPanningEffectCreate(IPLContext context,
+@@ -1270,36 +1783,72 @@ IPLerror IPLCALL iplPanningEffectCreate(IPLContext context,
+                                 IPLPanningEffectSettings* effectSettings,
+                                 IPLPanningEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createPanningEffect(audioSettings, effectSettings, reinterpret_cast<api::IPanningEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createPanningEffect(audioSettings, effectSettings, reinterpret_cast<api::IPanningEffect**>(effect));
++    }
+ }
+ 
+ IPLPanningEffect IPLCALL iplPanningEffectRetain(IPLPanningEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLPanningEffect>(reinterpret_cast<api::IPanningEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLPanningEffect>(reinterpret_cast<api::IPanningEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplPanningEffectRelease(IPLPanningEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IPanningEffect*>(*effect)->release();
++        reinterpret_cast<api::IPanningEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplPanningEffectReset(IPLPanningEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IPanningEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IPanningEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplPanningEffectApply(IPLPanningEffect effect,
+@@ -1307,30 +1856,57 @@ IPLAudioEffectState IPLCALL iplPanningEffectApply(IPLPanningEffect effect,
+                                           IPLAudioBuffer* in,
+                                           IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IPanningEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IPanningEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplPanningEffectGetTailSize(IPLPanningEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IPanningEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IPanningEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplPanningEffectGetTail(IPLPanningEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IPanningEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IPanningEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplBinauralEffectCreate(IPLContext context,
+@@ -1338,36 +1914,72 @@ IPLerror IPLCALL iplBinauralEffectCreate(IPLContext context,
+                                  IPLBinauralEffectSettings* effectSettings,
+                                  IPLBinauralEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createBinauralEffect(audioSettings, effectSettings, reinterpret_cast<api::IBinauralEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createBinauralEffect(audioSettings, effectSettings, reinterpret_cast<api::IBinauralEffect**>(effect));
++    }
+ }
+ 
+ IPLBinauralEffect IPLCALL iplBinauralEffectRetain(IPLBinauralEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLBinauralEffect>(reinterpret_cast<api::IBinauralEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLBinauralEffect>(reinterpret_cast<api::IBinauralEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplBinauralEffectRelease(IPLBinauralEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IBinauralEffect*>(*effect)->release();
++        reinterpret_cast<api::IBinauralEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplBinauralEffectReset(IPLBinauralEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IBinauralEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IBinauralEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplBinauralEffectApply(IPLBinauralEffect effect,
+@@ -1375,30 +1987,57 @@ IPLAudioEffectState IPLCALL iplBinauralEffectApply(IPLBinauralEffect effect,
+                                            IPLAudioBuffer* in,
+                                            IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IBinauralEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IBinauralEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplBinauralEffectGetTailSize(IPLBinauralEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IBinauralEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IBinauralEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplBinauralEffectGetTail(IPLBinauralEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IBinauralEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IBinauralEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplVirtualSurroundEffectCreate(IPLContext context,
+@@ -1406,36 +2045,72 @@ IPLerror IPLCALL iplVirtualSurroundEffectCreate(IPLContext context,
+                                         IPLVirtualSurroundEffectSettings* effectSettings,
+                                         IPLVirtualSurroundEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createVirtualSurroundEffect(audioSettings, effectSettings, reinterpret_cast<api::IVirtualSurroundEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createVirtualSurroundEffect(audioSettings, effectSettings, reinterpret_cast<api::IVirtualSurroundEffect**>(effect));
++    }
+ }
+ 
+ IPLVirtualSurroundEffect IPLCALL iplVirtualSurroundEffectRetain(IPLVirtualSurroundEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLVirtualSurroundEffect>(reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLVirtualSurroundEffect>(reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplVirtualSurroundEffectRelease(IPLVirtualSurroundEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IVirtualSurroundEffect*>(*effect)->release();
++        reinterpret_cast<api::IVirtualSurroundEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplVirtualSurroundEffectReset(IPLVirtualSurroundEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplVirtualSurroundEffectApply(IPLVirtualSurroundEffect effect,
+@@ -1443,30 +2118,57 @@ IPLAudioEffectState IPLCALL iplVirtualSurroundEffectApply(IPLVirtualSurroundEffe
+                                                   IPLAudioBuffer* in,
+                                                   IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IVirtualSurroundEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplVirtualSurroundEffectGetTailSize(IPLVirtualSurroundEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IVirtualSurroundEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IVirtualSurroundEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplVirtualSurroundEffectGetTail(IPLVirtualSurroundEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IVirtualSurroundEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IVirtualSurroundEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplAmbisonicsEncodeEffectCreate(IPLContext context,
+@@ -1474,36 +2176,72 @@ IPLerror IPLCALL iplAmbisonicsEncodeEffectCreate(IPLContext context,
+                                          IPLAmbisonicsEncodeEffectSettings* effectSettings,
+                                          IPLAmbisonicsEncodeEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createAmbisonicsEncodeEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsEncodeEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createAmbisonicsEncodeEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsEncodeEffect**>(effect));
++    }
+ }
+ 
+ IPLAmbisonicsEncodeEffect IPLCALL iplAmbisonicsEncodeEffectRetain(IPLAmbisonicsEncodeEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLAmbisonicsEncodeEffect>(reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLAmbisonicsEncodeEffect>(reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsEncodeEffectRelease(IPLAmbisonicsEncodeEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IAmbisonicsEncodeEffect*>(*effect)->release();
++        reinterpret_cast<api::IAmbisonicsEncodeEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsEncodeEffectReset(IPLAmbisonicsEncodeEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsEncodeEffectApply(IPLAmbisonicsEncodeEffect effect,
+@@ -1511,30 +2249,57 @@ IPLAudioEffectState IPLCALL iplAmbisonicsEncodeEffectApply(IPLAmbisonicsEncodeEf
+                                                    IPLAudioBuffer* in,
+                                                    IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplAmbisonicsEncodeEffectGetTailSize(IPLAmbisonicsEncodeEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsEncodeEffectGetTail(IPLAmbisonicsEncodeEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsEncodeEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplAmbisonicsPanningEffectCreate(IPLContext context,
+@@ -1542,36 +2307,72 @@ IPLerror IPLCALL iplAmbisonicsPanningEffectCreate(IPLContext context,
+                                           IPLAmbisonicsPanningEffectSettings* effectSettings,
+                                           IPLAmbisonicsPanningEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createAmbisonicsPanningEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsPanningEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createAmbisonicsPanningEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsPanningEffect**>(effect));
++    }
+ }
+ 
+ IPLAmbisonicsPanningEffect IPLCALL iplAmbisonicsPanningEffectRetain(IPLAmbisonicsPanningEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLAmbisonicsPanningEffect>(reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLAmbisonicsPanningEffect>(reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsPanningEffectRelease(IPLAmbisonicsPanningEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IAmbisonicsPanningEffect*>(*effect)->release();
++        reinterpret_cast<api::IAmbisonicsPanningEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsPanningEffectReset(IPLAmbisonicsPanningEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsPanningEffectApply(IPLAmbisonicsPanningEffect effect,
+@@ -1579,30 +2380,57 @@ IPLAudioEffectState IPLCALL iplAmbisonicsPanningEffectApply(IPLAmbisonicsPanning
+                                                     IPLAudioBuffer* in,
+                                                     IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplAmbisonicsPanningEffectGetTailSize(IPLAmbisonicsPanningEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsPanningEffectGetTail(IPLAmbisonicsPanningEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsPanningEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplAmbisonicsBinauralEffectCreate(IPLContext context,
+@@ -1610,36 +2438,72 @@ IPLerror IPLCALL iplAmbisonicsBinauralEffectCreate(IPLContext context,
+                                            IPLAmbisonicsBinauralEffectSettings* effectSettings,
+                                            IPLAmbisonicsBinauralEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createAmbisonicsBinauralEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsBinauralEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createAmbisonicsBinauralEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsBinauralEffect**>(effect));
++    }
+ }
+ 
+ IPLAmbisonicsBinauralEffect IPLCALL iplAmbisonicsBinauralEffectRetain(IPLAmbisonicsBinauralEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLAmbisonicsBinauralEffect>(reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLAmbisonicsBinauralEffect>(reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsBinauralEffectRelease(IPLAmbisonicsBinauralEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IAmbisonicsBinauralEffect*>(*effect)->release();
++        reinterpret_cast<api::IAmbisonicsBinauralEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsBinauralEffectReset(IPLAmbisonicsBinauralEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsBinauralEffectApply(IPLAmbisonicsBinauralEffect effect,
+@@ -1647,30 +2511,57 @@ IPLAudioEffectState IPLCALL iplAmbisonicsBinauralEffectApply(IPLAmbisonicsBinaur
+                                                      IPLAudioBuffer* in,
+                                                      IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplAmbisonicsBinauralEffectGetTailSize(IPLAmbisonicsBinauralEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsBinauralEffectGetTail(IPLAmbisonicsBinauralEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsBinauralEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplAmbisonicsRotationEffectCreate(IPLContext context,
+@@ -1678,36 +2569,72 @@ IPLerror IPLCALL iplAmbisonicsRotationEffectCreate(IPLContext context,
+                                            IPLAmbisonicsRotationEffectSettings* effectSettings,
+                                            IPLAmbisonicsRotationEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createAmbisonicsRotationEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsRotationEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createAmbisonicsRotationEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsRotationEffect**>(effect));
++    }
+ }
+ 
+ IPLAmbisonicsRotationEffect IPLCALL iplAmbisonicsRotationEffectRetain(IPLAmbisonicsRotationEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLAmbisonicsRotationEffect>(reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLAmbisonicsRotationEffect>(reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsRotationEffectRelease(IPLAmbisonicsRotationEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IAmbisonicsRotationEffect*>(*effect)->release();
++        reinterpret_cast<api::IAmbisonicsRotationEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsRotationEffectReset(IPLAmbisonicsRotationEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsRotationEffectApply(IPLAmbisonicsRotationEffect effect,
+@@ -1715,30 +2642,57 @@ IPLAudioEffectState IPLCALL iplAmbisonicsRotationEffectApply(IPLAmbisonicsRotati
+                                                      IPLAudioBuffer* in,
+                                                      IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplAmbisonicsRotationEffectGetTailSize(IPLAmbisonicsRotationEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsRotationEffectGetTail(IPLAmbisonicsRotationEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsRotationEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplAmbisonicsDecodeEffectCreate(IPLContext context,
+@@ -1746,36 +2700,72 @@ IPLerror IPLCALL iplAmbisonicsDecodeEffectCreate(IPLContext context,
+                                          IPLAmbisonicsDecodeEffectSettings* effectSettings,
+                                          IPLAmbisonicsDecodeEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createAmbisonicsDecodeEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsDecodeEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createAmbisonicsDecodeEffect(audioSettings, effectSettings, reinterpret_cast<api::IAmbisonicsDecodeEffect**>(effect));
++    }
+ }
+ 
+ IPLAmbisonicsDecodeEffect IPLCALL iplAmbisonicsDecodeEffectRetain(IPLAmbisonicsDecodeEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLAmbisonicsDecodeEffect>(reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLAmbisonicsDecodeEffect>(reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsDecodeEffectRelease(IPLAmbisonicsDecodeEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IAmbisonicsDecodeEffect*>(*effect)->release();
++        reinterpret_cast<api::IAmbisonicsDecodeEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplAmbisonicsDecodeEffectReset(IPLAmbisonicsDecodeEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsDecodeEffectApply(IPLAmbisonicsDecodeEffect effect,
+@@ -1783,30 +2773,57 @@ IPLAudioEffectState IPLCALL iplAmbisonicsDecodeEffectApply(IPLAmbisonicsDecodeEf
+                                                    IPLAudioBuffer* in,
+                                                    IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplAmbisonicsDecodeEffectGetTailSize(IPLAmbisonicsDecodeEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplAmbisonicsDecodeEffectGetTail(IPLAmbisonicsDecodeEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IAmbisonicsDecodeEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplDirectEffectCreate(IPLContext context,
+@@ -1814,36 +2831,72 @@ IPLerror IPLCALL iplDirectEffectCreate(IPLContext context,
+                                IPLDirectEffectSettings* effectSettings,
+                                IPLDirectEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createDirectEffect(audioSettings, effectSettings, reinterpret_cast<api::IDirectEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createDirectEffect(audioSettings, effectSettings, reinterpret_cast<api::IDirectEffect**>(effect));
++    }
+ }
+ 
+ IPLDirectEffect IPLCALL iplDirectEffectRetain(IPLDirectEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLDirectEffect>(reinterpret_cast<api::IDirectEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLDirectEffect>(reinterpret_cast<api::IDirectEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplDirectEffectRelease(IPLDirectEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IDirectEffect*>(*effect)->release();
++        reinterpret_cast<api::IDirectEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplDirectEffectReset(IPLDirectEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IDirectEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IDirectEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplDirectEffectApply(IPLDirectEffect effect,
+@@ -1851,30 +2904,57 @@ IPLAudioEffectState IPLCALL iplDirectEffectApply(IPLDirectEffect effect,
+                                          IPLAudioBuffer* in,
+                                          IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IDirectEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IDirectEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplDirectEffectGetTailSize(IPLDirectEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IDirectEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IDirectEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplDirectEffectGetTail(IPLDirectEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IDirectEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IDirectEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplReflectionEffectCreate(IPLContext context,
+@@ -1882,36 +2962,72 @@ IPLerror IPLCALL iplReflectionEffectCreate(IPLContext context,
+                                    IPLReflectionEffectSettings* effectSettings,
+                                    IPLReflectionEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createReflectionEffect(audioSettings, effectSettings, reinterpret_cast<api::IReflectionEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createReflectionEffect(audioSettings, effectSettings, reinterpret_cast<api::IReflectionEffect**>(effect));
++    }
+ }
+ 
+ IPLReflectionEffect IPLCALL iplReflectionEffectRetain(IPLReflectionEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLReflectionEffect>(reinterpret_cast<api::IReflectionEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLReflectionEffect>(reinterpret_cast<api::IReflectionEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplReflectionEffectRelease(IPLReflectionEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IReflectionEffect*>(*effect)->release();
++        reinterpret_cast<api::IReflectionEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplReflectionEffectReset(IPLReflectionEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IReflectionEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IReflectionEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplReflectionEffectApply(IPLReflectionEffect effect,
+@@ -1920,31 +3036,58 @@ IPLAudioEffectState IPLCALL iplReflectionEffectApply(IPLReflectionEffect effect,
+                                              IPLAudioBuffer* out,
+                                              IPLReflectionMixer mixer)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IReflectionEffect*>(effect)->apply(params, in, out, reinterpret_cast<api::IReflectionMixer*>(mixer));
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IReflectionEffect*>(effect)->apply(params, in, out, reinterpret_cast<api::IReflectionMixer*>(mixer));
++    }
+ }
+ 
+ IPLint32 IPLCALL iplReflectionEffectGetTailSize(IPLReflectionEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IReflectionEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IReflectionEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplReflectionEffectGetTail(IPLReflectionEffect effect, IPLAudioBuffer* out, IPLReflectionMixer mixer)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IReflectionEffect*>(effect);
+-    auto _mixer = reinterpret_cast<api::IReflectionMixer*>(mixer);
++        auto _effect = reinterpret_cast<api::IReflectionEffect*>(effect);
++        auto _mixer = reinterpret_cast<api::IReflectionMixer*>(mixer);
+ 
+-    return _effect->getTail(out, _mixer);
++        return _effect->getTail(out, _mixer);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplReflectionMixerCreate(IPLContext context,
+@@ -1952,46 +3095,91 @@ IPLerror IPLCALL iplReflectionMixerCreate(IPLContext context,
+                                   IPLReflectionEffectSettings* effectSettings,
+                                   IPLReflectionMixer* mixer)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createReflectionMixer(audioSettings, effectSettings, reinterpret_cast<api::IReflectionMixer**>(mixer));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createReflectionMixer(audioSettings, effectSettings, reinterpret_cast<api::IReflectionMixer**>(mixer));
++    }
+ }
+ 
+ IPLReflectionMixer IPLCALL iplReflectionMixerRetain(IPLReflectionMixer mixer)
+ {
+-    if (!mixer)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!mixer)
++            return nullptr;
++
++        return reinterpret_cast<IPLReflectionMixer>(reinterpret_cast<api::IReflectionMixer*>(mixer)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLReflectionMixer>(reinterpret_cast<api::IReflectionMixer*>(mixer)->retain());
++    }
+ }
+ 
+ void IPLCALL iplReflectionMixerRelease(IPLReflectionMixer* mixer)
+ {
+-    if (!mixer || !*mixer)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!mixer || !*mixer)
++            return;
+ 
+-    reinterpret_cast<api::IReflectionMixer*>(*mixer)->release();
++        reinterpret_cast<api::IReflectionMixer*>(*mixer)->release();
+ 
+-    *mixer = nullptr;
++        *mixer = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplReflectionMixerReset(IPLReflectionMixer mixer)
+ {
+-    if (!mixer)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!mixer)
++            return;
++
++        reinterpret_cast<api::IReflectionMixer*>(mixer)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IReflectionMixer*>(mixer)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplReflectionMixerApply(IPLReflectionMixer mixer,
+                                             IPLReflectionEffectParams* params,
+                                             IPLAudioBuffer* out)
+ {
+-    if (!mixer)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!mixer)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IReflectionMixer*>(mixer)->apply(params, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IReflectionMixer*>(mixer)->apply(params, out);
++    }
+ }
+ 
+ IPLerror IPLCALL iplPathEffectCreate(IPLContext context,
+@@ -1999,36 +3187,72 @@ IPLerror IPLCALL iplPathEffectCreate(IPLContext context,
+                              IPLPathEffectSettings* effectSettings,
+                              IPLPathEffect* effect)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createPathEffect(audioSettings, effectSettings, reinterpret_cast<api::IPathEffect**>(effect));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createPathEffect(audioSettings, effectSettings, reinterpret_cast<api::IPathEffect**>(effect));
++    }
+ }
+ 
+ IPLPathEffect IPLCALL iplPathEffectRetain(IPLPathEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return nullptr;
++
++        return reinterpret_cast<IPLPathEffect>(reinterpret_cast<api::IPathEffect*>(effect)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLPathEffect>(reinterpret_cast<api::IPathEffect*>(effect)->retain());
++    }
+ }
+ 
+ void IPLCALL iplPathEffectRelease(IPLPathEffect* effect)
+ {
+-    if (!effect || !*effect)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect || !*effect)
++            return;
+ 
+-    reinterpret_cast<api::IPathEffect*>(*effect)->release();
++        reinterpret_cast<api::IPathEffect*>(*effect)->release();
+ 
+-    *effect = nullptr;
++        *effect = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplPathEffectReset(IPLPathEffect effect)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return;
++
++        reinterpret_cast<api::IPathEffect*>(effect)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IPathEffect*>(effect)->reset();
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplPathEffectApply(IPLPathEffect effect,
+@@ -2036,205 +3260,412 @@ IPLAudioEffectState IPLCALL iplPathEffectApply(IPLPathEffect effect,
+                                        IPLAudioBuffer* in,
+                                        IPLAudioBuffer* out)
+ {
+-    if (!effect)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++
++        return reinterpret_cast<api::IPathEffect*>(effect)->apply(params, in, out);
++    }
++    catch (...)
++    {
+         return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+-
+-    return reinterpret_cast<api::IPathEffect*>(effect)->apply(params, in, out);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplPathEffectGetTailSize(IPLPathEffect effect)
+ {
+-    if (!effect)
+-        return 0;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return 0;
+ 
+-    auto _effect = reinterpret_cast<api::IPathEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IPathEffect*>(effect);
+ 
+-    return _effect->getTailSize();
++        return _effect->getTailSize();
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLAudioEffectState IPLCALL iplPathEffectGetTail(IPLPathEffect effect, IPLAudioBuffer* out)
+ {
+-    if (!effect)
+-        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!effect)
++            return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
+ 
+-    auto _effect = reinterpret_cast<api::IPathEffect*>(effect);
++        auto _effect = reinterpret_cast<api::IPathEffect*>(effect);
+ 
+-    return _effect->getTail(out);
++        return _effect->getTail(out);
++    }
++    catch (...)
++    {
++        return IPL_AUDIOEFFECTSTATE_TAILCOMPLETE;
++    }
+ }
+ 
+ IPLerror IPLCALL iplProbeArrayCreate(IPLContext context,
+                              IPLProbeArray* probeArray)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createProbeArray(reinterpret_cast<api::IProbeArray**>(probeArray));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createProbeArray(reinterpret_cast<api::IProbeArray**>(probeArray));
++    }
+ }
+ 
+ IPLProbeArray IPLCALL iplProbeArrayRetain(IPLProbeArray probeArray)
+ {
+-    if (!probeArray)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeArray)
++            return nullptr;
++
++        return reinterpret_cast<IPLProbeArray>(reinterpret_cast<api::IProbeArray*>(probeArray)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLProbeArray>(reinterpret_cast<api::IProbeArray*>(probeArray)->retain());
++    }
+ }
+ 
+ void IPLCALL iplProbeArrayRelease(IPLProbeArray* probeArray)
+ {
+-    if (!probeArray || !*probeArray)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeArray || !*probeArray)
++            return;
+ 
+-    reinterpret_cast<api::IProbeArray*>(*probeArray)->release();
++        reinterpret_cast<api::IProbeArray*>(*probeArray)->release();
+ 
+-    *probeArray = nullptr;
++        *probeArray = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplProbeArrayGenerateProbes(IPLProbeArray probeArray, IPLScene scene, IPLProbeGenerationParams* params)
+ {
+-    if (!probeArray)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeArray)
++            return;
++
++        reinterpret_cast<api::IProbeArray*>(probeArray)->generateProbes(reinterpret_cast<api::IScene*>(scene), params);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeArray*>(probeArray)->generateProbes(reinterpret_cast<api::IScene*>(scene), params);
++    }
+ }
+ 
+ IPLint32 IPLCALL iplProbeArrayGetNumProbes(IPLProbeArray probeArray)
+ {
+-    if (!probeArray)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeArray)
++            return 0;
++
++        return reinterpret_cast<api::IProbeArray*>(probeArray)->getNumProbes();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IProbeArray*>(probeArray)->getNumProbes();
++    }
+ }
+ 
+ IPLSphere IPLCALL iplProbeArrayGetProbe(IPLProbeArray probeArray,
+                                 IPLint32 index)
+ {
+-    if (!probeArray)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeArray)
++            return IPLSphere{};
++
++        return reinterpret_cast<api::IProbeArray*>(probeArray)->getProbe(index);
++    }
++    catch (...)
++    {
+         return IPLSphere{};
+-
+-    return reinterpret_cast<api::IProbeArray*>(probeArray)->getProbe(index);
++    }
+ }
+ 
+ IPLerror IPLCALL iplProbeBatchCreate(IPLContext context,
+                              IPLProbeBatch* probeBatch)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createProbeBatch(reinterpret_cast<api::IProbeBatch**>(probeBatch));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createProbeBatch(reinterpret_cast<api::IProbeBatch**>(probeBatch));
++    }
+ }
+ 
+ IPLProbeBatch IPLCALL iplProbeBatchRetain(IPLProbeBatch probeBatch)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return nullptr;
++
++        return reinterpret_cast<IPLProbeBatch>(reinterpret_cast<api::IProbeBatch*>(probeBatch)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLProbeBatch>(reinterpret_cast<api::IProbeBatch*>(probeBatch)->retain());
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchRelease(IPLProbeBatch* probeBatch)
+ {
+-    if (!probeBatch || !*probeBatch)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch || !*probeBatch)
++            return;
+ 
+-    reinterpret_cast<api::IProbeBatch*>(*probeBatch)->release();
++        reinterpret_cast<api::IProbeBatch*>(*probeBatch)->release();
+ 
+-    *probeBatch = nullptr;
++        *probeBatch = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ IPLerror IPLCALL iplProbeBatchLoad(IPLContext context,
+                            IPLSerializedObject serializedObject,
+                            IPLProbeBatch* probeBatch)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->loadProbeBatch(reinterpret_cast<api::ISerializedObject*>(serializedObject), reinterpret_cast<api::IProbeBatch**>(probeBatch));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->loadProbeBatch(reinterpret_cast<api::ISerializedObject*>(serializedObject), reinterpret_cast<api::IProbeBatch**>(probeBatch));
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchSave(IPLProbeBatch probeBatch,
+                        IPLSerializedObject serializedObject)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->save(reinterpret_cast<api::ISerializedObject*>(serializedObject));
++    }
+ }
+ 
+ IPLint32 IPLCALL iplProbeBatchGetNumProbes(IPLProbeBatch probeBatch)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return 0;
++
++        return reinterpret_cast<api::IProbeBatch*>(probeBatch)->getNumProbes();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IProbeBatch*>(probeBatch)->getNumProbes();
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchAddProbe(IPLProbeBatch probeBatch,
+                            IPLSphere probe)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->addProbe(probe);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->addProbe(probe);
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchAddProbeArray(IPLProbeBatch probeBatch,
+                                 IPLProbeArray probeArray)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->addProbeArray(reinterpret_cast<api::IProbeArray*>(probeArray));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->addProbeArray(reinterpret_cast<api::IProbeArray*>(probeArray));
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchRemoveProbe(IPLProbeBatch probeBatch,
+                               IPLint32 index)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->removeProbe(index);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->removeProbe(index);
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchCommit(IPLProbeBatch probeBatch)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->commit();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->commit();
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchRemoveData(IPLProbeBatch probeBatch,
+                              IPLBakedDataIdentifier* identifier)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->removeData(identifier);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->removeData(identifier);
++    }
+ }
+ 
+ IPLsize IPLCALL iplProbeBatchGetDataSize(IPLProbeBatch probeBatch,
+                                   IPLBakedDataIdentifier* identifier)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return 0;
++
++        return reinterpret_cast<api::IProbeBatch*>(probeBatch)->getDataSize(identifier);
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IProbeBatch*>(probeBatch)->getDataSize(identifier);
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchGetEnergyField(IPLProbeBatch probeBatch, IPLBakedDataIdentifier* identifier, IPLint32 probeIndex, IPLEnergyField energyField)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->getEnergyField(identifier, probeIndex, reinterpret_cast<api::IEnergyField*>(energyField));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->getEnergyField(identifier, probeIndex, reinterpret_cast<api::IEnergyField*>(energyField));
++    }
+ }
+ 
+ void IPLCALL iplProbeBatchGetReverb(IPLProbeBatch probeBatch, IPLBakedDataIdentifier* identifier, IPLint32 probeIndex, IPLfloat32* reverbTimes)
+ {
+-    if (!probeBatch)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!probeBatch)
++            return;
++
++        reinterpret_cast<api::IProbeBatch*>(probeBatch)->getReverb(identifier, probeIndex, reverbTimes);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IProbeBatch*>(probeBatch)->getReverb(identifier, probeIndex, reverbTimes);
++    }
+ }
+ 
+ void IPLCALL iplReflectionsBakerBake(IPLContext context,
+@@ -2242,18 +3673,36 @@ void IPLCALL iplReflectionsBakerBake(IPLContext context,
+                              IPLProgressCallback progressCallback,
+                              void* userData)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->bakeReflections(params, progressCallback, userData);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->bakeReflections(params, progressCallback, userData);
++    }
+ }
+ 
+ void IPLCALL iplReflectionsBakerCancelBake(IPLContext context)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->cancelBakeReflections();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->cancelBakeReflections();
++    }
+ }
+ 
+ void IPLCALL iplPathBakerBake(IPLContext context,
+@@ -2261,177 +3710,357 @@ void IPLCALL iplPathBakerBake(IPLContext context,
+                       IPLProgressCallback progressCallback,
+                       void* userData)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->bakePaths(params, progressCallback, userData);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->bakePaths(params, progressCallback, userData);
++    }
+ }
+ 
+ void IPLCALL iplPathBakerCancelBake(IPLContext context)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->cancelBakePaths();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->cancelBakePaths();
++    }
+ }
+ 
+ IPLerror IPLCALL iplSimulatorCreate(IPLContext context,
+                             IPLSimulationSettings* settings,
+                             IPLSimulator* simulator)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createSimulator(settings, reinterpret_cast<api::ISimulator**>(simulator));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createSimulator(settings, reinterpret_cast<api::ISimulator**>(simulator));
++    }
+ }
+ 
+ IPLSimulator IPLCALL iplSimulatorRetain(IPLSimulator simulator)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return nullptr;
++
++        return reinterpret_cast<IPLSimulator>(reinterpret_cast<api::ISimulator*>(simulator)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLSimulator>(reinterpret_cast<api::ISimulator*>(simulator)->retain());
++    }
+ }
+ 
+ void IPLCALL iplSimulatorRelease(IPLSimulator* simulator)
+ {
+-    if (!simulator || !*simulator)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator || !*simulator)
++            return;
+ 
+-    reinterpret_cast<api::ISimulator*>(*simulator)->release();
++        reinterpret_cast<api::ISimulator*>(*simulator)->release();
+ 
+-    *simulator = nullptr;
++        *simulator = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplSimulatorSetScene(IPLSimulator simulator,
+                           IPLScene scene)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->setScene(reinterpret_cast<api::IScene*>(scene));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->setScene(reinterpret_cast<api::IScene*>(scene));
++    }
+ }
+ 
+ void IPLCALL iplSimulatorAddProbeBatch(IPLSimulator simulator, IPLProbeBatch probeBatch)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->addProbeBatch(reinterpret_cast<api::IProbeBatch*>(probeBatch));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->addProbeBatch(reinterpret_cast<api::IProbeBatch*>(probeBatch));
++    }
+ }
+ 
+ void IPLCALL iplSimulatorRemoveProbeBatch(IPLSimulator simulator, IPLProbeBatch probeBatch)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->removeProbeBatch(reinterpret_cast<api::IProbeBatch*>(probeBatch));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->removeProbeBatch(reinterpret_cast<api::IProbeBatch*>(probeBatch));
++    }
+ }
+ 
+ void IPLCALL iplSimulatorSetSharedInputs(IPLSimulator simulator,
+                                  IPLSimulationFlags flags,
+                                  IPLSimulationSharedInputs* sharedInputs)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->setSharedInputs(flags, sharedInputs);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->setSharedInputs(flags, sharedInputs);
++    }
+ }
+ 
+ void IPLCALL iplSimulatorCommit(IPLSimulator simulator)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->commit();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->commit();
++    }
+ }
+ 
+ void IPLCALL iplSimulatorRunDirect(IPLSimulator simulator)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->runDirect();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->runDirect();
++    }
+ }
+ 
+ void IPLCALL iplSimulatorRunReflections(IPLSimulator simulator)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->runReflections();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->runReflections();
++    }
+ }
+ 
+ void IPLCALL iplSimulatorRunPathing(IPLSimulator simulator)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return;
++
++        reinterpret_cast<api::ISimulator*>(simulator)->runPathing();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISimulator*>(simulator)->runPathing();
++    }
+ }
+ 
+ IPLerror IPLCALL iplSourceCreate(IPLSimulator simulator,
+                          IPLSourceSettings* settings,
+                          IPLSource* source)
+ {
+-    if (!simulator)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!simulator)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::ISimulator*>(simulator)->createSource(settings, reinterpret_cast<api::ISource**>(source));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::ISimulator*>(simulator)->createSource(settings, reinterpret_cast<api::ISource**>(source));
++    }
+ }
+ 
+ IPLSource IPLCALL iplSourceRetain(IPLSource source)
+ {
+-    if (!source)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source)
++            return nullptr;
++
++        return reinterpret_cast<IPLSource>(reinterpret_cast<api::ISource*>(source)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLSource>(reinterpret_cast<api::ISource*>(source)->retain());
++    }
+ }
+ 
+ void IPLCALL iplSourceRelease(IPLSource* source)
+ {
+-    if (!source || !*source)
+-        return;
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source || !*source)
++            return;
+ 
+-    reinterpret_cast<api::ISource*>(*source)->release();
++        reinterpret_cast<api::ISource*>(*source)->release();
+ 
+-    *source = nullptr;
++        *source = nullptr;
++    }
++    catch (...)
++    {
++        return;
++    }
+ }
+ 
+ void IPLCALL iplSourceAdd(IPLSource source, IPLSimulator simulator)
+ {
+-    if (!source)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source)
++            return;
++
++        reinterpret_cast<api::ISource*>(source)->add(reinterpret_cast<api::ISimulator*>(simulator));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISource*>(source)->add(reinterpret_cast<api::ISimulator*>(simulator));
++    }
+ }
+ 
+ void IPLCALL iplSourceRemove(IPLSource source, IPLSimulator simulator)
+ {
+-    if (!source)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source)
++            return;
++
++        reinterpret_cast<api::ISource*>(source)->remove(reinterpret_cast<api::ISimulator*>(simulator));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISource*>(source)->remove(reinterpret_cast<api::ISimulator*>(simulator));
++    }
+ }
+ 
+ void IPLCALL iplSourceSetInputs(IPLSource source,
+                         IPLSimulationFlags flags,
+                         IPLSimulationInputs* inputs)
+ {
+-    if (!source)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source)
++            return;
++
++        reinterpret_cast<api::ISource*>(source)->setInputs(flags, inputs);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISource*>(source)->setInputs(flags, inputs);
++    }
+ }
+ 
+ void IPLCALL iplSourceGetOutputs(IPLSource source,
+                          IPLSimulationFlags flags,
+                          IPLSimulationOutputs* outputs)
+ {
+-    if (!source)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!source)
++            return;
++
++        reinterpret_cast<api::ISource*>(source)->getOutputs(flags, outputs);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::ISource*>(source)->getOutputs(flags, outputs);
++    }
+ }
+ 
+ IPLfloat32 IPLCALL iplDistanceAttenuationCalculate(IPLContext context,
+@@ -2439,10 +4068,19 @@ IPLfloat32 IPLCALL iplDistanceAttenuationCalculate(IPLContext context,
+                                            IPLVector3 listener,
+                                            IPLDistanceAttenuationModel* model)
+ {
+-    if (!context)
+-        return 1.0f;
+-
+-    return reinterpret_cast<api::IContext*>(context)->calculateDistanceAttenuation(source, listener, model);
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return 1.0f;
++
++        return reinterpret_cast<api::IContext*>(context)->calculateDistanceAttenuation(source, listener, model);
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ void IPLCALL iplAirAbsorptionCalculate(IPLContext context,
+@@ -2451,10 +4089,19 @@ void IPLCALL iplAirAbsorptionCalculate(IPLContext context,
+                                IPLAirAbsorptionModel* model,
+                                IPLfloat32* airAbsorption)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return;
++
++        reinterpret_cast<api::IContext*>(context)->calculateAirAbsorption(source, listener, model, airAbsorption);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IContext*>(context)->calculateAirAbsorption(source, listener, model, airAbsorption);
++    }
+ }
+ 
+ IPLfloat32 IPLCALL iplDirectivityCalculate(IPLContext context,
+@@ -2462,51 +4109,105 @@ IPLfloat32 IPLCALL iplDirectivityCalculate(IPLContext context,
+                                    IPLVector3 listener,
+                                    IPLDirectivity* model)
+ {
+-    if (!context)
+-        return 1.0f;
+-
+-    return reinterpret_cast<api::IContext*>(context)->calculateDirectivity(source, listener, model);
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return 1.0f;
++
++        return reinterpret_cast<api::IContext*>(context)->calculateDirectivity(source, listener, model);
++    }
++    catch (...)
++    {
++        return 0;
++    }
+ }
+ 
+ IPLerror IPLCALL iplEnergyFieldCreate(IPLContext context, IPLEnergyFieldSettings* settings, IPLEnergyField* energyField)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createEnergyField(settings, reinterpret_cast<api::IEnergyField**>(energyField));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createEnergyField(settings, reinterpret_cast<api::IEnergyField**>(energyField));
++    }
+ }
+ 
+ IPLEnergyField IPLCALL iplEnergyFieldRetain(IPLEnergyField energyField)
+ {
+-    if (!energyField)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!energyField)
++            return nullptr;
++
++        return reinterpret_cast<IPLEnergyField>(reinterpret_cast<api::IEnergyField*>(energyField)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLEnergyField>(reinterpret_cast<api::IEnergyField*>(energyField)->retain());
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldRelease(IPLEnergyField* energyField)
+ {
+-    if (!energyField || !*energyField)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!energyField || !*energyField)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(*energyField)->release();
++        *energyField = nullptr;
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(*energyField)->release();
+-    *energyField = nullptr;
++    }
+ }
+ 
+ IPLint32 IPLCALL iplEnergyFieldGetNumChannels(IPLEnergyField energyField)
+ {
+-    if (!energyField)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!energyField)
++            return 0;
++
++        return reinterpret_cast<api::IEnergyField*>(energyField)->getNumChannels();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IEnergyField*>(energyField)->getNumChannels();
++    }
+ }
+ 
+ IPLint32 IPLCALL iplEnergyFieldGetNumBins(IPLEnergyField energyField)
+ {
+-    if (!energyField)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!energyField)
++            return 0;
++
++        return reinterpret_cast<api::IEnergyField*>(energyField)->getNumBins();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IEnergyField*>(energyField)->getNumBins();
++    }
+ }
+ 
+ IPLfloat32* IPLCALL iplEnergyFieldGetData(IPLEnergyField energyField)
+@@ -2535,91 +4236,190 @@ IPLfloat32* IPLCALL iplEnergyFieldGetBand(IPLEnergyField energyField, IPLint32 c
+ 
+ void IPLCALL iplEnergyFieldReset(IPLEnergyField energyField)
+ {
+-    if (!energyField)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!energyField)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(energyField)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(energyField)->reset();
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldCopy(IPLEnergyField src, IPLEnergyField dst)
+ {
+-    if (!src || !dst)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!src || !dst)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(dst)->copy(reinterpret_cast<api::IEnergyField*>(src));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(dst)->copy(reinterpret_cast<api::IEnergyField*>(src));
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldSwap(IPLEnergyField a, IPLEnergyField b)
+ {
+-    if (!a || !b)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!a || !b)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(b)->swap(reinterpret_cast<api::IEnergyField*>(a));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(b)->swap(reinterpret_cast<api::IEnergyField*>(a));
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldAdd(IPLEnergyField in1, IPLEnergyField in2, IPLEnergyField out)
+ {
+-    if (!in1 || !in2 || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in1 || !in2 || !out)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(out)->add(reinterpret_cast<api::IEnergyField*>(in1), reinterpret_cast<api::IEnergyField*>(in2));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(out)->add(reinterpret_cast<api::IEnergyField*>(in1), reinterpret_cast<api::IEnergyField*>(in2));
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldScale(IPLEnergyField in, IPLfloat32 scalar, IPLEnergyField out)
+ {
+-    if (!in || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in || !out)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(out)->scale(reinterpret_cast<api::IEnergyField*>(in), scalar);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(out)->scale(reinterpret_cast<api::IEnergyField*>(in), scalar);
++    }
+ }
+ 
+ void IPLCALL iplEnergyFieldScaleAccum(IPLEnergyField in, IPLfloat32 scalar, IPLEnergyField out)
+ {
+-    if (!in || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in || !out)
++            return;
++
++        reinterpret_cast<api::IEnergyField*>(out)->scaleAccum(reinterpret_cast<api::IEnergyField*>(in), scalar);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IEnergyField*>(out)->scaleAccum(reinterpret_cast<api::IEnergyField*>(in), scalar);
++    }
+ }
+ 
+ IPLerror IPLCALL iplImpulseResponseCreate(IPLContext context, IPLImpulseResponseSettings* settings, IPLImpulseResponse* impulseResponse)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createImpulseResponse(settings, reinterpret_cast<api::IImpulseResponse**>(impulseResponse));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createImpulseResponse(settings, reinterpret_cast<api::IImpulseResponse**>(impulseResponse));
++    }
+ }
+ 
+ IPLImpulseResponse IPLCALL iplImpulseResponseRetain(IPLImpulseResponse impulseResponse)
+ {
+-    if (!impulseResponse)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!impulseResponse)
++            return nullptr;
++
++        return reinterpret_cast<IPLImpulseResponse>(reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLImpulseResponse>(reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->retain());
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseRelease(IPLImpulseResponse* impulseResponse)
+ {
+-    if (!impulseResponse || !*impulseResponse)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!impulseResponse || !*impulseResponse)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(*impulseResponse)->release();
++        *impulseResponse = nullptr;
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(*impulseResponse)->release();
+-    *impulseResponse = nullptr;
++    }
+ }
+ 
+ IPLint32 IPLCALL iplImpulseResponseGetNumChannels(IPLImpulseResponse impulseResponse)
+ {
+-    if (!impulseResponse)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!impulseResponse)
++            return 0;
++
++        return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getNumChannels();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getNumChannels();
++    }
+ }
+ 
+ IPLint32 IPLCALL iplImpulseResponseGetNumSamples(IPLImpulseResponse impulseResponse)
+ {
+-    if (!impulseResponse)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!impulseResponse)
++            return 0;
++
++        return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getNumSamples();
++    }
++    catch (...)
++    {
+         return 0;
+-
+-    return reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->getNumSamples();
++    }
+ }
+ 
+ IPLfloat32* IPLCALL iplImpulseResponseGetData(IPLImpulseResponse impulseResponse)
+@@ -2640,83 +4440,173 @@ IPLfloat32* IPLCALL iplImpulseResponseGetChannel(IPLImpulseResponse impulseRespo
+ 
+ void IPLCALL iplImpulseResponseReset(IPLImpulseResponse impulseResponse)
+ {
+-    if (!impulseResponse)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!impulseResponse)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->reset();
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(impulseResponse)->reset();
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseCopy(IPLImpulseResponse src, IPLImpulseResponse dst)
+ {
+-    if (!src || !dst)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!src || !dst)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(dst)->copy(reinterpret_cast<api::IImpulseResponse*>(src));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(dst)->copy(reinterpret_cast<api::IImpulseResponse*>(src));
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseSwap(IPLImpulseResponse ir1, IPLImpulseResponse ir2)
+ {
+-    if (!ir1 || !ir2)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!ir1 || !ir2)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(ir2)->swap(reinterpret_cast<api::IImpulseResponse*>(ir1));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(ir2)->swap(reinterpret_cast<api::IImpulseResponse*>(ir1));
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseAdd(IPLImpulseResponse in1, IPLImpulseResponse in2, IPLImpulseResponse out)
+ {
+-    if (!in1 || !in2 || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in1 || !in2 || !out)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(out)->add(reinterpret_cast<api::IImpulseResponse*>(in1), reinterpret_cast<api::IImpulseResponse*>(in2));
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(out)->add(reinterpret_cast<api::IImpulseResponse*>(in1), reinterpret_cast<api::IImpulseResponse*>(in2));
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseScale(IPLImpulseResponse in, IPLfloat32 scalar, IPLImpulseResponse out)
+ {
+-    if (!in || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in || !out)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(out)->scale(reinterpret_cast<api::IImpulseResponse*>(in), scalar);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(out)->scale(reinterpret_cast<api::IImpulseResponse*>(in), scalar);
++    }
+ }
+ 
+ void IPLCALL iplImpulseResponseScaleAccum(IPLImpulseResponse in, IPLfloat32 scalar, IPLImpulseResponse out)
+ {
+-    if (!in || !out)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!in || !out)
++            return;
++
++        reinterpret_cast<api::IImpulseResponse*>(out)->scaleAccum(reinterpret_cast<api::IImpulseResponse*>(in), scalar);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IImpulseResponse*>(out)->scaleAccum(reinterpret_cast<api::IImpulseResponse*>(in), scalar);
++    }
+ }
+ 
+ IPLerror IPLCALL iplReconstructorCreate(IPLContext context, IPLReconstructorSettings* settings, IPLReconstructor* reconstructor)
+ {
+-    if (!context)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!context)
++            return IPL_STATUS_FAILURE;
++
++        return reinterpret_cast<api::IContext*>(context)->createReconstructor(settings, reinterpret_cast<api::IReconstructor**>(reconstructor));
++    }
++    catch (...)
++    {
+         return IPL_STATUS_FAILURE;
+-
+-    return reinterpret_cast<api::IContext*>(context)->createReconstructor(settings, reinterpret_cast<api::IReconstructor**>(reconstructor));
++    }
+ }
+ 
+ IPLReconstructor IPLCALL iplReconstructorRetain(IPLReconstructor reconstructor)
+ {
+-    if (!reconstructor)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!reconstructor)
++            return nullptr;
++
++        return reinterpret_cast<IPLReconstructor>(reinterpret_cast<api::IReconstructor*>(reconstructor)->retain());
++    }
++    catch (...)
++    {
+         return nullptr;
+-
+-    return reinterpret_cast<IPLReconstructor>(reinterpret_cast<api::IReconstructor*>(reconstructor)->retain());
++    }
+ }
+ 
+ void IPLCALL iplReconstructorRelease(IPLReconstructor* reconstructor)
+ {
+-    if (!reconstructor || !*reconstructor)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!reconstructor || !*reconstructor)
++            return;
++
++        reinterpret_cast<api::IReconstructor*>(*reconstructor)->release();
++        *reconstructor = nullptr;
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IReconstructor*>(*reconstructor)->release();
+-    *reconstructor = nullptr;
++    }
+ }
+ 
+ void IPLCALL iplReconstructorReconstruct(IPLReconstructor reconstructor, IPLint32 numInputs, IPLReconstructorInputs* inputs, IPLReconstructorSharedInputs* sharedInputs, IPLReconstructorOutputs* outputs)
+ {
+-    if (!reconstructor)
++    // [godot] C API boundary hardening: the engine builds without exceptions,
++    // so nothing may unwind past this function. See patches/0001.
++    try
++    {
++        if (!reconstructor)
++            return;
++
++        reinterpret_cast<api::IReconstructor*>(reconstructor)->reconstruct(numInputs, inputs, sharedInputs, outputs);
++    }
++    catch (...)
++    {
+         return;
+-
+-    reinterpret_cast<api::IReconstructor*>(reconstructor)->reconstruct(numInputs, inputs, sharedInputs, outputs);
++    }
+ }
+ #endif
+ 
