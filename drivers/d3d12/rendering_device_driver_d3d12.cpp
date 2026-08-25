@@ -5901,6 +5901,8 @@ bool RenderingDeviceDriverD3D12::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 			return true;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			return misc_features_support.image_atomic_64_bit_supported;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return false;
 		case SUPPORTS_POINT_SIZE:
@@ -6193,6 +6195,13 @@ Error RenderingDeviceDriverD3D12::_check_capabilities() {
 	res = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2, &options2, sizeof(options2));
 	if (SUCCEEDED(res)) {
 		misc_features_support.depth_bounds_supported = options2.DepthBoundsTestSupported;
+	}
+
+	D3D12_FEATURE_DATA_D3D12_OPTIONS9 options9 = {};
+	res = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS9, &options9, sizeof(options9));
+	if (SUCCEEDED(res)) {
+		// 64-bit atomics on typed resources are only expressible from Shader Model 6.6 onwards.
+		misc_features_support.image_atomic_64_bit_supported = options9.AtomicInt64OnTypedResourceSupported && shader_capabilities.shader_model >= D3D_SHADER_MODEL_6_6;
 	}
 
 	D3D12_FEATURE_DATA_D3D12_OPTIONS3 options3 = {};

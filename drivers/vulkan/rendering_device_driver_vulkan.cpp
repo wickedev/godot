@@ -579,6 +579,7 @@ Error RenderingDeviceDriverVulkan::_initialize_device_extensions() {
 	_register_requested_device_extension(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME, false);
+	_register_requested_device_extension(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_VULKAN_MEMORY_MODEL_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_EXT_TEXTURE_COMPRESSION_ASTC_HDR_EXTENSION_NAME, false);
 	_register_requested_device_extension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, false);
@@ -922,6 +923,7 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 		VkPhysicalDeviceSynchronization2FeaturesKHR sync_2_features = {};
 		VkPhysicalDeviceRayTracingValidationFeaturesNV raytracing_validation_features = {};
 		VkPhysicalDeviceRayQueryFeaturesKHR ray_query_features = {};
+		VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT image_atomic_int64_features = {};
 
 		const bool use_1_2_features = physical_device_properties.apiVersion >= VK_API_VERSION_1_2;
 		if (use_1_2_features) {
@@ -1016,6 +1018,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 			ray_query_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
 			ray_query_features.pNext = next_features;
 			next_features = &ray_query_features;
+		}
+
+		if (enabled_device_extension_names.has(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)) {
+			image_atomic_int64_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT;
+			image_atomic_int64_features.pNext = next_features;
+			next_features = &image_atomic_int64_features;
 		}
 
 		VkPhysicalDeviceFeatures2 device_features_2 = {};
@@ -1116,6 +1124,12 @@ Error RenderingDeviceDriverVulkan::_check_device_capabilities() {
 
 		if (enabled_device_extension_names.has(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
 			ray_query_support = ray_query_features.rayQuery;
+		}
+
+		if (enabled_device_extension_names.has(VK_EXT_SHADER_IMAGE_ATOMIC_INT64_EXTENSION_NAME)) {
+			// The 64-bit integer type itself must also be usable in shaders, otherwise the atomics
+			// cannot be expressed. shaderInt64 is enabled above whenever the device reports it.
+			image_atomic_int64_support = image_atomic_int64_features.shaderImageInt64Atomics && physical_device_features.shaderInt64;
 		}
 	}
 
@@ -1470,6 +1484,14 @@ Error RenderingDeviceDriverVulkan::_initialize_device(const LocalVector<VkDevice
 		ray_query_features.pNext = create_info_next;
 		ray_query_features.rayQuery = ray_query_support;
 		create_info_next = &ray_query_features;
+	}
+
+	VkPhysicalDeviceShaderImageAtomicInt64FeaturesEXT image_atomic_int64_features = {};
+	if (image_atomic_int64_support) {
+		image_atomic_int64_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_IMAGE_ATOMIC_INT64_FEATURES_EXT;
+		image_atomic_int64_features.pNext = create_info_next;
+		image_atomic_int64_features.shaderImageInt64Atomics = image_atomic_int64_support;
+		create_info_next = &image_atomic_int64_features;
 	}
 
 	VkPhysicalDeviceVulkan11Features vulkan_1_1_features = {};
@@ -7460,6 +7482,8 @@ bool RenderingDeviceDriverVulkan::has_feature(Features p_feature) {
 			return buffer_device_address_support;
 		case SUPPORTS_DRAW_INDIRECT_COUNT:
 			return draw_indirect_count_support;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			return image_atomic_int64_support;
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 #if (defined(MACOS_ENABLED) || defined(APPLE_EMBEDDED_ENABLED))
 			// MoltenVK has previously had issues with 32-bit atomics on images.

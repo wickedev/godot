@@ -2870,6 +2870,10 @@
 			Support for indirect draws that read their draw count from a GPU buffer, via [method draw_list_draw_indirect_count].
 			[b]Note:[/b] This is not supported on Metal, and requires the [code]VK_KHR_draw_indirect_count[/code] extension when using Vulkan (which MoltenVK does not provide). Always check this feature before calling [method draw_list_draw_indirect_count].
 		</constant>
+		<constant name="SUPPORTS_IMAGE_ATOMIC_64_BIT" value="17" enum="Features">
+			Support for 64-bit image atomic operations. This allows a shader to pack a depth value and an identifier into a single [constant DATA_FORMAT_R64_UINT] texel and resolve visibility with one atomic operation.
+			[b]Note:[/b] On Metal this requires both a GPU family that offers 64-bit image atomics and an OS new enough to expose native image atomics. It is not available through MoltenVK.
+		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.
 		</constant>

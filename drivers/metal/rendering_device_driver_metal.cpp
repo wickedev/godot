@@ -2744,6 +2744,11 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 			return device_properties->features.supports_native_image_atomics;
+		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
+			// Two independent gates: the GPU family must offer 64-bit image atomics, and the OS/MSL
+			// version must expose native image atomics at all. supports_native_image_atomics also
+			// carries the GODOT_MTL_DISABLE_IMAGE_ATOMICS override.
+			return device_properties->features.supports_image_atomic_64_bit && device_properties->features.supports_native_image_atomics;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return true;
 		case SUPPORTS_POINT_SIZE:

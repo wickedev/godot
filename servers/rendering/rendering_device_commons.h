@@ -1045,6 +1045,9 @@ public:
 		// Indirect draws that read their draw count from a GPU buffer, rather than taking it from
 		// the CPU at record time. Required to submit a GPU culling result without a readback.
 		SUPPORTS_DRAW_INDIRECT_COUNT,
+		// 64-bit atomic operations on storage images. Required to build a visibility buffer that
+		// packs depth and an identifier into a single R64_UINT texel resolved with one atomic min/max.
+		SUPPORTS_IMAGE_ATOMIC_64_BIT,
 	};
 
 	enum SubgroupOperations {

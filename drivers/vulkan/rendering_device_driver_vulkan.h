@@ -161,6 +161,7 @@ class RenderingDeviceDriverVulkan : public RenderingDeviceDriver {
 	RenderingShaderContainerFormatVulkan shader_container_format;
 	bool buffer_device_address_support = false;
 	bool draw_indirect_count_support = false;
+	bool image_atomic_int64_support = false;
 	bool vulkan_memory_model_support = false;
 	bool vulkan_memory_model_device_scope_support = false;
 	AccelerationStructureCapabilities acceleration_structure_capabilities;
