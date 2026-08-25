@@ -2936,6 +2936,9 @@
 		<constant name="LIMIT_MAX_UNIFORM_BUFFER_SIZE" value="21" enum="Limit">
 			Maximum size of a uniform buffer.
 		</constant>
+		<constant name="LIMIT_MAX_STORAGE_BUFFER_SIZE" value="49" enum="Limit">
+			Maximum size of a storage buffer, in bytes, as seen by a shader through a single binding. A buffer may be allocated larger than this, but no single binding can expose more than this many bytes to a shader.
+		</constant>
 		<constant name="LIMIT_MAX_VERTEX_INPUT_ATTRIBUTE_OFFSET" value="22" enum="Limit">
 			Maximum vertex input attribute offset.
 		</constant>

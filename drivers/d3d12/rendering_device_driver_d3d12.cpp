@@ -5820,6 +5820,11 @@ uint64_t RenderingDeviceDriverD3D12::limit_get(Limit p_limit) {
 			return device_limits.max_srvs_per_shader_stage;
 		case LIMIT_MAX_UNIFORM_BUFFER_SIZE:
 			return 65536;
+		case LIMIT_MAX_STORAGE_BUFFER_SIZE:
+			// D3D12 has no direct equivalent of maxStorageBufferRange. A buffer view is bounded by
+			// D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP texels; for a raw (R32_TYPELESS) view,
+			// which is how storage buffers are addressed, each texel is 4 bytes.
+			return ((uint64_t)1 << D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP) * 4;
 		case LIMIT_MAX_VIEWPORT_DIMENSIONS_X:
 		case LIMIT_MAX_VIEWPORT_DIMENSIONS_Y:
 			return 16384; // Based on max. texture size. Maybe not correct.

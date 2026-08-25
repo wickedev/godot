@@ -2650,6 +2650,10 @@ uint64_t RenderingDeviceDriverMetal::limit_get(Limit p_limit) {
 			return limits.maxBufferLength;
 		case LIMIT_MAX_UNIFORM_BUFFER_SIZE:
 			return limits.maxBufferLength;
+		case LIMIT_MAX_STORAGE_BUFFER_SIZE:
+			// Metal draws no distinction between uniform and storage buffers; both are bound as
+			// plain buffers and share the device's maximum buffer length.
+			return limits.maxBufferLength;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTE_OFFSET:
 			return limits.maxVertexDescriptorLayoutStride;
 		case LIMIT_MAX_VERTEX_INPUT_ATTRIBUTES:

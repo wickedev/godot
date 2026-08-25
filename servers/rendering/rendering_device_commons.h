@@ -1018,6 +1018,10 @@ public:
 		LIMIT_METALFX_TEMPORAL_SCALER_MIN_SCALE = 46,
 		LIMIT_METALFX_TEMPORAL_SCALER_MAX_SCALE,
 		LIMIT_MAX_SHADER_VARYINGS,
+		// Largest range of a single storage buffer that a shader may access. Distinct from the
+		// buffer's allocation size: a buffer may be larger than this, but no single binding can
+		// expose more than this many bytes to a shader.
+		LIMIT_MAX_STORAGE_BUFFER_SIZE,
 	};
 
 	enum Features {
