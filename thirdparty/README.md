@@ -523,6 +523,9 @@ Files extracted from upstream source:
 Patches:
 
 - `0001-backport-upstream-commit-63f2f57.patch` (GH-121974)
+- `0002-hair-external-acceleration.patch` — adds `Hair::SetExternalAcceleration()`, folded into the
+  per-substep gravity vector. Upstream lists wind forces as a missing feature of the hair system and
+  exposes no external force input, so there is nothing to hook without this.
 
 
 ## libbacktrace

@@ -58,6 +58,8 @@ struct Result {
 	Vector3 tip_after;
 	// True when `with_collision` was asked for and the collider actually made it into the scene.
 	bool collider_added = false;
+	// External acceleration the solver was actually given, in hair space.
+	Vector3 applied_acceleration;
 };
 
 // False when built without a hair compute backend (`jolt_hair_compute=none`, the default).
@@ -65,7 +67,8 @@ bool is_available();
 
 // Steps a one-strand groom under gravity for half a second. `with_collision` turns collision on and
 // puts a convex hull against the lower half of the strand, exercising the shape-gathering and
-// collision-plane path Hair::Update takes.
-Result run(bool with_collision);
+// collision-plane path Hair::Update takes. `wind_acceleration` is handed to
+// Hair::SetExternalAcceleration(), which is how the weather bus reaches the solver.
+Result run(bool with_collision, const Vector3 &wind_acceleration = Vector3());
 
 } // namespace JoltHairSmoke

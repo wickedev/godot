@@ -105,6 +105,33 @@ const Vector3 wind = WeatherBus::get_singleton()->get_wind_velocity();
 `get_wind_velocity()` and the shader's `weather_wind_velocity()` compute the same thing. Use one of
 them rather than recomputing, so the two sides cannot drift.
 
+### Velocity is not acceleration
+
+Simulations want a force, and the bus carries a velocity. Converting between them is the consumer's
+job, and it needs a coefficient:
+
+```cpp
+// Linear drag: acceleration proportional to wind speed. `drag` is in 1/s and is a per-material
+// tuning value -- hair strands, a flag and a tree branch all respond differently to the same wind.
+hair->SetExternalAcceleration(to_jolt(WeatherBus::get_singleton()->get_wind_velocity() * drag));
+```
+
+Real drag goes as v², not v. Linear is the cheap approximation, and it is the one worth starting
+from: it cannot blow up at high wind speeds, and the difference is a tuning curve rather than a
+visible behavior change. Whatever a consumer picks, it should not silently treat the velocity as an
+acceleration — the units do not match and the result only looks plausible.
+
+Jolt's hair solver had no external force input at all; `Hair::SetExternalAcceleration()` comes from
+`thirdparty/jolt_physics/patches/0002-hair-external-acceleration.patch`. Upstream lists wind forces
+among the hair system's missing features, so there was nothing to hook.
+
+Expect the visible effect to be small at default material settings. Measured on a pinned 0.4 m
+strand: 20 m/s² of horizontal acceleration deflects the tip about 2° from vertical, not the ~64°
+a free pendulum would reach. `HairSettings::Material::mBendCompliance` defaults to `1e-7`, so the
+strand behaves as a nearly rigid rod clamped at the root, and its deflection is linear in the
+applied load rather than settling at `atan(a/g)`. Wind that reads on screen is a matter of tuning
+compliance and the neutral-pose pull, not of scaling the acceleration up.
+
 ## Producers
 
 The bus is transport. These put values on it:

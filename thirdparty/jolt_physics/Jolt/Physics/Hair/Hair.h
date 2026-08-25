@@ -52,6 +52,12 @@ public:
 	/// The hair will be initialized in its default pose with zero velocity at the new position and rotation during the next update
 	void								OnTeleported()									{ mTeleported = true; }
 
+	/// External acceleration in world space, e.g. wind. Added to gravity for the duration of the next update.
+	/// Note that this means HairSettings::Material::mGravityFactor scales it too, so roots that resist gravity
+	/// also resist wind.
+	void								SetExternalAcceleration(Vec3Arg inAcceleration)	{ mExternalAcceleration = inAcceleration; }
+	Vec3								GetExternalAcceleration() const					{ return mExternalAcceleration; }
+
 	/// Ability to externally provide the scalp vertices buffer. This allows skipping skinning the scalp during the simulation update. You may need to override JPH_SHADER_BIND_SCALP_VERTICES in HairSkinRootsBindings.h to match the format of the provided buffer.
 	void								SetScalpVerticesCB(ComputeBuffer *inBuffer)		{ mScalpVerticesCB = inBuffer; }
 
@@ -187,6 +193,7 @@ protected:
 	Quat								mRotation;										// Current rotation in world space
 	bool								mTeleported = true;								// If the hair got teleported and should be set to the default pose
 	ObjectLayer							mLayer;											// Layer for the hair to collide with
+	Vec3								mExternalAcceleration = Vec3::sZero();			// Additional world space acceleration, e.g. wind
 
 	Mat44								mScalpToHead = Mat44::sIdentity();				// When skipping skinning, this allow specifying a transform that transforms the scalp mesh into head space
 

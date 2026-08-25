@@ -87,7 +87,7 @@ void Hair::InitializeContext(UpdateContext &outCtx, float inDeltaTime, const Phy
 	outCtx.mHalfDeltaTime = 0.5f * outCtx.mDeltaTime;
 	outCtx.mInvDeltaTimeSq = outCtx.mDeltaTime > 0.0f? 1.0f / Square(outCtx.mDeltaTime) : 1.0e12f;
 	outCtx.mTwoDivDeltaTime = outCtx.mDeltaTime > 0.0f? 2.0f / outCtx.mDeltaTime : 1.0e12f;
-	outCtx.mSubStepGravity = (mRotation.Conjugated() * inSystem.GetGravity()) * outCtx.mDeltaTime;
+	outCtx.mSubStepGravity = (mRotation.Conjugated() * (inSystem.GetGravity() + mExternalAcceleration)) * outCtx.mDeltaTime;
 
 	// Calculate delta transform from previous to current position and rotation
 	outCtx.mHasTransformChanged = mPosition != mPrevPosition || mRotation != mPrevRotation;
