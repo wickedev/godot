@@ -87,53 +87,69 @@ TEST_CASE("[FileAccess] Get as UTF-8 String") {
 	SUBCASE("Newline == \\n (Unix)") {
 		Ref<FileAccess> f_lf = FileAccess::open(TestUtils::get_data_path("line_endings_lf.test.txt"), FileAccess::READ);
 		REQUIRE(f_lf.is_valid());
-		String s_lf = f_lf->get_as_utf8_string();
-		CHECK(s_lf == "Hello darkness\nMy old friend\nI've come to talk\nWith you again\n");
-		f_lf->seek(0);
-		CHECK(f_lf->get_line() == "Hello darkness");
-		CHECK(f_lf->get_line() == "My old friend");
-		CHECK(f_lf->get_line() == "I've come to talk");
-		CHECK(f_lf->get_line() == "With you again");
-		CHECK(f_lf->get_error() == Error::OK);
+		// Wrapped rather than returned: a return inside a SUBCASE skips every
+		// sibling subcase (see REQUIRE_OR_RETURN in test_macros.h).
+		if (f_lf.is_valid()) {
+			String s_lf = f_lf->get_as_utf8_string();
+			CHECK(s_lf == "Hello darkness\nMy old friend\nI've come to talk\nWith you again\n");
+			f_lf->seek(0);
+			CHECK(f_lf->get_line() == "Hello darkness");
+			CHECK(f_lf->get_line() == "My old friend");
+			CHECK(f_lf->get_line() == "I've come to talk");
+			CHECK(f_lf->get_line() == "With you again");
+			CHECK(f_lf->get_error() == Error::OK);
+		}
 	}
 
 	SUBCASE("Newline == \\r\\n (Windows)") {
 		Ref<FileAccess> f_crlf = FileAccess::open(TestUtils::get_data_path("line_endings_crlf.test.txt"), FileAccess::READ);
 		REQUIRE(f_crlf.is_valid());
-		String s_crlf = f_crlf->get_as_utf8_string();
-		CHECK(s_crlf == "Hello darkness\r\nMy old friend\r\nI've come to talk\r\nWith you again\r\n");
-		f_crlf->seek(0);
-		CHECK(f_crlf->get_line() == "Hello darkness");
-		CHECK(f_crlf->get_line() == "My old friend");
-		CHECK(f_crlf->get_line() == "I've come to talk");
-		CHECK(f_crlf->get_line() == "With you again");
-		CHECK(f_crlf->get_error() == Error::OK);
+		// Wrapped rather than returned: a return inside a SUBCASE skips every
+		// sibling subcase (see REQUIRE_OR_RETURN in test_macros.h).
+		if (f_crlf.is_valid()) {
+			String s_crlf = f_crlf->get_as_utf8_string();
+			CHECK(s_crlf == "Hello darkness\r\nMy old friend\r\nI've come to talk\r\nWith you again\r\n");
+			f_crlf->seek(0);
+			CHECK(f_crlf->get_line() == "Hello darkness");
+			CHECK(f_crlf->get_line() == "My old friend");
+			CHECK(f_crlf->get_line() == "I've come to talk");
+			CHECK(f_crlf->get_line() == "With you again");
+			CHECK(f_crlf->get_error() == Error::OK);
+		}
 	}
 
 	SUBCASE("Newline == \\r (Legacy macOS)") {
 		Ref<FileAccess> f_cr = FileAccess::open(TestUtils::get_data_path("line_endings_cr.test.txt"), FileAccess::READ);
 		REQUIRE(f_cr.is_valid());
-		String s_cr = f_cr->get_as_utf8_string();
-		CHECK(s_cr == "Hello darkness\rMy old friend\rI've come to talk\rWith you again\r");
-		f_cr->seek(0);
-		CHECK(f_cr->get_line() == "Hello darkness");
-		CHECK(f_cr->get_line() == "My old friend");
-		CHECK(f_cr->get_line() == "I've come to talk");
-		CHECK(f_cr->get_line() == "With you again");
-		CHECK(f_cr->get_error() == Error::OK);
+		// Wrapped rather than returned: a return inside a SUBCASE skips every
+		// sibling subcase (see REQUIRE_OR_RETURN in test_macros.h).
+		if (f_cr.is_valid()) {
+			String s_cr = f_cr->get_as_utf8_string();
+			CHECK(s_cr == "Hello darkness\rMy old friend\rI've come to talk\rWith you again\r");
+			f_cr->seek(0);
+			CHECK(f_cr->get_line() == "Hello darkness");
+			CHECK(f_cr->get_line() == "My old friend");
+			CHECK(f_cr->get_line() == "I've come to talk");
+			CHECK(f_cr->get_line() == "With you again");
+			CHECK(f_cr->get_error() == Error::OK);
+		}
 	}
 
 	SUBCASE("Newline == Mixed") {
 		Ref<FileAccess> f_mix = FileAccess::open(TestUtils::get_data_path("line_endings_mixed.test.txt"), FileAccess::READ);
 		REQUIRE(f_mix.is_valid());
-		String s_mix = f_mix->get_as_utf8_string();
-		CHECK(s_mix == "Hello darkness\nMy old friend\r\nI've come to talk\rWith you again");
-		f_mix->seek(0);
-		CHECK(f_mix->get_line() == "Hello darkness");
-		CHECK(f_mix->get_line() == "My old friend");
-		CHECK(f_mix->get_line() == "I've come to talk");
-		CHECK(f_mix->get_line() == "With you again");
-		CHECK(f_mix->get_error() == Error::ERR_FILE_EOF); // Not a bug; the file lacks a final newline.
+		// Wrapped rather than returned: a return inside a SUBCASE skips every
+		// sibling subcase (see REQUIRE_OR_RETURN in test_macros.h).
+		if (f_mix.is_valid()) {
+			String s_mix = f_mix->get_as_utf8_string();
+			CHECK(s_mix == "Hello darkness\nMy old friend\r\nI've come to talk\rWith you again");
+			f_mix->seek(0);
+			CHECK(f_mix->get_line() == "Hello darkness");
+			CHECK(f_mix->get_line() == "My old friend");
+			CHECK(f_mix->get_line() == "I've come to talk");
+			CHECK(f_mix->get_line() == "With you again");
+			CHECK(f_mix->get_error() == Error::ERR_FILE_EOF); // Not a bug; the file lacks a final newline.
+		}
 	}
 }
 
