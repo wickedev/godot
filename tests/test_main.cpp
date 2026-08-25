@@ -33,7 +33,7 @@
 #include "core/config/engine.h"
 #include "core/input/input.h"
 #include "core/input/input_map.h"
-#include "core/io/dir_access.h"
+#include "core/io/file_access.h"
 #include "core/object/worker_thread_pool.h"
 #include "core/os/os.h"
 #include "core/string/translation_server.h"
@@ -93,12 +93,14 @@ int test_main(int argc, char *argv[]) {
 
 	WorkerThreadPool::get_singleton()->init();
 
-	{
-		const String test_path = TestUtils::get_temp_path("");
-		Ref<DirAccess> da = DirAccess::open(test_path); // get_temp_path() automatically creates the folder.
-		ERR_FAIL_COND_V(da.is_null(), 0);
-		ERR_FAIL_COND_V_MSG(da->erase_contents_recursive() != OK, 0, "Failed to delete files");
-	}
+	// Materialize this run's unique temp root before anything can fail (fatal on
+	// failure, inside the helper). It is deliberately never deleted — not even a
+	// final non-recursive rmdir: an ancestor of the root can be swapped for a
+	// symlink/junction between any check and the removal, redirecting even a
+	// single rmdir into a foreign tree. Every run leaks one directory by design;
+	// reclamation belongs to an owner-aware janitor outside this binary (CI
+	// reclaims via workspace disposal). See TestUtils::get_temp_path().
+	[[maybe_unused]] const String temp_root = TestUtils::get_temp_path("");
 
 	// Run custom test tools.
 	if (test_commands) {
