@@ -312,6 +312,10 @@ jobs:
             $dbgRva  = [BitConverter]::ToUInt32($b, $ddOff + 6*8)      # directory 6 = Debug
             $dbgSize = [BitConverter]::ToUInt32($b, $ddOff + 6*8 + 4)
             if ($dbgRva -eq 0) { throw "$Path has no debug directory" }
+            # The directory is an array of 28-byte entries; a size that is not a
+            # multiple of 28 means a truncated trailing entry, which would be walked
+            # as though it were whole.
+            if ($dbgSize -eq 0 -or ($dbgSize % 28) -ne 0) { throw "$Path debug directory size $dbgSize is not a whole number of 28-byte entries" }
 
             # Map the debug directory RVA through the section table to a file offset.
             $nSections = [BitConverter]::ToUInt16($b, $coff + 2)
@@ -323,9 +327,11 @@ jobs:
               $va   = [BitConverter]::ToUInt32($b, $s + 12)
               $rawSz= [BitConverter]::ToUInt32($b, $s + 16)
               $raw  = [BitConverter]::ToUInt32($b, $s + 20)
-              if ($dbgRva -ge $va -and $dbgRva -lt ($va + $rawSz)) { $dbgFileOff = $raw + ($dbgRva - $va); break }
+              # The whole directory, not just its first byte, must lie inside the section.
+              if ($dbgRva -ge $va -and ($dbgRva + $dbgSize) -le ($va + $rawSz)) { $dbgFileOff = $raw + ($dbgRva - $va); break }
             }
-            if ($dbgFileOff -eq 0) { throw "could not map debug directory of $Path" }
+            if ($dbgFileOff -eq 0) { throw "could not map debug directory of $Path (RVA $dbgRva size $dbgSize is not contained in any section)" }
+            if (($dbgFileOff + $dbgSize) -gt $b.Length) { throw "$Path debug directory runs past end of file" }
 
             for ($e = 0; $e -lt [int]($dbgSize / 28); $e++) {
               $ent  = $dbgFileOff + $e*28
@@ -340,7 +346,12 @@ jobs:
               if ($size -lt 25) { throw "$Path CodeView entry has SizeOfData=$size, too small for an RSDS record" }
               if (($ptr + $size) -gt $b.Length) { throw "$Path CodeView record runs past end of file" }
               if ([System.Text.Encoding]::ASCII.GetString($b, $ptr, 4) -ne "RSDS") { continue }
-              $guid = [Guid]::new($b[($ptr+4)..($ptr+19)])
+              # Explicit [byte[]] cast: $b[range] returns Object[], which does not bind
+              # the Guid(byte[]) overload. Without the cast PowerShell selects
+              # Guid(string) and throws "Guid should contain 32 digits" on a perfectly
+              # valid PE. A Python mirror of this parse cannot catch that -- it is a
+              # PowerShell overload-resolution defect, not an algorithm defect.
+              $guid = [Guid]::new([byte[]]$b[($ptr+4)..($ptr+19)])
               $age  = [BitConverter]::ToUInt32($b, $ptr + 20)
               # Name must be NUL-terminated inside the record, not merely somewhere later.
               $end  = $ptr + 24
@@ -419,18 +430,39 @@ jobs:
             Copy-Item $pdbPath dist/
           }
 
-          # Runtime dependencies that live beside the binary (platform/windows/SCsub
-          # copies them into bin/). They carry no symbols of ours, but they are part of
-          # what ships, so the promotion manifest has to cover them or it describes an
-          # incomplete set. Multiarch builds place them in bin/<arch>/.
-          foreach ($dll in @("D3D12Core.dll", "d3d12SDKLayers.dll", "WinPixEventRuntime.dll")) {
-            Get-ChildItem -Path bin -Filter $dll -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-              $rel = [System.IO.Path]::GetRelativePath((Resolve-Path bin), $_.FullName)
+          # Runtime dependencies that ship beside the binary. platform/windows/SCsub
+          # copies them to bin/ (or bin/<arch>/ for multiarch builds), so only those two
+          # locations are build output.
+          #
+          # Deliberately NOT recursive: bin/build_deps holds the downloaded Agility and
+          # PIX SDKs, and a recursive copy republished them into dist/, undoing the very
+          # contamination this staging step was introduced to remove. It also picked up
+          # a WinPixEventRuntime.dll from the SDK on builds where use_pix was false.
+          $binRoot = (Resolve-Path bin).Path
+          $searchDirs = @($binRoot)
+          Get-ChildItem -Path bin -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -ne "build_deps" } |
+            ForEach-Object { $searchDirs += $_.FullName }
+
+          $stagedD3D12 = $false
+          foreach ($dir in $searchDirs) {
+            foreach ($dll in @("D3D12Core.dll", "d3d12SDKLayers.dll", "WinPixEventRuntime.dll")) {
+              $src = Join-Path $dir $dll
+              if (-not (Test-Path $src)) { continue }
+              $rel = [System.IO.Path]::GetRelativePath($binRoot, $src)
               $dest = Join-Path "dist" $rel
               New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
-              Copy-Item $_.FullName $dest
+              Copy-Item $src $dest
               Write-Output "staged runtime dependency $rel"
+              if ($dll -eq "D3D12Core.dll") { $stagedD3D12 = $true }
             }
+          }
+
+          # Shipping a D3D12-enabled build without its Agility runtime produces a binary
+          # that fails to start on the user's machine, which no symbol check would catch.
+          if ("${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}" -eq "yes" -and -not $stagedD3D12) {
+            Write-Output "::error::Built with D3D12 enabled but no D3D12Core.dll was found in bin/ or bin/<arch>/."
+            exit 1
           }
 
       # Exact-binary promotion contract. The verified binary is the one that must ship;

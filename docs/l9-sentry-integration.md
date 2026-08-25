@@ -109,7 +109,9 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 >
 > **GUID만 비교하면 안 되는 이유:** 초판은 32자리 GUID 접두사만 비교했다. **같은 GUID에 age만 다른 PDB가 통과한다** — 재빌드하면 age가 올라가므로, 정확히 이 스텝이 막으려던 stale PDB가 그대로 빠져나간다. 지금은 GUID+age 전체를 정규화해 비교한다(도구마다 age 표기가 달라 선행 0을 제거해 맞춘다).
 >
-> **malformed 입력 방어:** `SizeOfData`가 RSDS 레코드 최소 길이(25바이트) 미만이거나 레코드가 파일 끝을 넘어가면 **거부**한다. PDB 이름의 NUL도 `SizeOfData` 안에서 찾는다. 검사가 없으면 뒤따르는 임의 바이트에서 그럴듯한 GUID를 읽어낸다.
+> **malformed 입력 방어 — 엔트리 단위:** `SizeOfData`가 RSDS 최소 길이(25바이트) 미만이거나 레코드가 파일 끝을 넘으면 **거부**한다. PDB 이름의 NUL도 `SizeOfData` 안에서 찾는다. 검사가 없으면 뒤따르는 임의 바이트에서 그럴듯한 GUID를 읽어낸다.
+>
+> **디렉터리 단위:** 엔트리 검사만으로는 부족하다. 디렉터리 자체가 잘리거나 섹션을 넘거나 파일 밖으로 나갈 수 있다. 그래서 `dbgSize % 28 == 0`(잘린 마지막 엔트리 차단), **디렉터리 전체**가 담긴 섹션의 raw 범위 안에 들어갈 것, `dbgFileOff + dbgSize <= 파일 크기`를 검사한다.
 >
 > **파싱 로직 시험:** `misc/scripts/validate_pe_codeview.py`가 PE32/PE32+ 정상 케이스, CodeView가 첫 엔트리가 아닌 경우, age가 debug id를 실제로 가르는지, 그리고 malformed 4종(SizeOfData=0 / 절단 / 이름 미종료 / RSDS 아님)을 시험하며 **실패 시 non-zero로 종료**한다. pre-commit 훅으로 등록되어 이 스크립트나 워크플로가 바뀌면 돌아간다.
 > ⚠️ **이건 Python 미러를 시험하는 것이지 PowerShell을 실행하는 게 아니다.** 두 구현이 어긋나면 잡지 못한다 — 양쪽 주석에 "keep in step"을 명시해 뒀다.
@@ -126,7 +128,11 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 
 후속 패키징 단계는 **재빌드가 아니라 이 아티팩트를 받아** `shasum -a 256 -c MANIFEST.sha256`으로 검증한 뒤 그 바이트를 그대로 출하해야 한다.
 
-**Windows는 바이너리·PDB 외에 런타임 의존 DLL도 `dist/`에 포함한다** — Agility SDK(`D3D12Core.dll`, `d3d12SDKLayers.dll`)와 PIX(`WinPixEventRuntime.dll`)는 `platform/windows/SCsub:147`이 `bin/`에 복사하며 실행 시 로드된다. 이것들이 빠지면 매니페스트가 **출하물의 일부만 기술**하게 된다. 단 **Sentry 업로드는 우리 산출물(`dist/godot.*`)로 한정**한다 — 벤더 DLL은 Microsoft 심볼 서버에서 해소되므로 올려봐야 잡음이다.
+**Windows는 바이너리·PDB 외에 런타임 의존 DLL도 `dist/`에 포함한다 — 단 `bin/`과 `bin/<arch>/`만 본다.**
+
+> ⚠️ **재귀 복사는 안 된다.** 초판은 `Get-ChildItem -Recurse`로 훑어 **`bin/build_deps`의 Agility·PIX SDK 사본까지 `dist/build_deps`로 재복사**했다 — 이 스테이징이 애초에 없애려던 오염을 그대로 되살린 것이다. `use_pix=false`인 빌드에도 SDK 쪽 `WinPixEventRuntime.dll`이 딸려 들어갔다. 지금은 **빌드 산출 위치 2곳만** 보고 `build_deps`를 명시 제외한다. 또 **D3D12가 켜졌는데 `D3D12Core.dll`이 없으면 실패**시킨다 — 런타임이 빠진 빌드는 사용자 머신에서 시작조차 못 하고, 어떤 심볼 검사로도 안 잡힌다.
+
+ — Agility SDK(`D3D12Core.dll`, `d3d12SDKLayers.dll`)와 PIX(`WinPixEventRuntime.dll`)는 `platform/windows/SCsub:147`이 `bin/`에 복사하며 실행 시 로드된다. 이것들이 빠지면 매니페스트가 **출하물의 일부만 기술**하게 된다. 단 **Sentry 업로드는 우리 산출물(`dist/godot.*`)로 한정**한다 — 벤더 DLL은 Microsoft 심볼 서버에서 해소되므로 올려봐야 잡음이다.
 
 > 부수 효과: `bin/`에는 `bin/build_deps`(ANGLE·AccessKit·D3D12 SDK)가 들어 있다. 이전 판의 `bin/*` 글롭은 이것까지 Sentry와 아티팩트에 실어 보냈다. `dist/` 스테이징이 이 오염도 함께 제거한다.
 

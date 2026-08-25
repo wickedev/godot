@@ -38,6 +38,8 @@ def build_pe(
     signature=b"RSDS",
     terminate_name=True,
     extra_entries=0,
+    dir_size_override=None,
+    dir_rva_override=None,
 ):
     """Assemble a minimal PE image carrying a CodeView debug record.
 
@@ -68,7 +70,14 @@ def build_pe(
     struct.pack_into("<H", buf, opt, magic)
 
     dd = opt + dd_extra
-    struct.pack_into("<II", buf, dd + 6 * 8, dbg_rva, 28 * entry_count)  # directory 6
+    dir_size = 28 * entry_count if dir_size_override is None else dir_size_override
+    struct.pack_into(
+        "<II",
+        buf,
+        dd + 6 * 8,
+        dbg_rva if dir_rva_override is None else dir_rva_override,
+        dir_size,
+    )  # directory 6
 
     sec = opt + opt_size
     buf[sec : sec + 8] = b".rdata\0\0"
@@ -119,6 +128,10 @@ def parse(b):
     dbg_rva, dbg_size = struct.unpack_from("<II", b, dd + 6 * 8)
     if not dbg_rva:
         raise ParseError("no debug directory")
+    # The directory is an array of 28-byte entries; a size that is not a whole multiple
+    # means a truncated trailing entry, which would otherwise be walked as if complete.
+    if dbg_size == 0 or dbg_size % 28 != 0:
+        raise ParseError(f"debug directory size {dbg_size} is not a whole number of 28-byte entries")
 
     n_sec = struct.unpack_from("<H", b, coff + 2)[0]
     opt_size = struct.unpack_from("<H", b, coff + 16)[0]
@@ -129,11 +142,16 @@ def parse(b):
         va = struct.unpack_from("<I", b, s + 12)[0]
         raw_sz = struct.unpack_from("<I", b, s + 16)[0]
         raw = struct.unpack_from("<I", b, s + 20)[0]
-        if va <= dbg_rva < va + raw_sz:
+        # The whole directory must lie inside the section, not just its first byte.
+        if va <= dbg_rva and dbg_rva + dbg_size <= va + raw_sz:
             dbg_file = raw + (dbg_rva - va)
             break
     if not dbg_file:
-        raise ParseError("could not map debug directory")
+        raise ParseError(
+            f"could not map debug directory (RVA {dbg_rva} size {dbg_size} is not contained in any section)"
+        )
+    if dbg_file + dbg_size > len(b):
+        raise ParseError("debug directory runs past end of file")
 
     for e in range(dbg_size // 28):
         ent = dbg_file + e * 28
@@ -218,6 +236,25 @@ def main():
         "no NUL inside SizeOfData",
     )
     expect_reject("no CodeView entry", build_pe(signature=b"NB10"), "signature is not RSDS")
+
+    # Whole-directory bounds. Individual SizeOfData checks do not cover these: the
+    # directory itself can be truncated, overrun its section, or fall off the file.
+    expect_reject(
+        "directory size not a multiple of 28",
+        build_pe(dir_size_override=30),
+        "trailing partial entry",
+    )
+    expect_reject("directory size zero", build_pe(dir_size_override=0), "empty directory")
+    expect_reject(
+        "directory overruns its section",
+        build_pe(dir_size_override=28 * 4096),
+        "extends past the containing section",
+    )
+    expect_reject(
+        "directory RVA outside any section",
+        build_pe(dir_rva_override=0x900000),
+        "unmapped RVA",
+    )
 
     if failures:
         print()
