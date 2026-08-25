@@ -50,9 +50,6 @@ class EditorSceneFormatImporter : public RefCounted {
 	GDCLASS(EditorSceneFormatImporter, RefCounted);
 
 	List<ResourceImporter::ImportOption> *current_option_list = nullptr;
-	// Set only across post_process(), where generated files can still be
-	// registered with the importer. See add_generated_file().
-	List<String> *current_gen_files = nullptr;
 
 protected:
 	static void _bind_methods();
@@ -78,11 +75,6 @@ public:
 
 	void add_import_option(const String &p_name, const Variant &p_default_value);
 	void add_import_option_advanced(Variant::Type p_type, const String &p_name, const Variant &p_default_value, PropertyHint p_hint = PROPERTY_HINT_NONE, const String &p_hint_string = String(), int p_usage_flags = PROPERTY_USAGE_DEFAULT);
-	// Registers a file the plugin wrote so the importer tracks it: it is
-	// removed on reimport, listed as a dependency, and included in exports.
-	// A file written without this is invisible to the editor -- it survives
-	// reimport as an orphan and silently misses exports.
-	void add_generated_file(const String &p_path);
 	virtual void get_extensions(List<String> *r_extensions) const;
 	virtual Node *import_scene(const String &p_path, uint32_t p_flags, const HashMap<StringName, Variant> &p_options, List<String> *r_missing_deps, Error *r_err = nullptr);
 	virtual void get_import_options(const String &p_path, List<ResourceImporter::ImportOption> *r_options);
@@ -127,9 +119,11 @@ private:
 	mutable const HashMap<StringName, Variant> *current_options = nullptr;
 	mutable const Dictionary *current_options_dict = nullptr;
 	List<ResourceImporter::ImportOption> *current_option_list = nullptr;
-	// Set only across post_process(), where generated files can still be
+	// Set only across run_post_process(), where generated files can still be
 	// registered with the importer. See add_generated_file().
 	List<String> *current_gen_files = nullptr;
+	// The scene being imported, so add_generated_file() can refuse to overwrite it.
+	String current_source_file;
 
 protected:
 	GDVIRTUAL1(_get_internal_import_options, int)
@@ -147,10 +141,9 @@ public:
 	Variant get_option_value(const StringName &p_name) const;
 	void add_import_option(const String &p_name, const Variant &p_default_value);
 	void add_import_option_advanced(Variant::Type p_type, const String &p_name, const Variant &p_default_value, PropertyHint p_hint = PROPERTY_HINT_NONE, const String &p_hint_string = String(), int p_usage_flags = PROPERTY_USAGE_DEFAULT);
-	// Registers a file the plugin wrote so the importer tracks it: it is
-	// removed on reimport, listed as a dependency, and included in exports.
-	// A file written without this is invisible to the editor -- it survives
-	// reimport as an orphan and silently misses exports.
+	// Records a sidecar this plugin wrote into the importer's generated-file
+	// list, i.e. the `dest_files` of the scene's .import. Narrow on purpose --
+	// see the class docs for exactly what this does and does not give you.
 	void add_generated_file(const String &p_path);
 
 	virtual void get_internal_import_options(InternalImportCategory p_category, List<ResourceImporter::ImportOption> *r_options);
@@ -163,7 +156,10 @@ public:
 	virtual Variant get_option_visibility(const String &p_path, const String &p_scene_import_type, const String &p_option, const HashMap<StringName, Variant> &p_options) const;
 
 	virtual void pre_process(Node *p_scene, const HashMap<StringName, Variant> &p_options);
-	virtual void post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, List<String> *r_gen_files = nullptr);
+	virtual void post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options);
+	// Non-virtual: installs the generated-file sink around post_process() without
+	// changing the virtual's signature, which external C++ subclasses override.
+	void run_post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, const String &p_source_file, List<String> *r_gen_files);
 };
 
 VARIANT_ENUM_CAST(EditorScenePostImportPlugin::InternalImportCategory)

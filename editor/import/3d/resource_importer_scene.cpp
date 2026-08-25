@@ -213,24 +213,38 @@ void EditorScenePostImportPlugin::pre_process(Node *p_scene, const HashMap<Strin
 	GDVIRTUAL_CALL(_pre_process, p_scene);
 	current_options = nullptr;
 }
-void EditorScenePostImportPlugin::post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, List<String> *r_gen_files) {
+void EditorScenePostImportPlugin::post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options) {
 	current_options = &p_options;
-	current_gen_files = r_gen_files;
 	GDVIRTUAL_CALL(_post_process, p_scene);
-	current_gen_files = nullptr;
 	current_options = nullptr;
 }
 
+void EditorScenePostImportPlugin::run_post_process(Node *p_scene, const HashMap<StringName, Variant> &p_options, const String &p_source_file, List<String> *r_gen_files) {
+	current_gen_files = r_gen_files;
+	current_source_file = p_source_file;
+	post_process(p_scene, p_options);
+	current_source_file = String();
+	current_gen_files = nullptr;
+}
+
 void EditorScenePostImportPlugin::add_generated_file(const String &p_path) {
-	// Deliberately restricted to _post_process(). The per-category hooks run
-	// mid-import, before the lightmap unwrap and the LOD generation have
-	// finalized the mesh, so anything derived from mesh data there would be
-	// derived from a mesh that is about to change.
-	ERR_FAIL_NULL_MSG(current_gen_files, "add_generated_file() can only be called from _post_process(), and only when the importer is tracking generated files.");
-	ERR_FAIL_COND_MSG(p_path.is_empty(), "add_generated_file() requires a path.");
-	if (current_gen_files->find(p_path) == nullptr) {
-		current_gen_files->push_back(p_path);
-	}
+	// Restricted to _post_process(). The per-category hooks run mid-import,
+	// before the lightmap unwrap and LOD generation have reworked the meshes.
+	ERR_FAIL_NULL_MSG(current_gen_files, "add_generated_file() can only be called from _post_process().");
+
+	// Only a canonical project sidecar. Everything else is refused rather than
+	// recorded: the importer's dest_files list is not a general-purpose place to
+	// name a file, and a path it cannot resolve is worse than no entry at all.
+	ERR_FAIL_COND_MSG(!p_path.begins_with("res://"), vformat("add_generated_file(): \"%s\" is not a res:// path. Relative paths, user:// and uid:// aliases are not accepted.", p_path));
+	ERR_FAIL_COND_MSG(p_path.begins_with("res://.godot/"), vformat("add_generated_file(): \"%s\" is inside res://.godot/. That directory is managed by the importer, and a plugin writing there does not go through the import staging the editor expects.", p_path));
+	ERR_FAIL_COND_MSG(p_path != p_path.simplify_path(), vformat("add_generated_file(): \"%s\" is not in canonical form.", p_path));
+	ERR_FAIL_COND_MSG(p_path == current_source_file, "add_generated_file(): a plugin may not register the scene it is importing.");
+
+	// Two plugins claiming the same sidecar is an error, not last-writer-wins:
+	// they are both writing it, and neither knows about the other.
+	ERR_FAIL_COND_MSG(current_gen_files->find(p_path) != nullptr, vformat("add_generated_file(): \"%s\" was already registered during this import. Two plugins writing the same file would silently overwrite each other.", p_path));
+
+	current_gen_files->push_back(p_path);
 }
 
 void EditorScenePostImportPlugin::_bind_methods() {
@@ -3484,7 +3498,7 @@ Error ResourceImporterScene::import(ResourceUID::ID p_source_id, const String &p
 	}
 
 	for (int i = 0; i < post_importer_plugins.size(); i++) {
-		post_importer_plugins.write[i]->post_process(scene, p_options, r_gen_files);
+		post_importer_plugins.write[i]->run_post_process(scene, p_options, p_source_file, r_gen_files);
 	}
 
 	progress.step(TTR("Saving..."), 104);

@@ -86,9 +86,14 @@
 			<return type="void" />
 			<param index="0" name="path" type="String" />
 			<description>
-				Registers a file that this plugin wrote during [method _post_process] so that the importer tracks it. Tracked files are deleted when the source is reimported, recorded as dependencies of the imported scene, and included in exports.
-				Writing a file without registering it leaves the editor unaware of it: it survives reimport as an orphan and is silently missing from exports.
-				Can only be called from [method _post_process], which is the first hook that runs after the lightmap unwrap and LOD generation have finalized the meshes. Anything derived from mesh data in the earlier per-category hooks would be derived from a mesh that is about to change.
+				Records a sidecar file that this plugin wrote into the importer's generated-file list, which is stored as [code]dest_files[/code] in the scene's [code].import[/code] file. Can only be called from [method _post_process].
+				What this does: the path is listed among the files this import produced, so tooling that reads [code].import[/code] can see it, and a later reimport that no longer registers it drops it from the list.
+				What this does [b]not[/b] do, despite what the list is often assumed to give you:
+				- It does not delete the file. An ordinary [code]res://[/code] sidecar is not removed on reimport just because it stopped being registered; the plugin owns its own cleanup.
+				- It does not create a resource dependency. Nothing loads the file because it is listed here.
+				- It does not put the file in an export. For that, the saved scene or one of its resources has to actually reference the sidecar, or an export filter has to include it.
+				[param path] must be a canonical [code]res://[/code] path inside the project. Relative paths, [code]user://[/code], [code]uid://[/code] aliases, paths under [code]res://.godot/[/code] and the imported scene's own source file are all rejected. Registering a path that another plugin already registered during the same import is also an error rather than a silent overwrite.
+				[b]Note:[/b] [method _post_process] runs after the lightmap unwrap and LOD generation have reworked the per-node meshes, which the per-category hooks such as [constant INTERNAL_IMPORT_CATEGORY_MESH] do not. It is not a general "meshes are final" phase: a plugin that runs later can still modify them, and steps such as single-mesh merging happen after all plugins have run.
 			</description>
 		</method>
 		<method name="add_import_option_advanced">
