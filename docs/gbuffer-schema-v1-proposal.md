@@ -1,9 +1,10 @@
 # G1 — 통합 GBuffer 스키마 v1 동결 제안 (RFC)
 
-> **상태: v1.2 (2026-08-25) — L2·L3 조건부 승인 반영 개정.** 로드맵 게이트 G1(M4)의 동결 대상 문서.
+> **상태: v1.3 (2026-08-25) — L1 검토 반영: 노멀 병합으로 MRT 슬롯 확보.** 로드맵 게이트 G1(M4)의 동결 대상 문서.
 > 근거 정본: [unified-gbuffer 리서치](./godot-unified-gbuffer-aov-research.md) §2 Tier 모델.
 > **의견 수렴: C1(L1 리졸브) · C2(L2 vis-buffer) · C3(L3-대행, ReSTIR 소비자 관점 — Task #5 담당 자격) — 3인 서명 후 G1 동결.**
 > v1.0→v1.1 델타: ① objectid 24-bit 축소(TLAS `instanceCustomIndex:24` 절단 — C3 블로커) ② `gb_geo_normal` 추가 ③ 히스토리 계약·지터 규약 신설 ④ Metal 성립성 검증을 동결 전제로 추가(C1) ⑤ 인용 정정.
+> v1.2→v1.3 델타 (C1 검토): ⑩ **`gb_normal`+`gb_geo_normal`을 단일 RGBA16 unorm으로 병합**(.xy 셰이딩 oct / .zw 지오 oct — 정밀도·대역폭 동일, **슬롯 7개로 축소**) — Tier-1 8채널이 MRT 상한 8과 여유 0으로 일치해 §2의 shading-model-ID 예약이 비-Nanite 프래그먼트 emit 경로에서 실행 불가능했던 문제 해소 ⑪ §3 인용 정정(:6480) + D3D12 `InstanceID:24` 교차 근거 + DEV_ASSERT를 공통 `tlas_build`로 ⑫ §5 Metal 성립성 해소 기록(컴퓨트 리졸브 = MRT 무관) ⑬ §5.1 (i) 채택 — `gb_emission.a` = LOD 잔차 상한.
 > v1.1→v1.2 델타 (C2·C3 조건부 승인 반영): ⑥ 히스토리 계약을 4종으로(`gb_geo_normal` 포함 — C3-A안: 리저버 기각은 N-1 지오노멀 필요, RTXDI `previousFrame` surface 동형) ⑦ Nanite 모션의 LOD 전환 계약 신설(C2) ⑧ G2 파급 요구 명시: 지오 풀 정점당 **노멀+UV**, 탄젠트는 리졸브 해석적 유도로 저장 불요(C2) ⑨ §3 Nanite 경로 문구 정정: vis-buffer에 instance 필드 없음 — 클러스터 ID → 가시 클러스터 레코드 **역참조**(C2).
 
 ## 1. 동결되는 것 / 동결되지 않는 것
@@ -23,33 +24,34 @@
 | # | RB tex | 포맷 | 채널 | 소비자 |
 |---|--------|------|------|--------|
 | 0 | `gb_albedo` | RGBA8 unorm | albedo.rgb + alpha | 리졸브·AOV |
-| 1 | `gb_normal` | RG16 unorm oct | **셰이딩** 노멀 (노멀맵 적용 후) | 리졸브·ReSTIR·SSR·AOV |
-| 2 | `gb_geo_normal` | RG16 unorm oct | **지오메트릭** 노멀 (트라이앵글 평면) | ReSTIR 레이 오프셋·리저버 기각 (RTXDI `geoNormal` 등가) |
-| 3 | `gb_orm` | RGBA8 unorm | ao / roughness / metallic / sss-mask | 리졸브·ReSTIR·AOV |
-| 4 | `gb_emission` | RGBA16F | emission.rgb (+a 예약) | 리졸브·AOV |
-| 5 | `gb_depth` | R32F | view-space Z (`-vertex.z`) | 위치 재구성·전 소비자 |
-| 6 | `gb_objectid` | R32_UINT (**유효 24-bit**, §3) | instance ID | Nanite 리졸브·Cryptomatte·RT 히트 매칭 |
-| 7 | `gb_motion` | RG16F | screen-space motion, **NDC 단위·지터 제거** | TAA·ReSTIR·AOV |
+| 1 | `gb_normal` | **RGBA16 unorm** | **.xy = 셰이딩 노멀 oct / .zw = 지오메트릭 노멀 oct** (v1.3 병합 — 두 노멀은 리저버 기각에서 항상 함께 읽힘) | 리졸브·ReSTIR·SSR·AOV |
+| 2 | `gb_orm` | RGBA8 unorm | ao / roughness / metallic / sss-mask | 리졸브·ReSTIR·AOV |
+| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택)** | 리졸브·ReSTIR·AOV |
+| 4 | `gb_depth` | R32F | view-space Z (`-vertex.z`) | 위치 재구성·전 소비자 |
+| 5 | `gb_objectid` | R32_UINT (**유효 24-bit**, §3) | instance ID | Nanite 리졸브·Cryptomatte·RT 히트 매칭 |
+| 6 | `gb_motion` | RG16F | screen-space motion, **NDC 단위·지터 제거** | TAA·ReSTIR·AOV |
 
-- 대역폭(1080p): 4+4+4+4+8+4+4+4 = **36 B/px ≈ 75 MB**, 4K ≈ 299 MB. `gb_geo_normal` +4B는 depth-미분 재구성의 에지 노이즈(리저버 기각이 가장 중요한 지점에서 최악)를 피하는 대가로 수용 — 나중에 추가하는 것이 정확히 G1이 막으려는 재작업이므로 지금 넣는다.
+**슬롯 총 7 / MRT 상한 8 — 여유 1 확보.** 비-Nanite opaque의 프래그먼트 MRT emit이 하드캡 8이므로(Metal 실측 8·D3D12 8·데스크톱 Vulkan 통상 8) 이 여유가 shading-model-ID의 실행 가능성을 담보한다.
+
+- 대역폭(1080p): 4+8+4+8+4+4+4 = **36 B/px ≈ 75 MB**, 4K ≈ 299 MB — v1.2와 바이트 동일, 슬롯만 8→7. 지오 노멀 유지 근거(depth-미분 재구성의 에지 노이즈 회피)는 불변.
 - depth-motion(3채널째)은 **불요 확정** — 재투영 검증은 2D 모션 + 이전 프레임 `gb_depth` 비교로 성립.
 - shading-model-ID: 필요 시점(라이트맵/SH deferred 편입)에 **신규 R8_UINT**로 추가. objectid 비트 오염 금지. v1 미포함.
 
 ## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.2 — 24-bit)
 
 **단일 24-bit 인스턴스 ID 공간** (가용 16,777,215). 근거: TLAS 경로의 하드 제약 —
-- `AccelerationStructureInstance::id`는 `uint32_t`(`rendering_device.h:1384`)이나, Vulkan 드라이버가 이를 `VkAccelerationStructureInstanceKHR::instanceCustomIndex`(**24-bit 비트필드**, `vulkan_core.h:16241`)에 무마스킹 대입(`rendering_device_driver_vulkan.cpp:6448`) → 32-bit ID는 **조용히 절단**된다.
+- `AccelerationStructureInstance::id`는 `uint32_t`(`rendering_device.h:1384`)이나, Vulkan 드라이버가 이를 `VkAccelerationStructureInstanceKHR::instanceCustomIndex`(**24-bit 비트필드**, `vulkan_core.h:16241`)에 무마스킹 대입(`rendering_device_driver_vulkan.cpp:6480`, `acceleration_structure_instance_write()` — v1.3 인용 정정). **D3D12도 동일**: `D3D12_RAYTRACING_INSTANCE_DESC.InstanceID : 24`(`d3d12.h:15545`) — 24-bit는 드라이버 결함이 아니라 **범용 RT API 계약**이다 → 32-bit ID는 **조용히 절단**된다.
 
 규약:
 - 저장은 R32_UINT, **상위 8비트는 계약상 reserved-zero.**
 - 소비자: 비-Nanite opaque(`InstanceData.object_id` 신설) · **Nanite: vis-buffer의 클러스터 ID → 가시 클러스터 레코드 역참조로 얻은 instance ID를 리졸브가 기록**(vis-buffer 페이로드 34b는 클러스터 27b+트라이앵글 7b로 소진 — instance 필드를 넣을 자리도, 필요도 없음) · TLAS `AccelerationStructureInstance::id` — 셋이 **동일 값**. **설계 노트: objectid를 인스턴스 단위로 잡은 것은 LOD 전환에 불변이라 의도된 선택이다.**
 - 센티넬: **`0x00FFFFFF`** = "no object" (sky/클리어). ~~0xFFFFFFFF~~는 24-bit 절단 시 최대 유효 ID와 충돌하므로 폐기.
-- **무음 절단 금지:** ID 발급기는 2²⁴-2 초과 시 에러, 드라이버 대입부에는 `DEV_ASSERT((id & 0xFF000000) == 0)` 추가를 L1 배선 요구사항으로 동결.
+- **무음 절단 금지:** ID 발급기는 2²⁴-2 초과 시 에러. 검증은 **공통 진입점 `tlas_build`(RD 상위)에서 1회**(백엔드마다 각자 절단하므로 — v1.3), 드라이버 대입부 `DEV_ASSERT`는 보조. L1 배선 요구사항으로 동결.
 - `AccelerationStructureInstance::mask`(8-bit, `:1385`)는 L3의 RT 가시성 클래스 용도로 자유 — objectid와 무관.
 
 ## 4. 히스토리 계약 (동결, v1.2에서 4종으로 확장)
 
-**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal` · **`gb_geo_normal`** · `gb_objectid` **4종**. 리저버 기각(surface similarity)은 *현재*와 *재투영된 N-1* 서페이스를 비교하므로 지오메트릭 노멀도 N-1이 필요하다(RTXDI `RAB_GetGBufferSurface(previousFrame=true)`가 normal·geoNormal을 함께 반환하는 것과 동형). 히스토리 비용 +4 B/px. `gb_motion`은 현재 프레임만 보장. L1은 이 4종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
+**N-1 프레임 읽기 보장:** `gb_depth` · `gb_normal`(병합 — 셰이딩·지오 노멀 모두 포함) · `gb_objectid` **3텍스처**(보장 채널은 v1.2의 4종과 동일, 병합으로 텍스처 수만 감소 — 더블버퍼 대상 1개 절감). 리저버 기각(surface similarity)은 *현재*와 *재투영된 N-1* 서페이스를 비교하므로 지오메트릭 노멀도 N-1이 필요하다(RTXDI `RAB_GetGBufferSurface(previousFrame=true)`가 normal·geoNormal을 함께 반환하는 것과 동형). 히스토리 비용 +4 B/px. `gb_motion`은 현재 프레임만 보장. L1은 이 4종을 트랜지언트/에일리어싱 재사용 대상에서 제외해야 한다. TAA 컬러 히스토리는 별도(기존 경로).
 
 ### 4.1 Nanite 모션·히스토리의 LOD 전환 계약 (v1.2 신설, 동결)
 
@@ -61,13 +63,11 @@ Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸�
 
 ## 5. 동결 전제 검증 항목 (서명 전 필수)
 
-- **[C1 제기] Metal 성립성:** 스키마를 *채우는* 경로(vis-buffer 래스터)가 Metal에서 성립하는지 별도 판정 — Metal 결손 누적 중(draw-indirect-count 스텁, 64b image atomic 부재). 스키마 포맷 자체는 Metal 성립 예상이나, **"Metal에서 성립하는 리졸브 경로 존재"를 C1이 확인 후 서명**할 것. 불성립 시 Metal은 HW-래스터 폴백 변종으로 같은 스키마를 채우는 설계를 동결 조건으로 명시.
+- **[C1 제기] Metal 성립성: ✅ 해소 (2026-08-25 실측).** 채우는 경로 — 64b 이미지 아토믹 Metal 네이티브 지원 확인(훅 ①). 리졸브 경로 — 컴퓨트 리졸브는 MRT 상한과 무관(Metal storage images per stage 1,000,000 실측). 잔여 Metal 결손은 draw-indirect-count 1건(서브밋 경로 — 스키마 무관, ICB Task #10). ~~HW-래스터 폴백 변종 동결 조건~~ 삭제.
 
 ### 5.1 L1 배선 시점 결정 항목 (비차단 후속 — C3, 서명과 무관)
 
-§4.1의 "리졸브가 LOD 잔차 상한을 소비자에게 전달"의 **전달 수단**을 L1 배선 시점에 택1하여 이 문서에 1줄 추가할 것:
-- (i) `gb_emission.a`(현재 "+a 예약")에 **LOD 잔차 상한(정규화 화면공간 단위)** 배정 — 예약 필드 의미 배정이라 대역폭·어태치먼트 불변, 4레인 재작업 아님. ReSTIR가 LOD 전환 프레임에서만 기각 임계를 넓힐 수 있게 됨.
-- (ii) per-pixel 전달 없음 명시 — ReSTIR는 고정 보수 임계 사용(전환 아닌 프레임에서 과도 기각 노이즈 수용).
+~~택1 보류~~ → **v1.3에서 (i) 채택 확정** (C1·C3 양측 권고 일치): `gb_emission.a` = **LOD 잔차 상한(정규화 화면공간 단위)**. §2 표에 반영됨. ReSTIR는 LOD 전환 프레임에서만 기각 임계를 확장.
 
 참고(정보 공유, L2/L1 판단 영역): 해석적 탄젠트는 DCC 베이크 탄젠트와 미세 차이가 가능 — 노멀맵 셰이딩 차이로 나타날 수 있음(ReSTIR 블로커 아님).
 
@@ -85,9 +85,9 @@ Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸�
 
 | 레인 | 담당 | 판정 | 비고 |
 |---|---|---|---|
-| L1 (리졸브·FB 배선) | C1 | ⬜ 대기 | §5 Metal 성립성 확인 포함 |
-| L2 (vis-buffer → 리졸브) | C2 | ✅ **승인/서명 (2026-08-25, v1.2)** | 27b 클러스터/7b 트라이앵글 정합을 빌더 테스트로 확인(클러스터당 ≤128 삼각형 강제) |
-| L3-대행 (ReSTIR/RT 입력) | C3 | ✅ **승인/서명 (2026-08-25, v1.2)** | v1.0 🔴 → v1.1 🟡 → v1.2 ✅. 비차단 후속 1건 → §5.1 |
+| L1 (리졸브·FB 배선) | C1 | 🟡 조건부(v1.2 §2 MRT 포화) → **v1.3 반영으로 서명 요청** | §5 해소 확인·§3 승인 완료, §2 병합안 채택됨 |
+| L2 (vis-buffer → 리졸브) | C2 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 — 리졸브 기록 채널 7종·바이트 동일) | 27b/7b 정합 빌더 테스트 확인 |
+| L3-대행 (ReSTIR/RT 입력) | C3 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 + §5.1-(i) 확정 — 본인 권고안) | v1.0 🔴 → v1.1 🟡 → v1.2 ✅ |
 | 메인테이너 | ✅ 제안 | | |
 
 3인 승인 시 이 문서가 **G1 동결본**이 되고, 이후 변경은 4레인 합의 + 로드맵 개정을 요구한다.
