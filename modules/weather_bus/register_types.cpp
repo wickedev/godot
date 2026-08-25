@@ -31,7 +31,9 @@
 #include "register_types.h"
 
 #include "engine_shader_lib.h"
+#include "time_of_day.h"
 #include "weather_bus.h"
+#include "wind_driver.h"
 
 #include "core/config/engine.h"
 #include "core/object/class_db.h"
@@ -146,6 +148,9 @@ void initialize_weather_bus_module(ModuleInitializationLevel p_level) {
 	// Abstract so scripts cannot construct a second one. The singleton is the only writer, and a
 	// stray WeatherBus.new() would hand out an object whose setters push to the same uniforms.
 	GDREGISTER_ABSTRACT_CLASS(WeatherBus);
+	// The producers are ordinary nodes: a scene can hold several, or none.
+	GDREGISTER_CLASS(TimeOfDay);
+	GDREGISTER_CLASS(WindDriver);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("WeatherBus", WeatherBus::create_singleton()));
 
 	WeatherBus::register_uniforms();

@@ -105,6 +105,41 @@ const Vector3 wind = WeatherBus::get_singleton()->get_wind_velocity();
 `get_wind_velocity()` and the shader's `weather_wind_velocity()` compute the same thing. Use one of
 them rather than recomputing, so the two sides cannot drift.
 
+## Producers
+
+The bus is transport. These put values on it:
+
+| Node | Drives | Notes |
+|---|---|---|
+| `TimeOfDay` | `tod_*` | Declination and hour angle rather than a fixed rotation axis, which is what gets seasons, latitude and polar night right. Optionally rotates `DirectionalLight3D` nodes for the sun and moon. |
+| `WindDriver` | `wind_*` | Gusting, plus the bridge to `Area3D` wind so `SoftBody3D` cloth sees the same wind foliage does. |
+
+`TimeOfDay.time` is local apparent solar time: noon is when the sun crosses the meridian. No
+longitude, no time zone, no equation of time — it is the sun's daily arc, not a wall clock.
+
+**One producer per value.** The first `TimeOfDay` and the first `WindDriver` to enter the tree claim
+the bus; later ones warn and stay quiet. Two producers writing the same uniform every frame do not
+error, they flicker, and there is nothing to point at afterwards.
+
+Both advance themselves once in the scene tree, and both expose `advance(delta)` so a test or a
+cutscene can step them deterministically.
+
+Nothing drives `wetness_*` or `weather_*` yet — those belong to the weather state machine.
+
+### Two sign conventions worth knowing about
+
+Both bite silently, and both are covered by tests because of it.
+
+`DirectionalLight3D` emits along its local `-Z`, so `TimeOfDay` stands the light where the sun is
+and looks back at the origin. `Area3D` reads wind direction off the `-Z` of whatever node its `wind_source_path` points at, so
+`WindDriver` aims itself along the wind and hands each listed area a path to itself.
+
+There is a third one in the same family, and it is the nastiest. `Area3D` reads the source node's
+**local** transform and uses it as a world-space direction — its wind handling calls
+`get_transform()`, not `get_global_transform()`, despite naming the local variable
+`global_transform`. So `WindDriver` writes its local basis directly instead of calling `look_at()`,
+which would set the global one. Under a rotated parent the two differ, and the physics wind would
+blow one way while the shaders read another.
 ## Claiming global uniform names
 
 This is a general protocol, not a weather-bus detail. Snow accumulation, fluid state and anything
@@ -154,5 +189,5 @@ here. Two writers racing to own one value is a bug this module cannot detect.
 their shader code in C++ and emit no global uniform references at all, so they cannot read this bus.
 Materials that need wind or wetness have to be `ShaderMaterial`.
 
-Nothing drives the bus yet. Gust animation, sun orbits and weather transitions belong to the
-managers that come next; this module only owns the contract and the transport.
+`TimeOfDay` and `WindDriver` drive the `tod_*` and `wind_*` halves. Nothing drives `wetness_*` or
+`weather_*` yet; those belong to the weather state machine.

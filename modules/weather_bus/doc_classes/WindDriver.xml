@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WindDriver" inherits="Node3D" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances gusting by [param delta] seconds and republishes to [WeatherBus] and to every area in [member wind_area_paths]. Happens automatically each frame unless [member paused] is set.
+			</description>
+		</method>
+		<method name="get_gust" qualifiers="const">
+			<return type="float" />
+			<description>
+				Current gust multiplier. [code]1.0[/code] means no gust; it never goes below [code]0.0[/code], since gusts lull rather than reverse.
+			</description>
+		</method>
+		<method name="get_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Wind velocity in meters per second with gusting applied. Equal to [method WeatherBus.get_wind_velocity] and to [code]weather_wind_velocity()[/code] in the shader library.
+			</description>
+		</method>
+		<method name="is_active_producer" qualifiers="const">
+			<return type="bool" />
+			<description>
+				Whether this node is the one driving [WeatherBus]. The first [WindDriver] to enter the tree claims it; a later one warns and leaves both the uniforms and its areas alone, since two producers writing the same values every frame would only flicker.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="direction" type="Vector3" setter="set_direction" getter="get_direction" default="Vector3(1, 0, 0)">
+		</member>
+		<member name="gust_amplitude" type="float" setter="set_gust_amplitude" getter="get_gust_amplitude" default="0.0">
+		</member>
+		<member name="gust_period" type="float" setter="set_gust_period" getter="get_gust_period" default="8.0">
+		</member>
+		<member name="paused" type="bool" setter="set_paused" getter="is_paused" default="false">
+		</member>
+		<member name="speed" type="float" setter="set_speed" getter="get_speed" default="0.0">
+		</member>
+		<member name="turbulence" type="float" setter="set_turbulence" getter="get_turbulence" default="0.0">
+		</member>
+		<member name="wind_area_paths" type="NodePath[]" setter="set_wind_area_paths" getter="get_wind_area_paths" default="[]">
+		</member>
+		<member name="physics_force_scale" type="float" setter="set_physics_force_scale" getter="get_physics_force_scale" default="1.0">
+		</member>
+	</members>
+</class>
