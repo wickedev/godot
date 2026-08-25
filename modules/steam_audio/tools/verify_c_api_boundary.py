@@ -35,18 +35,39 @@ def find_repo_root() -> Path:
     return Path(out.stdout.strip())
 
 
+def _capture_params(text: str, open_paren: int) -> str:
+    depth = 0
+    for j in range(open_paren, len(text)):
+        if text[j] == "(":
+            depth += 1
+        elif text[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_paren + 1 : j]
+    raise ValueError("unbalanced parentheses")
+
+
+def canonical_signature(ret: str, name: str, params: str) -> str:
+    sig = f"{ret} {name}({params})"
+    sig = re.sub(r"\s+", " ", sig).strip()
+    sig = re.sub(r"\s*([*,()])\s*", r"\1", sig)
+    return sig
+
+
 def parse_declarations(phonon_h: str) -> dict:
-    """Return {name: return_type} for every IPLAPI declaration."""
+    """Return {name: (return_type, canonical_signature)} for every IPLAPI declaration."""
     decls = {}
-    # IPLAPI \herry IPLerror IPLCALL iplContextCreate(...)
+    # IPLAPI IPLerror IPLCALL iplContextCreate(...)
     for m in re.finditer(r"IPLAPI\s+([A-Za-z_][\w]*\s*\**)\s*IPLCALL\s+(\w+)\s*\(", phonon_h):
         ret = m.group(1).strip()
-        decls[m.group(2)] = ret
+        name = m.group(2)
+        params = _capture_params(phonon_h, phonon_h.index("(", m.end() - 1))
+        decls[name] = (ret, canonical_signature(ret, name, params))
     return decls
 
 
 def parse_definitions(interfaces_h: str) -> list:
-    """Return [(name, return_type, body)] for every function definition.
+    """Return [(name, return_type, body, canonical_signature)] for every definition.
 
     Duplicate names (guarded alternative definitions) are all returned.
     """
@@ -54,6 +75,10 @@ def parse_definitions(interfaces_h: str) -> list:
     pattern = re.compile(r"^([A-Za-z_][\w]*\s*\**)\s*IPLCALL\s+(\w+)\s*\(", re.MULTILINE)
     matches = list(pattern.finditer(interfaces_h))
     for i, m in enumerate(matches):
+        ret = m.group(1).strip()
+        name = m.group(2)
+        open_paren = interfaces_h.index("(", m.end() - 1)
+        params = _capture_params(interfaces_h, open_paren)
         # Body: from the first '{' after the signature to the matching '}'.
         start = interfaces_h.index("{", m.end())
         depth = 0
@@ -67,7 +92,7 @@ def parse_definitions(interfaces_h: str) -> list:
                 if depth == 0:
                     end = j
                     break
-        defs.append((m.group(2), m.group(1).strip(), interfaces_h[start : end + 1]))
+        defs.append((name, ret, interfaces_h[start : end + 1], canonical_signature(ret, name, params)))
     return defs
 
 
@@ -91,12 +116,22 @@ def expected_sentinel(ret: str):
     return re.compile(r"return\s+" + re.escape(ret) + r"\s*\{\s*\}\s*;")
 
 
-# The upstream import commit: reversing patches/0001 must reproduce these blobs.
+# The upstream import commit and its blob hashes: reversing patches/0001 must
+# reproduce exactly these blobs. The hashes are pinned as constants so the check
+# does not depend on the commit being reachable (shallow checkouts).
 PRISTINE_IMPORT_COMMIT = "262f95df77"
-PATCHED_FILES = (
-    "thirdparty/steam_audio/src/phonon_interfaces.h",
-    "thirdparty/steam_audio/src/api_context.cpp",
-)
+PRISTINE_BLOBS = {
+    "thirdparty/steam_audio/src/phonon_interfaces.h": "7a386a7e5408114b026ac3bb0dde8fda7f3a3d4a",
+    "thirdparty/steam_audio/src/api_context.cpp": "00925495f285d8e2cddc149c2eb38d172aecc5db",
+}
+PATCHED_FILES = tuple(PRISTINE_BLOBS)
+
+# Pinned export counts for Steam Audio 4.8.1: a symmetric removal (declaration +
+# definition deleted together, patch regenerated) must fail loudly, not shrink
+# both sides in step.
+EXPECTED_DECLARATIONS = 216
+EXPECTED_INTERFACE_DEFINITIONS = 216  # 215 core + the fallback iplContextCreate stub.
+EXPECTED_COMPILED_CORE = 216
 
 # Handle types are opaque pointers behind typedefs: treat every IPL* typedef that
 # is declared as a pointer handle in phonon.h as pointer-returning. Filled in main().
@@ -133,17 +168,26 @@ def main() -> int:
     # api_context.cpp. Verify both, but count the core set from the pair.
     interface_defs = parse_definitions(interfaces_h)
     api_context_defs = parse_definitions(api_context_cpp)
-    if [name for name, _, _ in api_context_defs] != ["iplContextCreate"]:
+    if [d[0] for d in api_context_defs] != ["iplContextCreate"]:
         errors.append(
             "api_context.cpp is expected to define exactly the production iplContextCreate, found: "
-            + ", ".join(name for name, _, _ in api_context_defs)
+            + ", ".join(d[0] for d in api_context_defs)
         )
     core_defs = [d for d in interface_defs if d[0] != "iplContextCreate"] + api_context_defs
     fallback_stub_defs = [d for d in interface_defs if d[0] == "iplContextCreate"]
     if len(fallback_stub_defs) != 1:
         errors.append(f"expected exactly one fallback iplContextCreate stub in phonon_interfaces.h, found {len(fallback_stub_defs)}")
     defs = core_defs + fallback_stub_defs  # every definition must be hardened, both build modes
-    core_names = {name for name, _, _ in core_defs}
+    core_names = {d[0] for d in core_defs}
+
+    # Pinned cardinalities: a symmetric edit (declaration and definition removed
+    # together, patch regenerated) must fail here, not pass with smaller sets.
+    if len(decls) != EXPECTED_DECLARATIONS:
+        errors.append(f"expected {EXPECTED_DECLARATIONS} declarations in phonon.h, found {len(decls)}")
+    if len(interface_defs) != EXPECTED_INTERFACE_DEFINITIONS:
+        errors.append(f"expected {EXPECTED_INTERFACE_DEFINITIONS} definitions in phonon_interfaces.h, found {len(interface_defs)}")
+    if len(core_names) != EXPECTED_COMPILED_CORE:
+        errors.append(f"expected {EXPECTED_COMPILED_CORE} compiled-core exports, found {len(core_names)}")
 
     missing_defs = sorted(set(decls) - core_names)
     orphan_defs = sorted(name for name in core_names if name not in decls)
@@ -152,14 +196,20 @@ def main() -> int:
     for name in orphan_defs:
         errors.append(f"defined in the compiled core but not declared in phonon.h: {name}")
 
+    # Full ABI signature comparison: name-set equality is not enough; a changed
+    # return or parameter type is an ABI break the linker will not catch (C symbols).
+    for name, _ret, _body, def_sig in core_defs:
+        if name in decls and decls[name][1] != def_sig:
+            errors.append(f"{name}: definition signature does not match declaration:\n    decl: {decls[name][1]}\n    def:  {def_sig}")
+
     hardened = 0
-    for name, ret, body in defs:
+    for name, ret, body, _sig in defs:
         if "try" not in body or "catch (...)" not in body.replace("catch(...)", "catch (...)"):
             errors.append(f"{name}: definition is not wrapped in try/catch (...)")
             continue
         catch_idx = body.rfind("catch")
         catch_block = body[catch_idx:]
-        sentinel = expected_sentinel(decls.get(name, ret))
+        sentinel = expected_sentinel(decls[name][0] if name in decls else ret)
         if sentinel is not None and not sentinel.search(catch_block):
             errors.append(f"{name}: catch block does not return the expected sentinel for '{ret}'")
             continue
@@ -189,24 +239,25 @@ def main() -> int:
                 dst = Path(tmp) / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(root / rel, dst)
+            # git apply works outside a repository and is available wherever the
+            # engine is checked out (unlike POSIX patch on Windows runners).
             rev = subprocess.run(
-                ["patch", "-R", "-p1", "-i", str(patch)], cwd=tmp, capture_output=True, text=True
+                ["git", "apply", "-R", str(patch)], cwd=tmp, capture_output=True, text=True
             )
             if rev.returncode != 0:
-                errors.append(f"patch -R replay failed in scratch tree: {rev.stderr.strip() or rev.stdout.strip()}")
+                errors.append(f"git apply -R replay failed in scratch tree: {rev.stderr.strip() or rev.stdout.strip()}")
             else:
                 for rel in PATCHED_FILES:
                     reversed_hash = subprocess.run(
                         ["git", "hash-object", str(Path(tmp) / rel)], capture_output=True, text=True, check=True
                     ).stdout.strip()
-                    pristine_hash = subprocess.run(
-                        ["git", "rev-parse", f"{PRISTINE_IMPORT_COMMIT}:{rel}"],
-                        cwd=root, capture_output=True, text=True, check=True,
-                    ).stdout.strip()
+                    # Pinned constants: independent of the pristine commit being
+                    # reachable (shallow checkouts) and of the current tree.
+                    pristine_hash = PRISTINE_BLOBS[rel]
                     if reversed_hash != pristine_hash:
                         errors.append(
                             f"reversed {rel} does not match the pristine upstream blob "
-                            f"({reversed_hash[:12]} != {pristine_hash[:12]} from {PRISTINE_IMPORT_COMMIT})"
+                            f"({reversed_hash[:12]} != {pristine_hash[:12]}, import commit {PRISTINE_IMPORT_COMMIT})"
                         )
 
     print(f"declarations: {len(decls)}  compiled-core definitions: {len(core_names)}  hardened bodies (incl. fallback stub): {hardened}")
