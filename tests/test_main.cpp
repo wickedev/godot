@@ -94,49 +94,27 @@ int test_main(int argc, char *argv[]) {
 
 	WorkerThreadPool::get_singleton()->init();
 
-	{
-		// This run works in its own unique root (see TestUtils::get_temp_path), so stale
-		// state cannot leak in. Reclaim only roots of runs that are provably dead: a
-		// blanket sweep would delete the root of a concurrently running test binary.
-		// Age is the proof here — anything older than a day is a crashed run's leak.
-		const String temp_base = OS::get_singleton()->get_cache_path().path_join("godot_test");
-		Ref<DirAccess> da = DirAccess::open(temp_base);
-		if (da.is_valid()) {
-			const uint64_t now = OS::get_singleton()->get_unix_time();
-			const uint64_t max_age_sec = 24 * 3600;
-			da->list_dir_begin();
-			for (String entry = da->get_next(); !entry.is_empty(); entry = da->get_next()) {
-				if (!da->current_is_dir() || entry == "." || entry == "..") {
-					continue;
-				}
-				const String entry_path = temp_base.path_join(entry);
-				const uint64_t mtime = FileAccess::get_modified_time(entry_path);
-				if (mtime != 0 && now > mtime && now - mtime > max_age_sec) {
-					Ref<DirAccess> old_da = DirAccess::open(entry_path);
-					if (old_da.is_valid() && old_da->erase_contents_recursive() == OK) {
-						DirAccess::remove_absolute(entry_path);
-					}
-				}
-			}
-			da->list_dir_end();
-		}
-		const String test_path = TestUtils::get_temp_path("");
-		Ref<DirAccess> run_da = DirAccess::open(test_path); // get_temp_path() automatically creates the folder.
-		ERR_FAIL_COND_V(run_da.is_null(), 0);
-	}
-
-	// Remove this run's unique temp root on every exit path — the custom test
-	// command branch below returns early and must not leak the root either.
-	// (A crashed run is reclaimed by the age-based sweep above on a later run.)
+	// Acquire this run's unique, validated temp root before anything can fail,
+	// and remove it on every exit path — the custom test command branch below
+	// returns early and must not leak the root either. There is deliberately no
+	// automatic reclamation of other runs' leftovers here: proving another run
+	// dead requires an owner-aware janitor (locks/leases), and age or PID
+	// heuristics can delete a live run's state or follow a symlinked root into
+	// foreign directories. A crashed run therefore leaks one directory.
+	const String temp_root = TestUtils::get_temp_path(""); // CRASH_COND inside on failure.
 	struct TempRootCleanup {
+		// Captured once, validated; never re-derived at destruction time.
+		String root;
 		~TempRootCleanup() {
-			const String test_path = TestUtils::get_temp_path("");
-			Ref<DirAccess> da = DirAccess::open(test_path);
-			if (da.is_valid() && da->erase_contents_recursive() == OK) {
-				DirAccess::remove_absolute(test_path);
+			if (root.is_empty() || !root.is_absolute_path()) {
+				return;
+			}
+			Ref<DirAccess> da = DirAccess::open(root);
+			if (da.is_valid() && !da->is_link(root) && da->erase_contents_recursive() == OK) {
+				DirAccess::remove_absolute(root);
 			}
 		}
-	} temp_root_cleanup;
+	} temp_root_cleanup{ temp_root };
 
 	// Run custom test tools.
 	if (test_commands) {

@@ -47,13 +47,15 @@ String TestUtils::get_temp_path(const String &p_suffix) {
 	// Each run gets a unique root: leftovers from a previous run (or a crashed run
 	// that never reached cleanup) must never be observable, and two test binaries
 	// running concurrently must not share directories. The root is removed at the
-	// end of the run in test_main.cpp. Note this only isolates state that goes
-	// through this helper; tests touching user:// or other fixed paths are not
-	// covered.
+	// end of the run in test_main.cpp; a crashed run leaks its root by design
+	// (reclamation needs an owner-aware janitor, deliberately out of scope here).
+	// Note this only isolates state that goes through this helper; tests touching
+	// user:// or other fixed paths are not covered.
 	static String run_root;
 	if (run_root.is_empty()) {
 		const String temp_base = OS::get_singleton()->get_cache_path().path_join("godot_test");
-		DirAccess::make_dir_recursive_absolute(temp_base);
+		CRASH_COND_MSG(!temp_base.is_absolute_path(), "Test temp base is not absolute; refusing to run tests.");
+		CRASH_COND_MSG(DirAccess::make_dir_recursive_absolute(temp_base) != OK && !DirAccess::dir_exists_absolute(temp_base), "Could not create the test temp base directory.");
 		// Exclusive creation: make_dir_absolute fails with ERR_ALREADY_EXISTS if
 		// another process raced us to the same name, in which case we retry with
 		// a fresh nonce instead of silently adopting (and later deleting) a
@@ -65,7 +67,10 @@ String TestUtils::get_temp_path(const String &p_suffix) {
 				run_root = candidate;
 			}
 		}
-		ERR_FAIL_COND_V_MSG(run_root.is_empty(), String(), "Could not create an exclusive temp root for this test run.");
+		// A run without an exclusive root must not proceed: later cleanup would
+		// otherwise operate on an empty or shared path, which is how recursive
+		// deletion reaches directories we do not own.
+		CRASH_COND_MSG(run_root.is_empty() || !run_root.is_absolute_path(), "Could not create an exclusive temp root for this test run.");
 	}
 	DirAccess::make_dir_recursive_absolute(run_root); // Ensure the directory still exists.
 	return run_root.path_join(p_suffix);
