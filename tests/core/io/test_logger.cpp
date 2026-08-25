@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "tests/test_macros.h"
+#include "tests/test_utils.h"
 
 TEST_FORCE_LINK(test_logger)
 
@@ -42,13 +43,22 @@ namespace TestLogger {
 
 constexpr int sleep_duration = 1200000;
 
+// These tests write to user://logs, which get_temp_path()'s run root does not
+// cover: user:// resolves through the OS user data dir, which is keyed on the
+// project name. Two test binaries running at once would otherwise share the
+// directory, delete each other's rotated logs, and fail. Keying the project
+// name on the run id gives this process its own user:// as well.
+static String _project_name() {
+	return "godot_tests_" + TestUtils::get_run_id();
+}
+
 void initialize_logs() {
-	ProjectSettings::get_singleton()->set_setting("application/config/name", "godot_tests");
+	ProjectSettings::get_singleton()->set_setting("application/config/name", _project_name());
 	DirAccess::make_dir_recursive_absolute(OS::get_singleton()->get_user_data_dir().path_join("logs"));
 }
 
 void cleanup_logs() {
-	ProjectSettings::get_singleton()->set_setting("application/config/name", "godot_tests");
+	ProjectSettings::get_singleton()->set_setting("application/config/name", _project_name());
 	Ref<DirAccess> dir = DirAccess::open("user://logs");
 	dir->list_dir_begin();
 	String file = dir->get_next();
@@ -112,7 +122,16 @@ TEST_CASE("[Logger][RotatedFileLogger] Rotates logs files") {
 
 	Vector<String> log_files;
 	get_log_files(log_files);
-	CHECK_MESSAGE(log_files.size() == number_of_files, "Did not rotate all files");
+	// The loop below indexes all_waiting_for_godot by the log-file index, so a
+	// directory holding MORE files than this test wrote runs off the end of
+	// that array. REQUIRE reports it but does NOT stop the case: Godot builds
+	// with -fno-exceptions, so doctest runs in NO_EXCEPTIONS_BUT_WITH_ALL_ASSERTS
+	// mode and carries on to the next line. Hence the explicit return.
+	REQUIRE_MESSAGE(log_files.size() == number_of_files, "Did not rotate all files");
+	if (log_files.size() != number_of_files) {
+		cleanup_logs();
+		return;
+	}
 
 	for (int i = 0; i < log_files.size(); i++) {
 		Error err = Error::OK;
@@ -133,7 +152,12 @@ TEST_CASE("[Logger][RotatedFileLogger] Rotates logs files") {
 
 	log_files.clear();
 	get_log_files(log_files);
-	CHECK_MESSAGE(log_files.size() == number_of_files, "Did not remove old log file");
+	// Same as above, including the explicit return.
+	REQUIRE_MESSAGE(log_files.size() == number_of_files, "Did not remove old log file");
+	if (log_files.size() != number_of_files) {
+		cleanup_logs();
+		return;
+	}
 
 	for (int i = 0; i < log_files.size(); i++) {
 		Error err = Error::OK;
