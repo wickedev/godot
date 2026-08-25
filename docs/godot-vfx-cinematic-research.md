@@ -287,7 +287,8 @@ Cryptomatte는 **공개 표준**(Psyop 스펙 PDF + SIGGRAPH 2015). 구현 규�
 1. **🟢 코어 0 AOV 팩 (GDExtension):** `CompositorEffect`(normal/motion/specular 플래그) + depth 리니어라이즈 셰이더 + `texture_get_data` 리드백 → **beauty/depth/linear-depth/normal/motion/specular** 5~6종 AOV를 코어 수정 없이. HDRP AOVRequest 패턴 차용. 단 RB 텍스처가 `CAN_COPY_FROM` 비트 없어 **1회 compute/blit 카피 필요**(`render_scene_buffers_rd.cpp:799-805`).
 2. **🟢 멀티레이어 EXR 라이터 (국소):** tinyexr 멀티파트 API 직접 호출로 래퍼 우회 → 위 AOV들을 named layer로 묶어 출력.
 3. **🔴 albedo/objectID MRT (중간 렌더러, 선택):** `MODE_RENDER_MATERIAL` 셰이더를 스크린스페이스 MRT 어태치먼트로 전용, 또는 reduz #7916 편승. 정수 ID 버퍼로 시작, Cryptomatte 완전 준수는 나중.
-4. **판단:** 스타일라이즈드 타깃엔 **1+2로 실용 AOV 세트 충분**(포스트/합성용 depth·normal·motion). albedo/Cryptomatte(3번)는 VFX 하우스급 합성 파이프라인에만 정당화 — 원신급에도 대개 불필요.
+4. ~~**판단:** 스타일라이즈드 타깃엔 **1+2로 실용 AOV 세트 충분**(포스트/합성용 depth·normal·motion). albedo/Cryptomatte(3번)는 VFX 하우스급 합성 파이프라인에만 정당화 — 원신급에도 대개 불필요.~~
+   ⛔ **[폐기 — 2026-08-25]** 원신 하한 폐기 + 통합 GBuffer 확정으로 무효. **albedo·Cryptomatte 포함 풀 AOV 세트가 스코프다.** 게다가 비용 전제가 틀렸다 — [unified-gbuffer §4](./godot-unified-gbuffer-aov-research.md)가 확정한 대로 **instance ID는 vis-buffer의 부산물이라 Cryptomatte가 거의 공짜**이고(UE의 Object-Ids 패스는 재래스터가 필요하지만 vis-buffer는 불요), albedo/ORM은 deferred에서 **GBuffer 그 자체**다. G4 이후 추가 렌더 비용 ≈ 0.
 
 ---
 

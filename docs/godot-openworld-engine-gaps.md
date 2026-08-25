@@ -227,7 +227,7 @@
 | 결정론·스냅샷·롤백 | 🟡 P1 | SCsub 1줄 + ~300줄. 넷코드 시 P0 |
 | 캐릭터 컨트롤러 | 🟢 P0 | GDScript step-up 2~3일 |
 | 멀티스레딩·성능 | 🟢 P0 | GDScript 스트리밍 매니저 1~2주(코어 0) |
-| GPU 물리 | 🔴 P4 | CPU Jolt로 충분. 업스트림 대기 |
+| GPU 물리 | ~~🔴 P4~~ → 🟡 **P2 스코프 내** | ~~CPU Jolt로 충분. 업스트림 대기~~ **[2026-08-25 반전]** `Jolt/Compute`·`Jolt/Shaders`는 upstream Jolt 5.6.0에 **실재**하며 Godot이 벤더링에서 제외(`thirdparty/README.md:519`) → 대기가 아니라 **번들 범위 확대** |
 
 **AAA 재채점 반전:** 파괴(🟡 P2→P1)와 클로스(의류가 SpringBone→SoftBody B1+B3+B4로 격상)가 스타일라이즈드 근거로 강등돼 있던 것을 되돌렸다. GPU 물리만 🔴 유지.
 

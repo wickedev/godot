@@ -516,7 +516,7 @@ Projected Grid (1.2) ← Tessendorf FFT (1.1) ← 오션 셰이딩 (1.3)
 | Async-compute / multi-queue (gaps §5) | man-year | GPU readback 병렬화. 부력 실시간성. 렌더링 파이프라인 전반 성능 |
 | Planar reflection 통합 | 2~3개월 | 별도 반사 카메라 패스의 렌더러 통합 |
 | Heightfield texture getter (10줄) | 수 일 | 날씨 문서 §2.3 제안. `particles_collision_get_heightfield_texture` 코어 패치 |
-| Full-Nanite ocean 통합 | man-year | vis-buffer + deferred + streaming에서 오션 렌더링 |
+| Full-Nanite ocean 통합 | ~~man-year~~ → **필수 · G4 종속** | ~~vis-buffer + deferred + streaming에서 오션 렌더링~~ → **[2026-08-25] 선택 항목이 아니다.** opaque 전면 deferred 전환(G4)이 확정 스코프이므로 오션 셰이딩 경로는 **반드시** 통합 GBuffer/리졸브에 맞춰 재작성된다. Phase 1~2를 포워드 전제로 짓되 **G4 재작업을 예산에 포함**할 것 |
 
 ---
 

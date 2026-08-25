@@ -508,7 +508,13 @@ StreamingRegion (Area3D 또는 그리드 셀)
 
 ---
 
-## 8. GPU 물리 / 대량 시뮬 🔴 P4 (비권장)
+## 8. GPU 물리 / 대량 시뮬 ~~🔴 P4 (비권장)~~ → **🟡 스코프 내 (2026-08-25 반전)**
+
+> ⛔ **[판정 반전 — 2026-08-25 실측]** 이 절의 *"업스트림 대기 / 자체 구현 금지"* 는 **사실관계가 틀렸다.**
+> `thirdparty/README.md:519`가 명시한다 — Godot은 **`Jolt/Physics/Hair/` · `Jolt/Compute/` · `Jolt/Shaders/` 폴더를 벤더링에서 의도적으로 제외**했다(번들 Jolt **5.6.0**, `e77f1755`).
+> 즉 **"Jolt에 아직 없다"가 아니라 "Jolt에 있는데 Godot이 안 가져왔다"** 이다. 로컬 실측: `thirdparty/jolt_physics/Jolt/{Compute,Shaders,Physics/Hair}` **전부 ABSENT**, `Physics/SoftBody`는 PRESENT.
+> **포크 전제에서 이건 "대기"가 아니라 "번들 범위 확대 + 배선" 작업이다.** man-year급이 아니다.
+> 정본: [구현 로드맵 마스터](./godot-openworld-implementation-roadmap.md) §15 스코프 복귀 표.
 
 ### (a) 실측 — 파티클 충돌은 완전한 단방향이다
 
@@ -544,13 +550,17 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 
 | 목표 | 경계 | 평가 |
 |------|------|------|
-| 파티클이 월드에 힘을 가함 | 🔴 대규모 코어 — 파티클 버퍼에 피드백 섹션 추가 + 비동기 리드백 + 물리 서버 연결. 렌더러·물리 양쪽 개조 | **비권장.** 원신도 안 한다 |
-| GPU 강체 시뮬 | 🔴 Jolt 업스트림 대기 | 자체 구현 금지 |
+| 파티클이 월드에 힘을 가함 | 🔴 대규모 코어 — 파티클 버퍼에 피드백 섹션 추가 + 비동기 리드백 + 물리 서버 연결. 렌더러·물리 양쪽 개조 | ~~**비권장.** 원신도 안 한다~~ → **스코프 내.** 원신은 하한 참조점일 뿐. G5(async compute) 이후 리드백 비용이 내려가면 착수 |
+| GPU 강체 시뮬 | ~~🔴 Jolt 업스트림 대기~~ → 🟡 **`Jolt/Compute`+`Jolt/Shaders` 벤더링** | ~~자체 구현 금지~~ → **자체 구현 불요 — upstream Jolt 5.6.0에 이미 존재**(`thirdparty/README.md:519`가 제외를 명시). 빌드시스템 통합 + `RegisterTypes` 배선 |
 | **대량 오브젝트 "물리처럼 보이는" 연출** | 🟢 GDScript | 낙엽·잔해·물결은 **셰이더 버텍스 애니메이션 + GPUParticles**로. 물리 시뮬 불필요 |
 | **대량 오브젝트 실제 물리** | 🟢 CPU Jolt로 충분 | Jolt는 수천 바디를 60fps로 돌린다. `max_bodies`만 올리고 §7 스트리밍으로 활성 수를 제한 |
 | 지형 SDF 재사용 | 🟡 | `GPUParticlesCollisionSDF3D` 베이크 결과를 Jolt `HeightFieldShape`와 별도로 유지해야 함(중복) |
 
-### (e) 우선순위: 🔴 **P4 — 하지 말 것.** 원신급 목표에서 GPU 게임플레이 물리는 요구되지 않으며, 투자 시 업스트림과 충돌한다.
+### (e) 우선순위: ~~🔴 **P4 — 하지 말 것.**~~ → **🟡 P2 스코프 내 (2026-08-25)**
+
+~~원신급 목표에서 GPU 게임플레이 물리는 요구되지 않으며, 투자 시 업스트림과 충돌한다.~~
+**반전 근거 2건:** ① 원신 하한 폐기 — "요구되지 않는다"의 전제가 사라졌다. ② **"업스트림과 충돌"이 성립하지 않는다** — 포크·디스커넥트 전제이고, 애초에 `Jolt/Compute`는 upstream에 **이미 있는** 코드를 Godot이 안 가져온 것이라 충돌 대상 자체가 없다.
+**작업 성격 재정의:** 신규 GPU 물리 엔진 개발(man-year) → **Jolt 벤더링 범위 확대 + SCons 통합 + 서버 배선**(수 주~수 개월).
 
 ---
 
@@ -601,10 +611,13 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 12. 물리 스트리밍의 코어 훅(`ActivateBodiesInAABox` 노출 등).
 13. 클로스 LOD 매니저 (GDScript, 2~3일).
 
-### 🔴 P3~P4 — 하지 말 것 (현 목표 기준)
-14. 소프트바디 셀프 콜리전 (Jolt 업스트림 대기).
-15. **GPU 게임플레이 물리** (업스트림 `Jolt/Compute` 대기).
-16. 스트랜드 헤어 물리 시뮬레이션 (Jolt `Physics/Hair` 업스트림 대기 — misc 문서 §6 참조).
+### ~~🔴 P3~P4 — 하지 말 것~~ → **P2 스코프 내 (2026-08-25 반전)**
+
+> ⛔ 세 항목 모두 근거가 *"Jolt 업스트림 대기"* 였는데 **그 전제가 사실이 아니다**(§8 배너). 전부 구현 대상으로 복귀한다.
+
+14. **소프트바디 셀프 콜리전** — `Jolt/Physics/SoftBody`는 **번들에 PRESENT**. 셀프 콜리전 지원 여부는 Jolt 5.6.0 소스 직접 확인 필요(**미검증 — 착수 전 스파이크**). 미지원이면 이것만 진짜 자체 구현.
+15. **GPU 게임플레이 물리** — ~~업스트림 `Jolt/Compute` 대기~~ → **`Jolt/Compute`+`Jolt/Shaders` 벤더링 + 배선.** upstream 5.6.0에 존재.
+16. **스트랜드 헤어 물리 시뮬레이션** — ~~`Physics/Hair` 업스트림 대기~~ → **`Jolt/Physics/Hair` 벤더링 + 배선.** upstream 5.6.0에 존재. 렌더 측 스트랜드 래스터라이저는 별도(misc §6).
 
 ---
 
@@ -661,7 +674,7 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | **§4 클로스 — B4 스킨드 제약** | P3 (SpringBone 대체) | 🟡 P1 (AAA 캐릭터 의류 필수) | AAA 캐릭터(Horizon/RDR2/TLOU II/Cyberpunk)에서 의류 시뮬레이션은 존재감의 핵심. SpringBone은 머리카락만, 치마·망토·코트는 XPBD 클로스 필요 |
 | **§4 클로스 — 의류 전략** | "의류는 SpringBone, SoftBody는 환경만" | "의류는 SoftBody B1+B3+B4, 머리카락은 SpringBone" | AAA 요구는 SpringBone이 감당할 수 없는 수준의 드레이프·주름 품질 |
 | **§10 우선순위 로드맵** | P1: 4항목(4~8주) | P1: 5항목(6~11주) | 파괴 Phase C, 클로스 B4 스킨드 제약이 P1으로 진입, 총 작업량 증가 |
-| **§8 GPU 물리** | 🔴 P4 (비권장) | 🔴 P4 **유지** | AAA에서도 CPU Jolt로 충분. 업스트림 `Jolt/Compute`와 충돌하므로 자체 구현 금지 |
+| **§8 GPU 물리** | 🔴 P4 (비권장) | ~~🔴 P4 유지~~ → **🟡 P2 스코프 내 (2026-08-25 재반전)** | *"업스트림과 충돌하므로 자체 구현 금지"* 가 **사실오인**. `Jolt/Compute`·`Jolt/Shaders`는 upstream 5.6.0에 **이미 있고 Godot이 벤더링 제외**한 것(`thirdparty/README.md:519`). 포크에서 번들 범위만 넓히면 된다 |
 | **§0 요약표** | "원신급" 기준 | AAA 우선순위로 갱신 | 파괴 P2→P1, 클로스 B4 P3→P1, 스트랜드 헤어 물리 P4 추가 |
 | **§2 차량 — 대안 (e)** | "원신형 회피" (원신엔 플레이어 차량 없음) | 대안 텍스트 유지, **단 AAA에서는 차량이 더 가치 있음** | AAA 오픈월드(GTA/Cyberpunk/RDR2)에서 차량 물리는 핵심. 디자인 의존이므로 P0 조건부 유지 |
 
@@ -686,4 +699,4 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | 물리-4 | 결정론·스냅샷 | 🟡 P1 | SCsub 1줄 + ~300줄. 넷코드 시 P0 |
 | 물리-5 | 캐릭터 컨트롤러 | 🟢 P0 | GDScript step-up 2~3일. Jolt CharacterVirtual은 P1 |
 | 물리-6 | 멀티스레딩·성능 | 🟢 P0 | GDScript 스트리밍 매니저 1~2주. 코어 0 |
-| 물리-7 | GPU 물리 | 🔴 P4 | CPU Jolt로 충분. 업스트림 대기 |
+| 물리-7 | GPU 물리 | ~~🔴 P4~~ → 🟡 **P2** | ~~CPU Jolt로 충분. 업스트림 대기~~ → **벤더링 범위 확대**(`Jolt/Compute`·`Jolt/Shaders`, upstream 5.6.0 실재) |

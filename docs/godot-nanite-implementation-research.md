@@ -28,7 +28,7 @@
 
 ### 1.1 클러스터 DAG 빌드 (오프라인)
 메시를 **정확히 128삼각형 클러스터(meshlet)** 단위로 나눈다. 이후:
-1. 여러 클러스터를 **그룹핑** (METIS 그래프 분할로 edge-cut 비용 최소화)
+1. 여러 클러스터를 **그룹핑** (~~METIS 그래프 분할로~~ → **`meshopt_partitionClusters`(번들 meshopt 1.2)로 대체 — §10.2**. METIS 벤더링 불요) edge-cut 비용 최소화
 2. 그룹을 **병합 후 삼각형 수 절반으로 단순화** (QEM)
 3. 다시 128삼각형 클러스터로 **재분할**
 4. 루트 클러스터 1개가 남을 때까지 **반복** → **DAG** 완성
@@ -136,7 +136,7 @@ mesh+task 셰이더는 현재 Godot RenderingDevice에 **노출되어 있지 않
 ## 4. 실질적 구현 경로 — GDExtension vs 코어 개조 경계
 
 ### ✅ GDExtension으로 가능 (RD compute API 위)
-- **오프라인 전처리 전체:** meshlet 생성 + DAG 빌드 (meshoptimizer + METIS를 GDExtension에 링크). 산출물을 커스텀 리소스로 저장.
+- **오프라인 전처리 전체:** meshlet 생성 + DAG 빌드 (~~meshoptimizer + METIS를 GDExtension에 링크~~ → **번들 meshoptimizer 1.2 단독. METIS 링크하지 말 것 — §10.2**). 산출물을 커스텀 리소스로 저장.
 - **런타임 compute 패스:** DAG 컷(LOD 선택), 2-pass HZB 컬링, `draw_indirect` 기반 **하드웨어 래스터 경로** (Bevy 0.14 방식 — `R32Uint` visibility buffer + 하드코드 vertex shader).
 - 즉 **Bevy 0.14 수준의 MVP는 이론상 GDExtension만으로 도달 가능** — 단, 아래 미확인 리스크에 걸림.
 
@@ -246,7 +246,7 @@ Godot 4.x `CompositorEffect`(GDExtension 서브클래스 가능, `scene/resource
 - meshoptimizer meshlet API를 GDExtension에서 호출해 단일 메시 meshlet 시각화.
 
 ### Phase 1 — 오프라인 DAG 빌더 MVP (수 주~수 개월)
-- 스태틱 메시 한정. meshoptimizer 분할 + METIS 그룹핑 + QEM 단순화·재분할 루프 → DAG 커스텀 리소스.
+- 스태틱 메시 한정. meshoptimizer 분할 + ~~METIS 그룹핑~~ **`meshopt_partitionClusters` 그룹핑(§10.2)** + QEM 단순화·재분할 루프 → DAG 커스텀 리소스.
 - **여기가 품질의 8할.** Bevy조차 미완인 영역이니 "동작"과 "품질"을 분리해 목표.
 
 ### Phase 2 — 런타임 컬링 + HW 래스터 (Bevy 0.14 등가)

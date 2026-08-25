@@ -126,6 +126,9 @@
 
 ## 다음 액션 (즉시)
 
+> ⛔ **[흡수됨 — 2026-08-25]** 아래 Phase 0 스파이크 3건은 **단독 실행하지 말 것.** Lumen S0-2·Nanite 스트리밍 전제가 같은 질문을 중복해서 묻고 있어 [구현 로드맵 마스터](./godot-openworld-implementation-roadmap.md) **Wave 0의 통합 RD 능력 스파이크 1회**로 병합됐다. 산출물도 `docs/vt-spike-report.md` → **`docs/rd-capability-spike-report.md`** 로 통합.
+
+
 - [ ] Phase 0 스파이크 S0.1(async 리드백 왕복) 구현 착수.
 - [ ] S0.2용으로 현재 사용 Godot 버전 확정 + #99750 최신 상태 확인.
 - [ ] S0.3 bindless/Forward+ 합성 실험.
