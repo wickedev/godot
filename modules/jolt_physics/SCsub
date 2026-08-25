@@ -210,6 +210,8 @@ env_jolt.add_source_files(module_obj, "misc/*.cpp")
 env_jolt.add_source_files(module_obj, "objects/*.cpp")
 env_jolt.add_source_files(module_obj, "shapes/*.cpp")
 env_jolt.add_source_files(module_obj, "spaces/*.cpp")
+# Offline-compiled compute kernels and the checks that guard them.
+env_jolt.add_source_files(module_obj, "shaders/*.cpp")
 
 if env["tests"]:
     # Compiled in the module env so the tests can exercise Jolt without the test binary needing
