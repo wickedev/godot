@@ -108,6 +108,7 @@ float AudioStreamPlaybackMP3::get_stream_sampling_rate() {
 }
 
 void AudioStreamPlaybackMP3::start(double p_from_pos) {
+	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
 	active = true;
 	seek(p_from_pos);
 	loops = 0;
@@ -131,6 +132,7 @@ double AudioStreamPlaybackMP3::get_playback_position() const {
 }
 
 void AudioStreamPlaybackMP3::seek(double p_time) {
+	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
 	if (!active) {
 		return;
 	}

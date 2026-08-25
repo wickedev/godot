@@ -77,8 +77,12 @@ public:
 class AudioStreamPlayback : public RefCounted {
 	GDCLASS(AudioStreamPlayback, RefCounted);
 
+	SafeNumeric<uint64_t> suspension_generation;
+
 protected:
 	static void _bind_methods();
+	// See is_inaudible_suspension_safe(): opt-in playbacks call this from start()/seek().
+	void bump_suspension_generation() { suspension_generation.increment(); }
 	PackedVector2Array _mix_audio_bind(float p_rate_scale, int p_frames);
 	GDVIRTUAL1_REQUIRED(_start, double)
 	GDVIRTUAL0_REQUIRED(_stop)
@@ -107,7 +111,17 @@ public:
 	// (see `audio/general/suspend_inaudible_playbacks`). Only plain file decoders should opt in;
 	// generators, microphones and composite streams must keep mixing so their internal state
 	// machines and ring buffers stay live.
+	// Opt-in contract: implementations MUST call bump_suspension_generation() from their public
+	// start() and seek() overrides so the AudioServer can detect stream mutations that happened
+	// while mixing was suspended (position comparison cannot express restart-at-same-position).
 	virtual bool is_inaudible_suspension_safe() const { return false; }
+	// Monotonic counter incremented on every public start()/seek() of an opt-in playback.
+	// Written on the main thread, read on the audio thread.
+	uint64_t get_suspension_generation() const { return suspension_generation.get(); }
+	// Called by the AudioServer (audio thread, while mixing is not running for this playback)
+	// when it wakes a suspended playback whose generation changed: any internally buffered
+	// pre-mutation audio (resampler history, staging buffers) must be dropped.
+	virtual void reset_suspension_residuals() {}
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -156,6 +170,8 @@ protected:
 
 public:
 	virtual int mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) override;
+
+	virtual void reset_suspension_residuals() override { begin_resample(); }
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

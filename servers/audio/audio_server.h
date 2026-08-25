@@ -164,8 +164,9 @@ private:
 		uint32_t silent_mix_blocks = 0;
 		// Whether mixing is currently suspended (see `audio/general/suspend_inaudible_playbacks`).
 		bool suspended = false;
-		// Stream position captured when suspension began; used to detect seeks that invalidate the retained lookahead.
-		double suspend_position = 0.0;
+		// Playback mutation generation captured when suspension began; a change on wake means
+		// start()/seek() happened while suspended and buffered pre-mutation audio must be dropped.
+		uint64_t suspend_generation = 0;
 	};
 
 	SafeList<AudioStreamPlaybackListNode *> playback_list;

@@ -225,13 +225,15 @@ void AudioServer::_mix_step() {
 					playback->suspended = false;
 					// Resume ramps from silence even for buses with no previous entry (see below).
 					waking_from_suspension = true;
-					// If the stream was seeked or restarted while suspended, the retained lookahead
-					// holds frames from the old position — drop it instead of playing stale audio.
-					// (File decoder position getters are simple offset reads, safe from this thread.)
-					if (!Math::is_equal_approx(playback->stream_playback->get_playback_position(), playback->suspend_position)) {
+					// If the stream was mutated while suspended (public start()/seek() bump the
+					// generation counter — position comparison can't express restart-at-same-position),
+					// both retained buffers hold pre-mutation audio: drop the AudioServer lookahead and
+					// have the playback flush its own resampler history/staging.
+					if (playback->stream_playback->get_suspension_generation() != playback->suspend_generation) {
 						for (int i = 0; i < AuSC::LOOKAHEAD_BUFFER_SIZE; i++) {
 							playback->lookahead[i] = AudioFrame(0, 0);
 						}
+						playback->stream_playback->reset_suspension_residuals();
 					}
 				}
 			} else {
@@ -241,7 +243,7 @@ void AudioServer::_mix_step() {
 				if (playback->silent_mix_blocks > playback_disable_blocks) {
 					if (!playback->suspended) {
 						playback->suspended = true;
-						playback->suspend_position = playback->stream_playback->get_playback_position();
+						playback->suspend_generation = playback->stream_playback->get_suspension_generation();
 					}
 					// The lookahead buffer is deliberately left untouched: it holds already-decoded frames
 					// that will play back (ramped up from silence) on resume, so no samples are lost.

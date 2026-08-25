@@ -230,6 +230,7 @@ bool AudioStreamPlaybackOggVorbis::_alloc_vorbis() {
 }
 
 void AudioStreamPlaybackOggVorbis::start(double p_from_pos) {
+	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
 	ERR_FAIL_COND(!ready);
 	loop_fade_remaining = FADE_SIZE;
 	active = true;
@@ -278,6 +279,7 @@ Variant AudioStreamPlaybackOggVorbis::get_parameter(const StringName &p_name) co
 }
 
 void AudioStreamPlaybackOggVorbis::seek(double p_time) {
+	bump_suspension_generation(); // Inaudible-suspension opt-in contract (see AudioStreamPlayback).
 	ERR_FAIL_COND(!ready);
 	ERR_FAIL_COND(vorbis_stream.is_null());
 	if (!active) {
