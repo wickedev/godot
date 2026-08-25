@@ -63,7 +63,7 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 | **G0** | M1 | RD 스파이크 3건 판정 + 코어 훅 3건 머지 + Sentry 라이브 | 전 레인 본격 착수 | bindless 불가 → VT는 단일 아틀라스+UV 인디렉션으로 축소 설계 |
 
 > **G0 중간 판정 (2026-08-25, C3 스파이크 `docs/rd-capability-spike-report.md`):** ⓐ async 리드백 🟡 **수치 재보류 (리뷰 2차 — 해제가 성급했음)**: 2백엔드 관측은 시사적이나 하니스의 프레임 카운터 크로스스레드 레이스·워치독 미사용·원시 로그/빌드 식별자 부재·구성당 단일 런으로 **법칙 확정 불가** 판정. 설계는 보수 가정(분리 스레드 2~3프레임) 유지. 확정 존속 결론: ⓑ 가드 존속 + `call_on_render_thread` 정식 경로(단 0프레임은 `_process` enqueue 한정 관측). 해제 조건: 하니스 자체 시퀀싱 + 워치독 + 원문 로그/빌드 ID 보존 + 구성별 독립 반복. ⓑ 스레드 가드 🟡 — #99750 존속, 승인 우회 `call_on_render_thread` **0프레임 비용**. ⓒ descriptor-indexing 🔴 **FAIL** — 디바이스 생성이 `Vulkan11Features`만 체인, **VT 축소 분기 발동**. 단 회피로 복원용 최소 변경(Vulkan12Features 체인+nonuniform, Task #18)은 코어 훅급이라 Wave 0~1로 편성 — 성공 시 nanite-perf §③ "고정 샘플러 배열 nonuniform" 회피로가 되살아남. 잔여: Windows/Linux 재측정(하니스 동봉). 코어 훅은 ②③ 랜딩·①④ 진행 중, Sentry는 재리뷰 중.
-| **G1** | M4 | **통합 GBuffer 스키마 v1 동결** (Tier 레이아웃 + `gb_objectid` 네임스페이스) | L1 deferred 리졸브 / L2 S3 / L3 ReSTIR 입력 / L7 AOV export | **가장 비싼 실패.** 4레인 재작업 |
+| **G1** | ~~M4~~ | ✅ **통과 (2026-08-25 — M0에 조기 달성).** [동결본](./gbuffer-schema-v1-proposal.md) v1.3: Tier-1 7어태치먼트(노멀 병합·MRT 여유 1)·24-bit objectid·N-1 히스토리 3텍스처·LOD-모션 계약·emission.a 잔차 채널. 5라운드에서 스펙 결함 4건 동결 전 제거, 3레인 서명 전건 실기 근거 | **해금**: L1 deferred 리졸브 / L2 S3 / L3 ReSTIR 입력 / L7 AOV export | — |
 | **G2** | M6 | **지오 풀 버퍼 계약 동결** — BDA + AS-build usage 플래그 | L2 스트리밍 레이어 / L3 BLAS 직접 빌드 | 나중 변경 시 스트리밍 레이어 전체 개조(nanite-impl §10.4-3) |
 | **G3** | M10 | Nanite S2 하니스 판정 (컬링·LOD 컷·HZB 실증) | S3/S4 진입 | DAG 품질 미달 → S1으로 회귀 |
 | **G4** | M18 | **S4 리졸브 라이브 — opaque 전면 deferred 전환 완료** | L7 AOV·L3 HW-RT가 GBuffer 소비 시작 / L9 모션블러·업스케일러 착수 | 롤백 지점: 하이브리드(비-Nanite opaque는 포워드 유지) |
