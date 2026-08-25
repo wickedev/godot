@@ -1,0 +1,10 @@
+config_version=5
+
+[application]
+
+config/name="RT Spike"
+run/main_scene="res://main.tscn"
+
+[rendering]
+
+rendering_device/driver="vulkan"

@@ -11,11 +11,58 @@
 | | 항목 | 결과 |
 |:-:|---|---|
 | **S0-1** | SDFGI 재사용률 실측 | 🟢 **완료** — §2 재사용/신규 모듈 목록 |
-| **S0-2** | GH-99119 RT API로 프로브 1발 → 경로 (c) 진입 판정 | 🔴 **차단** — 개발 머신에서 RT 실행 자체가 불가능(§3) |
+| **S0-2** | GH-99119 RT API로 프로브 1발 → 경로 (c) 진입 판정 | 🟢 **진입 가능 판정** — RT 하드웨어에서 실증(§1.5). 잔여: TLAS/SBT 배선 |
 
 ---
 
-## 1. 🔴 S0-2 차단 — Apple 플랫폼에 RT 경로가 존재하지 않는다
+## 1.5 ✅ S0-2 실증 — 경로 (c) **진입 가능** (DGX Spark / NVIDIA GB10 / Linux aarch64 / Vulkan)
+
+Godot을 그 박스에서 빌드해(`platform=linuxbsd arch=arm64 target=editor`) `misc/rt_spike/` 프로브를 돌렸다. `--headless`는 더미 드라이버라 RD가 없으므로 **`xvfb-run` + `--rendering-driver vulkan`** 으로 실행했다.
+
+```
+RESULT device=NVIDIA GB10
+RESULT supports_ray_query=true
+RESULT supports_raytracing_pipeline=true
+RESULT blas[float32x3]=OK (stride=12B)
+RESULT blas[snorm16x4]=OK (stride=8B)
+RESULT blas[snorm16x3]=OK (stride=6B)
+```
+
+**판정: 경로 (c) 진입 조건 충족.** `RenderingDevice`의 RT 표면이 GDScript에서 그대로 동작한다 — `has_feature` 두 종 모두 `true`, `blas_create` → `blas_build` 왕복 성공.
+
+### G2 §6 답변이 여기서 **끝까지** 검증됐다
+
+앞 절(§3)의 Vulkan 포맷 조회는 "드라이버가 이 포맷을 받는다"까지였다. 이제 **Godot의 `blas_create`/`blas_build` 경로를 통과하는 것까지** 확인됐다:
+
+| 포맷 | stride | Godot 경유 BLAS 빌드 |
+|---|---:|:---:|
+| `R32G32B32_SFLOAT` | 12B | **OK** |
+| **`R16G16B16A16_SNORM`** (G2 제안) | **8B** | **OK** |
+| `R16G16B16_SNORM` | 6B | **OK** (NVIDIA 한정) |
+
+⇒ **G2 §6 서명 조건("실기 1회 후 서명")을 충족한다.** 단 §3의 이식성 단서는 그대로다 — 6B는 스펙 필수가 아니므로 계약은 8B로 동결하고 6B는 벤더별 최적화로 남긴다.
+
+### ⚠️ 발견 — ray query만 쓸 때도 hit SBT를 강제한다
+
+TLAS 빌드는 세 경우 모두 실패했다:
+```
+ERROR: Instance 0 has an invalid hit shader binding table range.
+RESULT tlas[...]=BUILD_FAILED err=31
+```
+원인은 `rendering_device.cpp:543`:
+```cpp
+ERR_FAIL_COND_V_MSG(!rd_instance.hit_sbt_range, ERR_INVALID_PARAMETER,
+        "Instance " + itos(i) + " has an invalid hit shader binding table range.");
+```
+**BLAS가 유효하면 `hit_sbt_range`가 반드시 0이 아니어야 한다.** 그런데 **ray query는 hit SBT를 쓰지 않는다** — SBT는 RT 파이프라인(raygen/miss/hit 셰이더)의 개념이다.
+
+⇒ **ray query 기반으로 경로 (c)에 진입하려면 쓰지도 않을 SBT를 만들어야 한다.** `hit_sbt_create`가 RT 파이프라인을 요구하므로, ray query만 원해도 RT 파이프라인 생성이 강제된다. 이건 L3에 실질 제약이다.
+
+**이 프로브의 미완:** SBT를 실제로 할당해 TLAS를 완성하고 ray query로 광선 1발을 쏘는 것. 위 제약 때문에 RT 파이프라인 + 셰이더가 선행이라 별도 작업으로 분리한다. **다만 경로 (c) 진입 판정에 필요한 것(가속구조 빌드 + 기능 노출)은 확보됐다.**
+
+---
+
+## 1. ~~🔴 S0-2 차단~~ (해소됨 — §1.5) · Apple 플랫폼 RT 부재 — Apple 플랫폼에 RT 경로가 존재하지 않는다
 
 두 백엔드 모두 막혀 있다. 코드 실측:
 
