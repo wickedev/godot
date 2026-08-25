@@ -2843,17 +2843,38 @@
 		<constant name="PIPELINE_SPECIALIZATION_CONSTANT_TYPE_FLOAT" value="2" enum="PipelineSpecializationConstantType">
 			Floating-point specialization constant.
 		</constant>
+		<constant name="SUPPORTS_MULTIVIEW" value="0" enum="Features">
+			The rendering device supports multiview (single-pass stereoscopic rendering into layered render targets).
+		</constant>
+		<constant name="SUPPORTS_HALF_FLOAT" value="1" enum="Features">
+			The rendering device supports 16-bit floating-point vertex and shader arithmetic types.
+		</constant>
+		<constant name="SUPPORTS_ATTACHMENT_VRS" value="2" enum="Features">
+			The rendering device supports variable rate shading driven by a VRS attachment.
+		</constant>
 		<constant name="SUPPORTS_METALFX_SPATIAL" value="3" enum="Features">
 			Support for MetalFX spatial upscaling.
 		</constant>
 		<constant name="SUPPORTS_METALFX_TEMPORAL" value="4" enum="Features">
 			Support for MetalFX temporal upscaling.
 		</constant>
+		<constant name="SUPPORTS_FRAGMENT_SHADER_WITH_ONLY_SIDE_EFFECTS" value="5" enum="Features">
+			The rendering device guarantees that a fragment shader with only side effects (buffer writes, no attachment outputs) is not optimized away by the driver.
+		</constant>
 		<constant name="SUPPORTS_BUFFER_DEVICE_ADDRESS" value="6" enum="Features">
 			Features support for buffer device address extension.
 		</constant>
 		<constant name="SUPPORTS_IMAGE_ATOMIC_32_BIT" value="7" enum="Features">
 			Support for 32-bit image atomic operations.
+		</constant>
+		<constant name="SUPPORTS_VULKAN_MEMORY_MODEL" value="8" enum="Features">
+			The rendering device supports the Vulkan memory model semantics for cross-invocation memory ordering.
+		</constant>
+		<constant name="SUPPORTS_FRAMEBUFFER_DEPTH_RESOLVE" value="9" enum="Features">
+			The rendering device supports resolving multisampled depth attachments as part of a framebuffer pass.
+		</constant>
+		<constant name="SUPPORTS_POINT_SIZE" value="10" enum="Features">
+			The rendering device supports setting the point size in the vertex shader.
 		</constant>
 		<constant name="SUPPORTS_RAY_QUERY" value="11" enum="Features">
 			Support for ray query extension.
@@ -2870,6 +2891,9 @@
 		</constant>
 		<constant name="SUPPORTS_RASTERIZATION_RATE_MAP" value="14" enum="Features">
 			Support for rasterization rate maps. The current implementation targets Metal on Apple platforms. This allows for foveated rendering, which is used by the visionOS XR module.
+		</constant>
+		<constant name="SUPPORTS_GPU_MAPPABLE_BUFFER" value="15" enum="Features">
+			The rendering device supports buffers that are both GPU-local and directly mappable from the CPU.
 		</constant>
 		<constant name="SUPPORTS_DRAW_INDIRECT_COUNT" value="16" enum="Features">
 			Support for indirect draws that read their draw count from a GPU buffer, via [method draw_list_draw_indirect_count].
