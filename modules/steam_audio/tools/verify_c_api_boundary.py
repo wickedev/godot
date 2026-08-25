@@ -91,6 +91,13 @@ def expected_sentinel(ret: str):
     return re.compile(r"return\s+" + re.escape(ret) + r"\s*\{\s*\}\s*;")
 
 
+# The upstream import commit: reversing patches/0001 must reproduce these blobs.
+PRISTINE_IMPORT_COMMIT = "262f95df77"
+PATCHED_FILES = (
+    "thirdparty/steam_audio/src/phonon_interfaces.h",
+    "thirdparty/steam_audio/src/api_context.cpp",
+)
+
 # Handle types are opaque pointers behind typedefs: treat every IPL* typedef that
 # is declared as a pointer handle in phonon.h as pointer-returning. Filled in main().
 HANDLE_TYPES = set()
@@ -113,18 +120,37 @@ def main() -> int:
     for m in re.finditer(r"typedef\s+struct\s+\w+\s*\*\s*(\w+)\s*;", phonon_h):
         HANDLE_TYPES.add(m.group(1))
 
+    api_context_cpp = (src / "api_context.cpp").read_text(encoding="utf-8", errors="replace")
+
     errors = []
 
     decls = parse_declarations(phonon_h)
-    defs = parse_definitions(interfaces_h)
-    def_names = {name for name, _, _ in defs}
 
-    missing_defs = sorted(set(decls) - def_names)
-    orphan_defs = sorted(name for name in def_names if name not in decls)
+    # Model what the production (STEAMAUDIO_BUILDING_CORE) build actually
+    # compiles: phonon_interfaces.h contributes every export EXCEPT
+    # iplContextCreate, whose interfaces definition is the
+    # !STEAMAUDIO_BUILDING_CORE fallback stub; the real one lives in
+    # api_context.cpp. Verify both, but count the core set from the pair.
+    interface_defs = parse_definitions(interfaces_h)
+    api_context_defs = parse_definitions(api_context_cpp)
+    if [name for name, _, _ in api_context_defs] != ["iplContextCreate"]:
+        errors.append(
+            "api_context.cpp is expected to define exactly the production iplContextCreate, found: "
+            + ", ".join(name for name, _, _ in api_context_defs)
+        )
+    core_defs = [d for d in interface_defs if d[0] != "iplContextCreate"] + api_context_defs
+    fallback_stub_defs = [d for d in interface_defs if d[0] == "iplContextCreate"]
+    if len(fallback_stub_defs) != 1:
+        errors.append(f"expected exactly one fallback iplContextCreate stub in phonon_interfaces.h, found {len(fallback_stub_defs)}")
+    defs = core_defs + fallback_stub_defs  # every definition must be hardened, both build modes
+    core_names = {name for name, _, _ in core_defs}
+
+    missing_defs = sorted(set(decls) - core_names)
+    orphan_defs = sorted(name for name in core_names if name not in decls)
     for name in missing_defs:
-        errors.append(f"declared in phonon.h but not defined in phonon_interfaces.h: {name}")
+        errors.append(f"declared in phonon.h but not defined in the compiled core: {name}")
     for name in orphan_defs:
-        errors.append(f"defined in phonon_interfaces.h but not declared in phonon.h: {name}")
+        errors.append(f"defined in the compiled core but not declared in phonon.h: {name}")
 
     hardened = 0
     for name, ret, body in defs:
@@ -150,8 +176,40 @@ def main() -> int:
     )
     if replay.returncode != 0:
         errors.append(f"patches/0001 does not reverse-apply cleanly: {replay.stderr.strip()}")
+    else:
+        # Independent pristine check: actually reverse the patch in a scratch tree
+        # and compare blob hashes against the upstream import commit. A patch that
+        # merely matches the current tree is not enough — the reversed result must
+        # BE the vendored upstream.
+        import shutil
+        import tempfile
 
-    print(f"declarations: {len(decls)}  definitions: {len(defs)}  hardened: {hardened}")
+        with tempfile.TemporaryDirectory() as tmp:
+            for rel in PATCHED_FILES:
+                dst = Path(tmp) / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(root / rel, dst)
+            rev = subprocess.run(
+                ["patch", "-R", "-p1", "-i", str(patch)], cwd=tmp, capture_output=True, text=True
+            )
+            if rev.returncode != 0:
+                errors.append(f"patch -R replay failed in scratch tree: {rev.stderr.strip() or rev.stdout.strip()}")
+            else:
+                for rel in PATCHED_FILES:
+                    reversed_hash = subprocess.run(
+                        ["git", "hash-object", str(Path(tmp) / rel)], capture_output=True, text=True, check=True
+                    ).stdout.strip()
+                    pristine_hash = subprocess.run(
+                        ["git", "rev-parse", f"{PRISTINE_IMPORT_COMMIT}:{rel}"],
+                        cwd=root, capture_output=True, text=True, check=True,
+                    ).stdout.strip()
+                    if reversed_hash != pristine_hash:
+                        errors.append(
+                            f"reversed {rel} does not match the pristine upstream blob "
+                            f"({reversed_hash[:12]} != {pristine_hash[:12]} from {PRISTINE_IMPORT_COMMIT})"
+                        )
+
+    print(f"declarations: {len(decls)}  compiled-core definitions: {len(core_names)}  hardened bodies (incl. fallback stub): {hardened}")
     if errors:
         for e in errors:
             print(f"FAIL: {e}")
