@@ -27,7 +27,7 @@
 | 0 | `gb_albedo` | RGBA8 unorm | albedo.rgb + alpha | 리졸브·AOV |
 | 1 | `gb_normal` | **RGBA16 unorm** | **.xy = 셰이딩 노멀 oct / .zw = 지오메트릭 노멀 oct** (v1.3 병합 — 두 노멀은 리저버 기각에서 항상 함께 읽힘) | 리졸브·ReSTIR·SSR·AOV |
 | 2 | `gb_orm` | RGBA8 unorm | ao / roughness / metallic / sss-mask | 리졸브·ReSTIR·AOV |
-| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택. 클리어 값 = 0 → "잔차 없음"). 출처는 G2 §4의 `analytic_error`이며 `error`가 아니다 — A등급 회람 중, 2026-08-25** | 리졸브·ReSTIR·AOV |
+| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택. 클리어 값 = 0 → "잔차 없음"). 출처는 G2 §4의 `analytic_error`이며 `error`가 아니다. **비-Nanite opaque emit 경로는 `.a = 0`을 명시적으로 기록한다** — 클리어 값은 미커버 픽셀에만 적용되고, 커버된 픽셀에 안 쓰면 `.a`가 미정의다(C1) — A등급 회람 중, 2026-08-25** | 리졸브·ReSTIR·AOV |
 | 4 | `gb_depth` | R32F | view-space Z (`-vertex.z`) | 위치 재구성·전 소비자 |
 | 5 | `gb_objectid` | R32_UINT (**유효 24-bit**, §3) | instance ID | Nanite 리졸브·Cryptomatte·RT 히트 매칭 |
 | 6 | `gb_motion` | RG16F | screen-space motion, **NDC 단위·지터 제거** | TAA·ReSTIR·AOV |
