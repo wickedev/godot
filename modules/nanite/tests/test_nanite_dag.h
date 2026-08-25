@@ -994,6 +994,57 @@ TEST_CASE("[Nanite] The importer stops serving a DAG once the option is off") {
 }
 #endif // TOOLS_ENABLED
 
+TEST_CASE("[Nanite] Artifact size stays within the budgeted bytes per triangle") {
+	// This figure is not just informational: the geometry pool contract turns
+	// it into a ceiling on how many source triangles fit one pool buffer, and
+	// exceeding that ceiling fails at bind time with no diagnostic. An earlier
+	// revision serialized 8-bit local indices as words and came in at roughly
+	// twice the budget, which is the kind of drift this is here to catch.
+	//
+	// Two fixtures, because a single one cannot tell a real figure from a
+	// coincidence of that mesh's vertex-to-triangle ratio.
+	const uint32_t BUDGET_BYTES_PER_TRIANGLE = 24;
+
+	struct Fixture {
+		const char *name;
+		bool sphere;
+	};
+	const Fixture fixtures[] = { { "grid", false }, { "sphere", true } };
+
+	for (const Fixture &fixture : fixtures) {
+		const TestMesh mesh = fixture.sphere ? make_closed_sphere(128, 64) : make_displaced_grid(160);
+		NaniteDAGBuilder::Settings settings;
+		ERR_PRINT_OFF;
+		const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+		ERR_PRINT_ON;
+		REQUIRE(dag.is_valid());
+
+		const uint64_t source_triangles = mesh.indices.size() / 3;
+		const PackedByteArray serialized = dag->get("data");
+		const double bytes_per_triangle = (double)serialized.size() / (double)source_triangles;
+
+		CHECK_MESSAGE(bytes_per_triangle <= (double)BUDGET_BYTES_PER_TRIANGLE,
+				vformat("The %s fixture serializes to %.2f bytes per source triangle, past the budgeted %d.",
+						fixture.name, bytes_per_triangle, BUDGET_BYTES_PER_TRIANGLE));
+
+		// The components have to add up to the file, or the accounting the
+		// budget is derived from describes something other than what is stored.
+		const uint64_t vertex_bytes = (uint64_t)dag->vertex_count * (12 + 4 + 4);
+		const uint64_t slice_bytes = (uint64_t)dag->cluster_vertices.size() * 4;
+		const uint64_t local_bytes = (uint64_t)dag->cluster_indices.size();
+		const uint64_t cluster_bytes = (uint64_t)dag->clusters.size() * 18 * 4;
+		uint64_t group_bytes = 0;
+		for (const NaniteDAG::Group &group : dag->groups) {
+			group_bytes += 8 * 4 + (uint64_t)(group.children.size() + group.produced.size()) * 4;
+		}
+		const uint64_t components = vertex_bytes + slice_bytes + local_bytes + cluster_bytes + group_bytes;
+		CHECK_MESSAGE((uint64_t)serialized.size() >= components,
+				"The component accounting exceeds the file it is supposed to describe.");
+		CHECK_MESSAGE((uint64_t)serialized.size() - components < 1024,
+				"Header overhead is larger than the accounting allows for.");
+	}
+}
+
 TEST_CASE("[Nanite] DAG builder is deterministic") {
 	const TestMesh mesh = make_displaced_grid(32);
 	NaniteDAGBuilder::Settings settings;
