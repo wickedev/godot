@@ -56,26 +56,28 @@ void EditorVisualProfiler::add_frame_metric(const Metric &p_metric) {
 
 	frame_metrics.write[last_metric] = p_metric;
 
-	List<String> stack;
+	// Full paths are derived from each area's `parent` index rather than from a local
+	// stack over the ">"/"<" markers. These strings are the identity used for selection
+	// and fold state, so an unbalanced marker under the old scheme renamed every area
+	// after it and silently lost both. A parent index can only misplace its own area.
+	//
+	// Parents always precede their children in the array (a parent is the index of an
+	// earlier ">" marker), so one forward pass suffices.
+	LocalVector<String> full_names;
+	full_names.resize(frame_metrics[last_metric].areas.size());
 	for (int i = 0; i < frame_metrics[last_metric].areas.size(); i++) {
-		String name = frame_metrics[last_metric].areas[i].name;
+		const String name = frame_metrics[last_metric].areas[i].name;
 		frame_metrics.write[last_metric].areas.write[i].color_cache = _get_color_from_signature(name);
+
+		const int parent_area = frame_metrics[last_metric].areas[i].parent;
 		String full_name;
-
-		if (name[0] == '<') {
-			stack.pop_back();
-		}
-
-		if (stack.size()) {
-			full_name = stack.back()->get() + name;
+		if (parent_area >= 0 && parent_area < i) {
+			full_name = full_names[parent_area] + "/" + name;
 		} else {
 			full_name = name;
 		}
 
-		if (name[0] == '>') {
-			stack.push_back(full_name + "/");
-		}
-
+		full_names[i] = full_name;
 		frame_metrics.write[last_metric].areas.write[i].fullpath_cache = full_name;
 	}
 
@@ -355,13 +357,28 @@ void EditorVisualProfiler::_update_frame(bool p_focus_selected) {
 	TreeItem *root = variables->create_item();
 	const Metric &m = frame_metrics[cursor_metric];
 
-	List<TreeItem *> stack;
+	// The tree is built from the `parent` index each area carries, which the server
+	// resolved from the record-order marker stack at capture time. Nothing here keeps a
+	// stack of its own: a dropped or unbalanced marker can therefore misplace one area,
+	// but cannot desynchronise every area after it.
+	LocalVector<TreeItem *> item_for_area;
+	item_for_area.resize(m.areas.size());
+	for (uint32_t i = 0; i < item_for_area.size(); i++) {
+		item_for_area[i] = nullptr;
+	}
+
 	List<TreeItem *> categories;
 
 	TreeItem *ensure_selected = nullptr;
 
 	for (int i = 1; i < m.areas.size() - 1; i++) {
-		TreeItem *parent = stack.size() ? stack.back()->get() : root;
+		// An out-of-range parent, or one whose item was never created (it fell outside
+		// the iterated range), degrades to the root rather than dropping the area.
+		const int parent_area = m.areas[i].parent;
+		TreeItem *parent = root;
+		if (parent_area >= 0 && parent_area < (int)item_for_area.size() && item_for_area[parent_area] != nullptr) {
+			parent = item_for_area[parent_area];
+		}
 
 		String name = m.areas[i].name;
 
@@ -373,17 +390,11 @@ void EditorVisualProfiler::_update_frame(bool p_focus_selected) {
 		}
 
 		if (name.begins_with(">")) {
-			// `depth` is authoritative for nesting (resolved server-side at capture
-			// time). Trust it over the local stack so a dropped or unbalanced marker
-			// cannot desynchronise the tree for the rest of the frame.
-			while (stack.size() > m.areas[i].depth) {
-				stack.pop_back();
-			}
-			parent = stack.size() ? stack.back()->get() : root;
-
 			TreeItem *category = variables->create_item(parent);
 
-			stack.push_back(category);
+			// Recorded so descendants can find it by index; this is what replaces the
+			// stack.
+			item_for_area[i] = category;
 			categories.push_back(category);
 
 			name = name.substr(1);
@@ -400,14 +411,18 @@ void EditorVisualProfiler::_update_frame(bool p_focus_selected) {
 		}
 
 		if (name.begins_with("<")) {
-			while (stack.size() > m.areas[i].depth) {
-				stack.pop_back();
-			}
+			// Closing markers carry timing but create no node. With parent indices
+			// driving the tree there is no stack to unwind here.
 			continue;
 		}
 		TreeItem *category = variables->create_item(parent);
 
-		for (TreeItem *E : stack) {
+		// Roll this area's time up through its ancestors by walking parent indices.
+		for (int ancestor = m.areas[i].parent; ancestor >= 0 && ancestor < (int)item_for_area.size(); ancestor = m.areas[ancestor].parent) {
+			TreeItem *E = item_for_area[ancestor];
+			if (E == nullptr) {
+				continue;
+			}
 			float total_cpu = E->get_metadata(1);
 			float total_gpu = E->get_metadata(2);
 			total_cpu += cpu_time;
