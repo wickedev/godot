@@ -1,6 +1,6 @@
 # G1 — 통합 GBuffer 스키마 v1 동결 제안 (RFC)
 
-> **상태: v1.1 (2026-08-25) — L3 검토 반영 개정.** 로드맵 게이트 G1(M4)의 동결 대상 문서.
+> **상태: v1.2 (2026-08-25) — L2·L3 조건부 승인 반영 개정.** 로드맵 게이트 G1(M4)의 동결 대상 문서.
 > 근거 정본: [unified-gbuffer 리서치](./godot-unified-gbuffer-aov-research.md) §2 Tier 모델.
 > **의견 수렴: C1(L1 리졸브) · C2(L2 vis-buffer) · C3(L3-대행, ReSTIR 소비자 관점 — Task #5 담당 자격) — 3인 서명 후 G1 동결.**
 > v1.0→v1.1 델타: ① objectid 24-bit 축소(TLAS `instanceCustomIndex:24` 절단 — C3 블로커) ② `gb_geo_normal` 추가 ③ 히스토리 계약·지터 규약 신설 ④ Metal 성립성 검증을 동결 전제로 추가(C1) ⑤ 인용 정정.
@@ -18,7 +18,7 @@
 | **모션 규약** — NDC 단위 · **지터 제거(jitter-free)** | |
 | `RB_SCOPE_GBUFFER` 스코프 이름 | |
 
-## 2. Tier-1 스키마 (동결 제안, v1.1)
+## 2. Tier-1 스키마 (동결 제안, v1.2)
 
 | # | RB tex | 포맷 | 채널 | 소비자 |
 |---|--------|------|------|--------|
@@ -35,7 +35,7 @@
 - depth-motion(3채널째)은 **불요 확정** — 재투영 검증은 2D 모션 + 이전 프레임 `gb_depth` 비교로 성립.
 - shading-model-ID: 필요 시점(라이트맵/SH deferred 편입)에 **신규 R8_UINT**로 추가. objectid 비트 오염 금지. v1 미포함.
 
-## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.1 — 24-bit)
+## 3. `gb_objectid` 네임스페이스 (동결 제안, v1.2 — 24-bit)
 
 **단일 24-bit 인스턴스 ID 공간** (가용 16,777,215). 근거: TLAS 경로의 하드 제약 —
 - `AccelerationStructureInstance::id`는 `uint32_t`(`rendering_device.h:1384`)이나, Vulkan 드라이버가 이를 `VkAccelerationStructureInstanceKHR::instanceCustomIndex`(**24-bit 비트필드**, `vulkan_core.h:16241`)에 무마스킹 대입(`rendering_device_driver_vulkan.cpp:6448`) → 32-bit ID는 **조용히 절단**된다.
@@ -55,7 +55,7 @@
 
 Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터 LOD 오차의 화면 투영으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다. §4의 N-1 `gb_normal`/`gb_geo_normal` 보장도 같은 캐비엇과 같은 상한을 받는다.
 
-## 4.2 G2 파급 요구 (v1.2 신설 — G2 계약에 위임하되 여기 기록)
+### 4.2 G2 파급 요구 (v1.2 신설 — G2 계약에 위임하되 여기 기록)
 
 Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸브는 히트 지점 머티리얼 평가를 요구한다 → **지오 풀은 정점당 노멀 + UV를 보유해야 한다.** **탄젠트는 저장하지 않는다** — vis-buffer 리졸브는 트라이앵글 3정점의 위치+UV에서 탄젠트 프레임을 해석적으로 계산한다(정점 탄젠트도 화면공간 미분도 불요). 현 S1 DAG는 위치만 보존하므로 G2 확정 시 확장한다(L2).
 
@@ -78,7 +78,7 @@ Tier-1 8채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸�
 | 레인 | 담당 | 판정 | 비고 |
 |---|---|---|---|
 | L1 (리졸브·FB 배선) | C1 | ⬜ 대기 | §5 Metal 성립성 확인 포함 |
-| L2 (vis-buffer → 리졸브) | C2 | 🟡 조건부(v1.1) → **v1.2 반영으로 서명 요청** | 요구 ③(LOD-모션 계약)·④(G2 노멀+UV)·①(역참조 문구) 전건 반영 |
+| L2 (vis-buffer → 리졸브) | C2 | ✅ **승인/서명 (2026-08-25, v1.2)** | 27b 클러스터/7b 트라이앵글 정합을 빌더 테스트로 확인(클러스터당 ≤128 삼각형 강제) |
 | L3-대행 (ReSTIR/RT 입력) | C3 | 🟡 조건부(v1.1) → **v1.2 반영으로 서명 요청** | §4 히스토리 4종(A안) 반영 |
 | 메인테이너 | ✅ 제안 | | |
 
