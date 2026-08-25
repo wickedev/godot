@@ -47,7 +47,7 @@ static bool looks_like_spirv(const Vector<uint8_t> &p_bytes) {
 }
 
 static Vector<uint8_t> compile(const String &p_source, String *r_error) {
-	return compile_hlsl_shader(RenderingDeviceCommons::SHADER_STAGE_COMPUTE, p_source, "main",
+	return compile_hlsl_shader(RenderingDeviceCommons::SHADER_STAGE_COMPUTE, p_source, "main", Vector<String>(),
 			RenderingDeviceCommons::SHADER_LANGUAGE_VULKAN_VERSION_1_1,
 			RenderingDeviceCommons::SHADER_SPIRV_VERSION_1_3, r_error);
 }

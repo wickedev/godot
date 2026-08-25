@@ -48,4 +48,4 @@ Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_sta
 //
 // `p_entry_point` is the HLSL entry function. Unlike GLSL there is no `main` convention, though
 // the Jolt kernels do use it.
-Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error);
+Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, const Vector<String> &p_include_paths, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error);

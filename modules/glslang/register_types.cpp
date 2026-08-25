@@ -33,6 +33,7 @@
 #include "shader_compile.h"
 
 #include "core/config/engine.h"
+#include "core/io/file_access.h"
 
 #ifdef D3D12_ENABLED
 #include "core/os/os.h"
@@ -46,7 +47,54 @@ GODOT_GCC_WARNING_PUSH_AND_IGNORE("-Wshadow")
 
 GODOT_GCC_WARNING_POP
 
-static Vector<uint8_t> compile_shader(glslang::EShSource p_source_language, RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
+// Resolves #include through Godot's VFS rather than the OS, so res:// and engine-published paths
+// both work. glslang's own DirStackFileIncluder lives in StandAlone/ and is not vendored.
+class GodotShaderIncluder : public glslang::TShader::Includer {
+	Vector<String> search_paths;
+
+	IncludeResult *_resolve(const char *p_header, const String &p_relative_to) {
+		Vector<String> candidates;
+		if (!p_relative_to.is_empty()) {
+			candidates.push_back(p_relative_to.path_join(String::utf8(p_header)));
+		}
+		for (const String &root : search_paths) {
+			candidates.push_back(root.path_join(String::utf8(p_header)));
+		}
+
+		for (const String &candidate : candidates) {
+			if (!FileAccess::exists(candidate)) {
+				continue;
+			}
+			const CharString text = FileAccess::get_file_as_string(candidate).utf8();
+			// glslang keeps the buffer until releaseInclude(), so it has to outlive this call.
+			char *buffer = memnew_arr(char, text.length() + 1);
+			memcpy(buffer, text.get_data(), text.length() + 1);
+			return memnew(IncludeResult(std::string(candidate.utf8().get_data()), buffer, text.length(), buffer));
+		}
+		return nullptr;
+	}
+
+public:
+	explicit GodotShaderIncluder(const Vector<String> &p_search_paths) :
+			search_paths(p_search_paths) {}
+
+	IncludeResult *includeLocal(const char *header, const char *includer, size_t) override {
+		return _resolve(header, String::utf8(includer).get_base_dir());
+	}
+
+	IncludeResult *includeSystem(const char *header, const char *, size_t) override {
+		return _resolve(header, String());
+	}
+
+	void releaseInclude(IncludeResult *result) override {
+		if (result != nullptr) {
+			memdelete_arr(static_cast<char *>(result->userData));
+			memdelete(result);
+		}
+	}
+};
+
+static Vector<uint8_t> compile_shader(glslang::EShSource p_source_language, RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, const Vector<String> &p_include_paths, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
 	Vector<uint8_t> ret;
 	EShLanguage stages[RenderingDeviceCommons::SHADER_STAGE_MAX] = {
 		EShLangVertex,
@@ -110,7 +158,8 @@ static Vector<uint8_t> compile_shader(glslang::EShSource p_source_language, Rend
 	const int DefaultVersion = 100;
 
 	//parse
-	if (!shader.parse(GetDefaultResources(), DefaultVersion, false, messages)) {
+	GodotShaderIncluder includer(p_include_paths);
+	if (!shader.parse(GetDefaultResources(), DefaultVersion, false, messages, includer)) {
 		if (r_error) {
 			(*r_error) = "Failed parse:\n";
 			(*r_error) += shader.getInfoLog();
@@ -166,11 +215,11 @@ static Vector<uint8_t> compile_shader(glslang::EShSource p_source_language, Rend
 }
 
 Vector<uint8_t> compile_glslang_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
-	return compile_shader(glslang::EShSourceGlsl, p_stage, p_source_code, "main", p_language_version, p_spirv_version, r_error);
+	return compile_shader(glslang::EShSourceGlsl, p_stage, p_source_code, "main", Vector<String>(), p_language_version, p_spirv_version, r_error);
 }
 
-Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
-	return compile_shader(glslang::EShSourceHlsl, p_stage, p_source_code, p_entry_point, p_language_version, p_spirv_version, r_error);
+Vector<uint8_t> compile_hlsl_shader(RenderingDeviceCommons::ShaderStage p_stage, const String &p_source_code, const String &p_entry_point, const Vector<String> &p_include_paths, RenderingDeviceCommons::ShaderLanguageVersion p_language_version, RenderingDeviceCommons::ShaderSpirvVersion p_spirv_version, String *r_error) {
+	return compile_shader(glslang::EShSourceHlsl, p_stage, p_source_code, p_entry_point, p_include_paths, p_language_version, p_spirv_version, r_error);
 }
 
 void initialize_glslang_module(ModuleInitializationLevel p_level) {
