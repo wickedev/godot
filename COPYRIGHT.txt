@@ -448,14 +448,14 @@ License: Apache-2.0
 Files: thirdparty/steam_audio/pffft/*
 Comment: PFFFT (marton78 fork)
 Copyright: 2013, Julien Pommier
- 2019-2021, Hayati Ayguen
+ 2019, 2020, Hayati Ayguen
  2020, Dario Mambro
  2004, The University Corporation for Atmospheric Research ("UCAR")
 License: FFTPACK License (BSD-like)
 
 Files: thirdparty/steam_audio/pffft/simd/pf_neon_double_from_avx.h
 Comment: AVX-to-NEON translation header (bundled with PFFFT)
-Copyright: 2019, Huawei Technologies Co., Ltd.
+Copyright: 2020, Huawei Technologies Co., Ltd.
 License: Apache-2.0
 
 Files: thirdparty/steam_audio/src/sh/*
@@ -475,7 +475,7 @@ License: BSD-3-clause
 
 Files: thirdparty/steam_audio/mysofa/resampler/*
 Comment: Speex resampler (bundled with libmysofa)
-Copyright: 2003, 2007-2008, Jean-Marc Valin
+Copyright: 2002-2003, 2007-2008, Jean-Marc Valin
  2008, Thorvald Natvig
 License: BSD-3-clause
 

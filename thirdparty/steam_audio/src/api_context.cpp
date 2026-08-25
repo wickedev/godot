@@ -24,6 +24,11 @@ using namespace ipl;
 #include "phonon.h"
 #include "util.h"
 #include "phonon_interfaces.h"
+
+// [godot] Test-only fault-injection seam declared in phonon_interfaces.h
+// (see patches/0001). Null in production; smoke tests set it temporarily to
+// prove the C API catch(...) boundary converts foreign exceptions.
+extern "C" void (*ipl_godot_boundary_fault_hook)() = nullptr;
 #include "api_context.h"
 
 namespace api {

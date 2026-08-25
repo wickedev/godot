@@ -1,6 +1,50 @@
---- /tmp/orig_pi.h	2026-08-25 12:20:01
-+++ thirdparty/steam_audio/src/phonon_interfaces.h	2026-08-25 12:20:01
-@@ -720,26 +720,53 @@
+diff -ruN a/thirdparty/steam_audio/src/api_context.cpp b/thirdparty/steam_audio/src/api_context.cpp
+--- a/thirdparty/steam_audio/src/api_context.cpp	2026-08-25 13:00:16
++++ b/thirdparty/steam_audio/src/api_context.cpp	2026-08-25 13:00:16
+@@ -24,6 +24,11 @@
+ #include "phonon.h"
+ #include "util.h"
+ #include "phonon_interfaces.h"
++
++// [godot] Test-only fault-injection seam declared in phonon_interfaces.h
++// (see patches/0001). Null in production; smoke tests set it temporarily to
++// prove the C API catch(...) boundary converts foreign exceptions.
++extern "C" void (*ipl_godot_boundary_fault_hook)() = nullptr;
+ #include "api_context.h"
+ 
+ namespace api {
+@@ -82,6 +87,16 @@
+ IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
+                           IPLContext* context)
+ {
+-    return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
++    // [godot] C API boundary hardening: see patches/0001. createContext catches
++    // ipl::Exception internally but e.g. std::system_error from thread setup
++    // would otherwise unwind into no-exception engine TUs.
++    try
++    {
++        return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
++    }
++    catch (...)
++    {
++        return IPL_STATUS_FAILURE;
++    }
+ }
+ #endif
+diff -ruN a/thirdparty/steam_audio/src/phonon_interfaces.h b/thirdparty/steam_audio/src/phonon_interfaces.h
+--- a/thirdparty/steam_audio/src/phonon_interfaces.h	2026-08-25 13:00:16
++++ b/thirdparty/steam_audio/src/phonon_interfaces.h	2026-08-25 13:00:16
+@@ -716,30 +716,66 @@
+ 
+ #if !defined(STEAMAUDIO_SKIP_API_FUNCTIONS)
+ 
++// [godot] Test-only fault-injection seam (see patches/0001): when non-null it is
++// invoked inside iplContextRetain's guarded region, letting tests drive a foreign
++// (non-ipl::Exception) exception through the hardened catch(...) boundary below.
++// Defined (as null) in api_context.cpp; production code never sets it.
++extern "C" void (*ipl_godot_boundary_fault_hook)();
++
+ #if !defined(STEAMAUDIO_BUILDING_CORE)
  IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
                            IPLContext* context)
  {
@@ -26,10 +70,13 @@
 +    // so nothing may unwind past this function. See patches/0001.
 +    try
 +    {
-+        if (!context)
-+            return nullptr;
++        if (ipl_godot_boundary_fault_hook)
++            ipl_godot_boundary_fault_hook();
  
 -    return reinterpret_cast<IPLContext>(reinterpret_cast<api::IContext*>(context)->retain());
++        if (!context)
++            return nullptr;
++
 +        return reinterpret_cast<IPLContext>(reinterpret_cast<api::IContext*>(context)->retain());
 +    }
 +    catch (...)
@@ -62,7 +109,7 @@
  }
  
  IPLVector3 IPLCALL iplCalculateRelativeDirection(IPLContext context,
-@@ -748,128 +775,254 @@
+@@ -748,128 +784,254 @@
                                           IPLVector3 listenerAhead,
                                           IPLVector3 listenerUp)
  {
@@ -362,7 +409,7 @@
  }
  
  IPLerror IPLCALL iplOpenCLDeviceCreate(IPLContext context,
-@@ -877,10 +1030,19 @@
+@@ -877,10 +1039,19 @@
                                 IPLint32 index,
                                 IPLOpenCLDevice* device)
  {
@@ -385,7 +432,7 @@
  }
  
  IPLerror IPLCALL iplOpenCLDeviceCreateFromExisting(IPLContext context,
-@@ -888,112 +1050,220 @@
+@@ -888,112 +1059,220 @@
                                             void* irUpdateQueue,
                                             IPLOpenCLDevice* device)
  {
@@ -646,7 +693,7 @@
  }
  
  IPLerror IPLCALL iplSceneLoad(IPLContext context,
-@@ -1003,66 +1273,129 @@
+@@ -1003,66 +1282,129 @@
                        void* progressCallbackUserData,
                        IPLScene* scene)
  {
@@ -800,7 +847,7 @@
  }
  
  IPLerror IPLCALL iplStaticMeshLoad(IPLScene scene,
-@@ -1071,97 +1404,196 @@
+@@ -1071,97 +1413,196 @@
                             void* progressCallbackUserData,
                             IPLStaticMesh* staticMesh)
  {
@@ -1033,7 +1080,7 @@
  }
  
  IPLerror IPLCALL iplAudioBufferAllocate(IPLContext context,
-@@ -1169,59 +1601,113 @@
+@@ -1169,59 +1610,113 @@
                                  IPLint32 numSamples,
                                  IPLAudioBuffer* audioBuffer)
  {
@@ -1165,7 +1212,7 @@
  }
  
  void IPLCALL iplAudioBufferConvertAmbisonics(IPLContext context,
-@@ -1230,10 +1716,19 @@
+@@ -1230,10 +1725,19 @@
                                       IPLAudioBuffer* in,
                                       IPLAudioBuffer* out)
  {
@@ -1188,7 +1235,7 @@
  }
  
  IPLerror IPLCALL iplHRTFCreate(IPLContext context,
-@@ -1241,28 +1736,55 @@
+@@ -1241,28 +1745,55 @@
                         IPLHRTFSettings* hrtfSettings,
                         IPLHRTF* hrtf)
  {
@@ -1254,7 +1301,7 @@
  }
  
  IPLerror IPLCALL iplPanningEffectCreate(IPLContext context,
-@@ -1270,36 +1792,72 @@
+@@ -1270,36 +1801,72 @@
                                  IPLPanningEffectSettings* effectSettings,
                                  IPLPanningEffect* effect)
  {
@@ -1340,7 +1387,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplPanningEffectApply(IPLPanningEffect effect,
-@@ -1307,30 +1865,57 @@
+@@ -1307,30 +1874,57 @@
                                            IPLAudioBuffer* in,
                                            IPLAudioBuffer* out)
  {
@@ -1409,7 +1456,7 @@
  }
  
  IPLerror IPLCALL iplBinauralEffectCreate(IPLContext context,
-@@ -1338,36 +1923,72 @@
+@@ -1338,36 +1932,72 @@
                                   IPLBinauralEffectSettings* effectSettings,
                                   IPLBinauralEffect* effect)
  {
@@ -1435,15 +1482,14 @@
  {
 -    if (!effect)
 -        return nullptr;
--
--    return reinterpret_cast<IPLBinauralEffect>(reinterpret_cast<api::IBinauralEffect*>(effect)->retain());
 +    // [godot] C API boundary hardening: the engine builds without exceptions,
 +    // so nothing may unwind past this function. See patches/0001.
 +    try
 +    {
 +        if (!effect)
 +            return nullptr;
-+
+ 
+-    return reinterpret_cast<IPLBinauralEffect>(reinterpret_cast<api::IBinauralEffect*>(effect)->retain());
 +        return reinterpret_cast<IPLBinauralEffect>(reinterpret_cast<api::IBinauralEffect*>(effect)->retain());
 +    }
 +    catch (...)
@@ -1496,7 +1542,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplBinauralEffectApply(IPLBinauralEffect effect,
-@@ -1375,30 +1996,57 @@
+@@ -1375,30 +2005,57 @@
                                             IPLAudioBuffer* in,
                                             IPLAudioBuffer* out)
  {
@@ -1565,7 +1611,7 @@
  }
  
  IPLerror IPLCALL iplVirtualSurroundEffectCreate(IPLContext context,
-@@ -1406,36 +2054,72 @@
+@@ -1406,36 +2063,72 @@
                                          IPLVirtualSurroundEffectSettings* effectSettings,
                                          IPLVirtualSurroundEffect* effect)
  {
@@ -1651,7 +1697,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplVirtualSurroundEffectApply(IPLVirtualSurroundEffect effect,
-@@ -1443,30 +2127,57 @@
+@@ -1443,30 +2136,57 @@
                                                    IPLAudioBuffer* in,
                                                    IPLAudioBuffer* out)
  {
@@ -1720,7 +1766,7 @@
  }
  
  IPLerror IPLCALL iplAmbisonicsEncodeEffectCreate(IPLContext context,
-@@ -1474,36 +2185,72 @@
+@@ -1474,36 +2194,72 @@
                                           IPLAmbisonicsEncodeEffectSettings* effectSettings,
                                           IPLAmbisonicsEncodeEffect* effect)
  {
@@ -1806,7 +1852,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplAmbisonicsEncodeEffectApply(IPLAmbisonicsEncodeEffect effect,
-@@ -1511,30 +2258,57 @@
+@@ -1511,30 +2267,57 @@
                                                     IPLAudioBuffer* in,
                                                     IPLAudioBuffer* out)
  {
@@ -1875,7 +1921,7 @@
  }
  
  IPLerror IPLCALL iplAmbisonicsPanningEffectCreate(IPLContext context,
-@@ -1542,36 +2316,72 @@
+@@ -1542,36 +2325,72 @@
                                            IPLAmbisonicsPanningEffectSettings* effectSettings,
                                            IPLAmbisonicsPanningEffect* effect)
  {
@@ -1961,7 +2007,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplAmbisonicsPanningEffectApply(IPLAmbisonicsPanningEffect effect,
-@@ -1579,30 +2389,57 @@
+@@ -1579,30 +2398,57 @@
                                                      IPLAudioBuffer* in,
                                                      IPLAudioBuffer* out)
  {
@@ -2030,7 +2076,7 @@
  }
  
  IPLerror IPLCALL iplAmbisonicsBinauralEffectCreate(IPLContext context,
-@@ -1610,36 +2447,72 @@
+@@ -1610,36 +2456,72 @@
                                             IPLAmbisonicsBinauralEffectSettings* effectSettings,
                                             IPLAmbisonicsBinauralEffect* effect)
  {
@@ -2116,7 +2162,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplAmbisonicsBinauralEffectApply(IPLAmbisonicsBinauralEffect effect,
-@@ -1647,30 +2520,57 @@
+@@ -1647,30 +2529,57 @@
                                                       IPLAudioBuffer* in,
                                                       IPLAudioBuffer* out)
  {
@@ -2185,7 +2231,7 @@
  }
  
  IPLerror IPLCALL iplAmbisonicsRotationEffectCreate(IPLContext context,
-@@ -1678,36 +2578,72 @@
+@@ -1678,36 +2587,72 @@
                                             IPLAmbisonicsRotationEffectSettings* effectSettings,
                                             IPLAmbisonicsRotationEffect* effect)
  {
@@ -2271,7 +2317,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplAmbisonicsRotationEffectApply(IPLAmbisonicsRotationEffect effect,
-@@ -1715,30 +2651,57 @@
+@@ -1715,30 +2660,57 @@
                                                       IPLAudioBuffer* in,
                                                       IPLAudioBuffer* out)
  {
@@ -2340,7 +2386,7 @@
  }
  
  IPLerror IPLCALL iplAmbisonicsDecodeEffectCreate(IPLContext context,
-@@ -1746,36 +2709,72 @@
+@@ -1746,36 +2718,72 @@
                                           IPLAmbisonicsDecodeEffectSettings* effectSettings,
                                           IPLAmbisonicsDecodeEffect* effect)
  {
@@ -2426,7 +2472,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplAmbisonicsDecodeEffectApply(IPLAmbisonicsDecodeEffect effect,
-@@ -1783,30 +2782,57 @@
+@@ -1783,30 +2791,57 @@
                                                     IPLAudioBuffer* in,
                                                     IPLAudioBuffer* out)
  {
@@ -2495,7 +2541,7 @@
  }
  
  IPLerror IPLCALL iplDirectEffectCreate(IPLContext context,
-@@ -1814,36 +2840,72 @@
+@@ -1814,36 +2849,72 @@
                                 IPLDirectEffectSettings* effectSettings,
                                 IPLDirectEffect* effect)
  {
@@ -2581,7 +2627,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplDirectEffectApply(IPLDirectEffect effect,
-@@ -1851,30 +2913,57 @@
+@@ -1851,30 +2922,57 @@
                                           IPLAudioBuffer* in,
                                           IPLAudioBuffer* out)
  {
@@ -2650,7 +2696,7 @@
  }
  
  IPLerror IPLCALL iplReflectionEffectCreate(IPLContext context,
-@@ -1882,36 +2971,72 @@
+@@ -1882,36 +2980,72 @@
                                     IPLReflectionEffectSettings* effectSettings,
                                     IPLReflectionEffect* effect)
  {
@@ -2736,7 +2782,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplReflectionEffectApply(IPLReflectionEffect effect,
-@@ -1920,31 +3045,58 @@
+@@ -1920,31 +3054,58 @@
                                               IPLAudioBuffer* out,
                                               IPLReflectionMixer mixer)
  {
@@ -2807,7 +2853,7 @@
  }
  
  IPLerror IPLCALL iplReflectionMixerCreate(IPLContext context,
-@@ -1952,46 +3104,91 @@
+@@ -1952,46 +3113,91 @@
                                    IPLReflectionEffectSettings* effectSettings,
                                    IPLReflectionMixer* mixer)
  {
@@ -2915,7 +2961,7 @@
  }
  
  IPLerror IPLCALL iplPathEffectCreate(IPLContext context,
-@@ -1999,36 +3196,72 @@
+@@ -1999,36 +3205,72 @@
                               IPLPathEffectSettings* effectSettings,
                               IPLPathEffect* effect)
  {
@@ -3001,7 +3047,7 @@
  }
  
  IPLAudioEffectState IPLCALL iplPathEffectApply(IPLPathEffect effect,
-@@ -2036,205 +3269,412 @@
+@@ -2036,205 +3278,412 @@
                                         IPLAudioBuffer* in,
                                         IPLAudioBuffer* out)
  {
@@ -3487,7 +3533,7 @@
  }
  
  void IPLCALL iplReflectionsBakerBake(IPLContext context,
-@@ -2242,18 +3682,36 @@
+@@ -2242,18 +3691,36 @@
                               IPLProgressCallback progressCallback,
                               void* userData)
  {
@@ -3530,7 +3576,7 @@
  }
  
  void IPLCALL iplPathBakerBake(IPLContext context,
-@@ -2261,177 +3719,357 @@
+@@ -2261,177 +3728,357 @@
                        IPLProgressCallback progressCallback,
                        void* userData)
  {
@@ -3950,7 +3996,7 @@
  }
  
  IPLfloat32 IPLCALL iplDistanceAttenuationCalculate(IPLContext context,
-@@ -2439,10 +4077,19 @@
+@@ -2439,10 +4086,19 @@
                                             IPLVector3 listener,
                                             IPLDistanceAttenuationModel* model)
  {
@@ -3973,7 +4019,7 @@
  }
  
  void IPLCALL iplAirAbsorptionCalculate(IPLContext context,
-@@ -2451,10 +4098,19 @@
+@@ -2451,10 +4107,19 @@
                                 IPLAirAbsorptionModel* model,
                                 IPLfloat32* airAbsorption)
  {
@@ -3996,7 +4042,7 @@
  }
  
  IPLfloat32 IPLCALL iplDirectivityCalculate(IPLContext context,
-@@ -2462,261 +4118,549 @@
+@@ -2462,261 +4127,549 @@
                                     IPLVector3 listener,
                                     IPLDirectivity* model)
  {
@@ -4645,23 +4691,3 @@
  }
  #endif
  
---- /tmp/orig_ac.cpp	2026-08-25 12:20:01
-+++ thirdparty/steam_audio/src/api_context.cpp	2026-08-25 12:20:01
-@@ -82,6 +82,16 @@
- IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
-                           IPLContext* context)
- {
--    return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
-+    // [godot] C API boundary hardening: see patches/0001. createContext catches
-+    // ipl::Exception internally but e.g. std::system_error from thread setup
-+    // would otherwise unwind into no-exception engine TUs.
-+    try
-+    {
-+        return api::CContext::createContext(settings, reinterpret_cast<api::IContext**>(context));
-+    }
-+    catch (...)
-+    {
-+        return IPL_STATUS_FAILURE;
-+    }
- }
- #endif

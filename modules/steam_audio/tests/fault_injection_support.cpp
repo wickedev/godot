@@ -1,5 +1,5 @@
 /**************************************************************************/
-/*  steam_audio_smoke.h                                                      */
+/*  fault_injection_support.cpp                                           */
 /**************************************************************************/
 /*                         This file is part of:                          */
 /*                             GODOT ENGINE                               */
@@ -28,27 +28,28 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
-#pragma once
+// This TU is compiled with exceptions enabled (see SCsub): the throw below
+// must be able to unwind into the vendored C API boundary's catch(...).
+// Everything else in the module builds with the engine's no-exceptions flags.
 
-// Bridge for doctest TUs, which build outside the module env and must not see
-// phonon types. Implemented in steam_audio_smoke.cpp (module env).
+#include <stdexcept>
+
+// Test-only seam added to the vendored tree by patches/0001; invoked (when set)
+// inside iplContextRetain's guarded region.
+extern "C" void (*ipl_godot_boundary_fault_hook)();
 
 namespace SteamAudioSmoke {
 
-struct BinauralResult {
-	bool hrtf_created = false;
-	bool effect_created = false;
-	bool all_finite = false;
-	bool any_nonzero = false;
-};
+static void _throw_injected_fault() {
+	throw std::runtime_error("injected boundary fault");
+}
 
-bool context_roundtrip();
-BinauralResult binaural_impulse();
-bool simulator_roundtrip();
-bool boundary_rejects_invalid();
-bool boundary_catches_internal_throw();
-// Defined in fault_injection_support.cpp (compiled with exceptions enabled).
-void arm_boundary_fault_hook();
-void disarm_boundary_fault_hook();
+void arm_boundary_fault_hook() {
+	ipl_godot_boundary_fault_hook = &_throw_injected_fault;
+}
+
+void disarm_boundary_fault_hook() {
+	ipl_godot_boundary_fault_hook = nullptr;
+}
 
 } // namespace SteamAudioSmoke

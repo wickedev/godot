@@ -98,7 +98,16 @@ env.modules_sources += thirdparty_obj
 module_obj = []
 env_steam.add_source_files(module_obj, "*.cpp")
 if env["tests"]:
-    env_steam.add_source_files(module_obj, "tests/*.cpp")
+    env_steam.add_source_files(module_obj, "tests/steam_audio_smoke.cpp")
+    # The fault-injection helper throws (into the vendored boundary's catch),
+    # so this one TU builds with exceptions like the thirdparty sources.
+    env_fault = env_steam.Clone()
+    if env.msvc:
+        env_fault.Append(CXXFLAGS=["/EHsc"])
+        env_fault["CPPDEFINES"] = [d for d in env_fault["CPPDEFINES"] if not (isinstance(d, tuple) and d[0] == "_HAS_EXCEPTIONS")]
+    else:
+        env_fault.Append(CXXFLAGS=["-fexceptions"])
+    env_fault.add_source_files(module_obj, "tests/fault_injection_support.cpp")
 env.modules_sources += module_obj
 
 env.Depends(module_obj, thirdparty_obj)

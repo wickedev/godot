@@ -150,23 +150,33 @@ bool boundary_rejects_invalid() {
 }
 
 bool boundary_catches_internal_throw() {
-	// Fault injection through a genuinely throwing seam: an absurd allocation
-	// makes the internal allocator throw, which must be converted into an error
-	// return by the hardened catch(...) boundary instead of unwinding into the
-	// engine. (The guard-return cases above never reach the catch.)
+	// Deterministic fault injection: a test-only seam (patches/0001) inside
+	// iplContextRetain's guarded region throws a foreign std::runtime_error --
+	// not an ipl::Exception, so no internal handler can convert it -- which the
+	// hardened catch(...) boundary must turn into the null-sentinel return
+	// instead of letting it unwind into the exceptions-disabled engine.
+	// (The guard-return cases above never reach the catch.)
 	ContextScope scope;
 	if (!scope.context) {
 		return false;
 	}
-	IPLAudioBuffer huge = {};
-	const IPLerror err = iplAudioBufferAllocate(scope.context, 1 << 24, 1 << 24, &huge);
-	if (err == IPL_STATUS_SUCCESS) {
-		// Machine with >1 exabyte of RAM, apparently. Clean up and report
-		// inconclusive-but-alive rather than pretend the catch path ran.
-		iplAudioBufferFree(scope.context, &huge);
-		return true;
+	arm_boundary_fault_hook();
+	IPLContext faulted = iplContextRetain(scope.context);
+	disarm_boundary_fault_hook();
+	if (faulted != nullptr) {
+		// The hook did not fire; balance the refcount and fail loudly rather
+		// than report a catch path that never ran.
+		iplContextRelease(&faulted);
+		return false;
 	}
-	return err != IPL_STATUS_SUCCESS;
+	// With the hook cleared the very same call must work again: the boundary
+	// converted the exception without corrupting the context.
+	IPLContext again = iplContextRetain(scope.context);
+	const bool intact = again == scope.context;
+	if (again != nullptr) {
+		iplContextRelease(&again);
+	}
+	return intact;
 }
 
 } // namespace SteamAudioSmoke

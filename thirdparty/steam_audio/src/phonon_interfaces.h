@@ -716,6 +716,12 @@ public:
 
 #if !defined(STEAMAUDIO_SKIP_API_FUNCTIONS)
 
+// [godot] Test-only fault-injection seam (see patches/0001): when non-null it is
+// invoked inside iplContextRetain's guarded region, letting tests drive a foreign
+// (non-ipl::Exception) exception through the hardened catch(...) boundary below.
+// Defined (as null) in api_context.cpp; production code never sets it.
+extern "C" void (*ipl_godot_boundary_fault_hook)();
+
 #if !defined(STEAMAUDIO_BUILDING_CORE)
 IPLerror IPLCALL iplContextCreate(IPLContextSettings* settings,
                           IPLContext* context)
@@ -739,6 +745,9 @@ IPLContext IPLCALL iplContextRetain(IPLContext context)
     // so nothing may unwind past this function. See patches/0001.
     try
     {
+        if (ipl_godot_boundary_fault_hook)
+            ipl_godot_boundary_fault_hook();
+
         if (!context)
             return nullptr;
 
