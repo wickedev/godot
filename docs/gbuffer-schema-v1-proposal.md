@@ -26,12 +26,12 @@
 | 0 | `gb_albedo` | RGBA8 unorm | albedo.rgb + alpha | 리졸브·AOV |
 | 1 | `gb_normal` | **RGBA16 unorm** | **.xy = 셰이딩 노멀 oct / .zw = 지오메트릭 노멀 oct** (v1.3 병합 — 두 노멀은 리저버 기각에서 항상 함께 읽힘) | 리졸브·ReSTIR·SSR·AOV |
 | 2 | `gb_orm` | RGBA8 unorm | ao / roughness / metallic / sss-mask | 리졸브·ReSTIR·AOV |
-| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택)** | 리졸브·ReSTIR·AOV |
+| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택. 클리어 값 = 0 → "잔차 없음")** | 리졸브·ReSTIR·AOV |
 | 4 | `gb_depth` | R32F | view-space Z (`-vertex.z`) | 위치 재구성·전 소비자 |
 | 5 | `gb_objectid` | R32_UINT (**유효 24-bit**, §3) | instance ID | Nanite 리졸브·Cryptomatte·RT 히트 매칭 |
 | 6 | `gb_motion` | RG16F | screen-space motion, **NDC 단위·지터 제거** | TAA·ReSTIR·AOV |
 
-**슬롯 총 7 / MRT 상한 8 — 여유 1 확보.** 비-Nanite opaque의 프래그먼트 MRT emit이 하드캡 8이므로(Metal 실측 8·D3D12 8·데스크톱 Vulkan 통상 8) 이 여유가 shading-model-ID의 실행 가능성을 담보한다.
+**슬롯 총 7 / MRT 상한 8 — 여유 1 확보.** 비-Nanite opaque의 프래그먼트 MRT emit이 하드캡 8이므로(**3백엔드 실측 확정**: Metal 8 · D3D12 8 · Vulkan/GB10 `maxColorAttachments=8`) 이 여유가 shading-model-ID의 실행 가능성을 담보한다. Tier-1 전 포맷 + 예약 R8_UINT의 color-attachment 성립도 Vulkan 실측 확인(C3). 주의: `R32_UINT`/`R8_UINT`는 blend 불가 — GBuffer write는 블렌딩하지 않으므로 무해하나, 해당 어태치먼트에 블렌드를 켜면 파이프라인 생성이 실패한다(기록).
 
 - 대역폭(1080p): 4+8+4+8+4+4+4 = **36 B/px ≈ 75 MB**, 4K ≈ 299 MB — v1.2와 바이트 동일, 슬롯만 8→7. 지오 노멀 유지 근거(depth-미분 재구성의 에지 노이즈 회피)는 불변.
 - depth-motion(3채널째)은 **불요 확정** — 재투영 검증은 2D 모션 + 이전 프레임 `gb_depth` 비교로 성립.
@@ -87,7 +87,7 @@ Tier-1 7채널 중 `gb_albedo`·`gb_orm`·`gb_emission`·`gb_normal`의 리졸�
 |---|---|---|---|
 | L1 (리졸브·FB 배선) | C1 | ✅ **승인/서명 (2026-08-25, v1.3)** | Tier-1 7포맷 전부 Metal 실측(COLOR_ATTACHMENT+STORAGE 7/7) 후 서명. tlas_build 검증·emission.a 배선 L1 접수 |
 | L2 (vis-buffer → 리졸브) | C2 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 — 리졸브 기록 채널 7종·바이트 동일) | 27b/7b 정합 빌더 테스트 확인 |
-| L3-대행 (ReSTIR/RT 입력) | C3 | ✅ v1.2 서명 → **v1.3 재확인 요청** (노멀 병합 + §5.1-(i) 확정 — 본인 권고안) | v1.0 🔴 → v1.1 🟡 → v1.2 ✅ |
+| L3-대행 (ReSTIR/RT 입력) | C3 | ✅ **v1.3 재확인 (2026-08-25)** — 병합은 ReSTIR에 개선(1페치 2노멀). MRT=8을 Vulkan/GB10에서 3플랫폼째 확증 + Tier-1 전 포맷 color-attach 실측 | v1.0 🔴 → v1.1 🟡 → v1.2 ✅ → v1.3 ✅ |
 | 메인테이너 | ✅ 제안 | | |
 
 3인 승인 시 이 문서가 **G1 동결본**이 되고, 이후 변경은 4레인 합의 + 로드맵 개정을 요구한다.
