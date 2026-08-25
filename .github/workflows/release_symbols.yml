@@ -1,7 +1,9 @@
 name: 🛰️ Release Templates + Symbol Upload
 on:
   push:
-    tags: ["v*"]
+    # This fork keeps upstream Godot's tag convention (`4.7.1-stable`); there are no
+    # `v*` tags. Confirmed with the maintainer as the fork's tag policy.
+    tags: ["*-stable"]
   workflow_dispatch:
     inputs:
       sentry-release:
@@ -16,14 +18,14 @@ on:
 
 # Global Settings
 #
-# Unlike the PR validation workflows, this one builds *shippable* export templates
-# and keeps their debug information. `debug_symbols=yes separate_debug_symbols=yes`
-# strips the shipped binary and writes the debug info to a sidecar, so players get a
-# normal-sized binary while Sentry still gets a symbolizable stack.
+# Unlike the PR validation workflows, this one builds *shippable* export templates and
+# keeps their debug information. `debug_symbols=yes separate_debug_symbols=yes` strips
+# the shipped binary and writes debug info to a sidecar, so players get a normal-sized
+# binary while Sentry still gets a symbolizable stack.
 #
 # This is intentionally NOT folded into linux/windows/macos_builds.yml: those run on
 # every PR, and linux_builds.yml already documents hitting the 14 GB runner limit with
-# debug symbols enabled. Release symbol builds run on tags only.
+# debug symbols enabled. Release symbol builds run on release tags only.
 env:
   SCONS_FLAGS: >-
     production=yes
@@ -81,20 +83,21 @@ jobs:
           # sentry-cli derives release/commit association from git history.
           fetch-depth: 0
 
-      - name: Free disk space (Linux)
-        if: matrix.platform == 'linuxbsd'
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          df -h
-
-      - name: Linux dependencies
+      # Runner preparation below mirrors the per-platform PR workflows. The symbols we
+      # upload must come from a binary built with the same feature set as the shipped
+      # one, so these steps have to stay in sync with linux/windows/macos_builds.yml.
+      - name: Setup dependencies (Linux)
         if: matrix.platform == 'linuxbsd'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libx11-dev libxcursor-dev libxinerama-dev \
-            libgl1-mesa-dev libglu-dev libasound2-dev libpulse-dev libudev-dev \
-            libxi-dev libxrandr-dev libwayland-dev
+          sudo apt-get install libwayland-bin
+
+      - name: Free disk space on runner (Linux)
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          echo "Disk usage before:" && df -h
+          sudo rm -rf /usr/local/lib/android
+          echo "Disk usage after:" && df -h
 
       - name: Restore Godot build cache
         uses: ./.github/actions/godot-cache-restore
@@ -105,21 +108,79 @@ jobs:
       - name: Setup Python and SCons
         uses: ./.github/actions/godot-deps
 
-      - name: Compilation
-        if: matrix.platform != 'macos'
+      - name: Download Direct3D 12 SDK components
+        if: matrix.platform == 'windows'
+        shell: sh
+        id: d3d12-sdk
+        run: |
+          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
+            echo "D3D12_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Windows: Direct3D 12 SDK installation failed, building without Direct3D 12 support."
+            echo "D3D12_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Download pre-built ANGLE
+        if: matrix.platform == 'windows' || matrix.platform == 'macos'
+        shell: sh
+        id: angle-sdk
+        run: |
+          if python ./misc/scripts/install_angle.py; then
+            echo "ANGLE_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::ANGLE SDK installation failed, building without ANGLE support."
+            echo "ANGLE_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download pre-built AccessKit
+        if: matrix.platform == 'windows' || matrix.platform == 'macos'
+        shell: sh
+        id: accesskit-sdk
+        run: |
+          if python ./misc/scripts/install_accesskit.py; then
+            echo "ACCESSKIT_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::AccessKit SDK installation failed, building without AccessKit support."
+            echo "ACCESSKIT_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Vulkan SDK (macOS)
+        if: matrix.platform == 'macos'
+        id: vulkan-sdk
+        run: |
+          if sh misc/scripts/install_vulkan_sdk_macos.sh; then
+            echo "VULKAN_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::macOS: Vulkan SDK installation failed, building without Vulkan support."
+            echo "VULKAN_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Compilation (Linux)
+        if: matrix.platform == 'linuxbsd'
         uses: ./.github/actions/godot-build
         with:
           scons-flags: ${{ env.SCONS_FLAGS }}
-          platform: ${{ matrix.platform }}
+          platform: linuxbsd
           target: ${{ matrix.target }}
 
-      # macOS ships a universal binary. `dsymutil` runs per-arch, so both slices must
-      # be built for the dSYM set to cover the shipped lipo'd binary.
+      - name: Compilation (Windows)
+        if: matrix.platform == 'windows'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
+          platform: windows
+          target: ${{ matrix.target }}
+
+      # macOS ships a universal binary. `dsymutil` runs per-arch, so both slices must be
+      # built for the dSYM set to cover the shipped binary.
       - name: Compilation (macOS x86_64)
         if: matrix.platform == 'macos'
         uses: ./.github/actions/godot-build
         with:
-          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 metal=no
+          # Silence warning about Metal not being supported in x86_64 builds using `metal=no`.
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 metal=no vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
           platform: macos
           target: ${{ matrix.target }}
 
@@ -127,7 +188,7 @@ jobs:
         if: matrix.platform == 'macos'
         uses: ./.github/actions/godot-build
         with:
-          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64 vulkan=${{ steps.vulkan-sdk.outputs.VULKAN_ENABLED }} accesskit=${{ steps.accesskit-sdk.outputs.ACCESSKIT_ENABLED }} angle=${{ steps.angle-sdk.outputs.ANGLE_ENABLED }}
           platform: macos
           target: ${{ matrix.target }}
 
@@ -137,83 +198,167 @@ jobs:
           cache-name: ${{ matrix.cache-name }}
         continue-on-error: true
 
-      # Fail loudly rather than silently shipping unsymbolizable builds. A stripped
-      # ELF with no build ID cannot be matched to its `.debugsymbols` file by Sentry,
-      # and that failure is invisible until the first field crash comes back as a
-      # bare address list.
-      - name: Verify symbol artifacts (Linux)
+      # Verification below asserts that each shipped binary and its sidecar carry the
+      # SAME debug identifier -- not merely that both files exist. A mismatched pair
+      # uploads cleanly and then fails silently at the first field crash, which is the
+      # exact failure runtime-misc section 7(e) warns about.
+      - name: Verify symbol correspondence (Linux)
         if: matrix.platform == 'linuxbsd'
+        shell: bash
         run: |
-          set -eu
+          set -euo pipefail
           shopt -s nullglob
-          syms=(bin/*.debugsymbols)
-          if [ ${#syms[@]} -eq 0 ]; then
-            echo "::error::No .debugsymbols produced; separate_debug_symbols did not run."
-            exit 1
-          fi
+          checked=0
           for bin in bin/godot.linuxbsd.*; do
             case "$bin" in *.debugsymbols) continue ;; esac
-            if ! file "$bin" | grep -q ELF; then continue; fi
-            if ! readelf -n "$bin" | grep -q "Build ID"; then
+            file "$bin" | grep -q ELF || continue
+            sym="$bin.debugsymbols"
+            if [ ! -f "$sym" ]; then
+              echo "::error::$bin has no matching .debugsymbols sidecar."
+              exit 1
+            fi
+            bin_id=$(readelf -n "$bin" | awk '/Build ID/ {print $NF}')
+            sym_id=$(readelf -n "$sym" | awk '/Build ID/ {print $NF}')
+            if [ -z "$bin_id" ]; then
               echo "::error::$bin has no GNU build ID; Sentry cannot match its symbols."
               exit 1
             fi
-            echo "$bin: $(readelf -n "$bin" | grep 'Build ID')"
+            if [ "$bin_id" != "$sym_id" ]; then
+              echo "::error::build ID mismatch: $bin=$bin_id vs $sym=$sym_id"
+              exit 1
+            fi
+            echo "OK $bin <-> $sym  build-id=$bin_id"
+            checked=$((checked + 1))
           done
-        shell: bash
-
-      - name: Verify symbol artifacts (Windows)
-        if: matrix.platform == 'windows'
-        run: |
-          $pdbs = Get-ChildItem bin/*.pdb -ErrorAction SilentlyContinue
-          if (-not $pdbs) {
-            Write-Output "::error::No .pdb produced; MSVC debug symbols are missing."
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::No Linux binaries verified; the build produced nothing to symbolicate."
             exit 1
-          }
-          $pdbs | ForEach-Object { Write-Output $_.Name }
+          fi
 
-      - name: Verify symbol artifacts (macOS)
+      # lipo preserves per-slice Mach-O UUIDs, so a per-arch dSYM remains valid for the
+      # universal binary. We build the universal binary here and prove that: every slice
+      # UUID must be covered by an uploaded dSYM.
+      - name: Verify symbol correspondence (macOS)
         if: matrix.platform == 'macos'
+        shell: bash
         run: |
-          set -eu
-          if [ -z "$(ls -d bin/*.dSYM 2>/dev/null)" ]; then
+          set -euo pipefail
+          shopt -s nullglob
+          prefix="bin/godot.macos.${{ matrix.target }}"
+          arch_bins=()
+          for a in x86_64 arm64; do
+            [ -f "$prefix.$a" ] && arch_bins+=("$prefix.$a")
+          done
+          if [ ${#arch_bins[@]} -lt 2 ]; then
+            echo "::error::Expected both macOS arch slices; found ${#arch_bins[@]}."
+            exit 1
+          fi
+          lipo -create "${arch_bins[@]}" -output "$prefix.universal"
+          echo "Created $prefix.universal"
+
+          dsyms=("$prefix".*.dSYM)
+          if [ ${#dsyms[@]} -eq 0 ]; then
             echo "::error::No .dSYM produced; separate_debug_symbols did not run."
             exit 1
           fi
-          ls -d bin/*.dSYM
-        shell: bash
+          dsym_uuids=$(for d in "${dsyms[@]}"; do dwarfdump --uuid "$d"; done | awk '{print $2}' | sort -u)
+          echo "dSYM UUIDs:"; echo "$dsym_uuids"
+
+          # Every UUID in the shipped universal binary must have a dSYM.
+          while read -r uuid; do
+            [ -n "$uuid" ] || continue
+            if ! grep -qx "$uuid" <<<"$dsym_uuids"; then
+              echo "::error::Universal binary slice UUID $uuid has no matching dSYM."
+              exit 1
+            fi
+            echo "OK slice $uuid covered by a dSYM"
+          done < <(dwarfdump --uuid "$prefix.universal" | awk '{print $2}')
+
+      # MSVC always emits a separate .pdb; `separate_debug_symbols` does not apply. We
+      # assert pairing by basename here. Full PDB GUID+age equality is asserted by
+      # sentry-cli during upload, which rejects a PDB that does not match its binary.
+      - name: Verify symbol correspondence (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $bins = Get-ChildItem bin/*.exe -ErrorAction SilentlyContinue
+          if (-not $bins) {
+            Write-Output "::error::No .exe produced."
+            exit 1
+          }
+          foreach ($b in $bins) {
+            $pdb = [System.IO.Path]::ChangeExtension($b.FullName, ".pdb")
+            if (-not (Test-Path $pdb)) {
+              Write-Output "::error::$($b.Name) has no matching .pdb."
+              exit 1
+            }
+            Write-Output "OK $($b.Name) <-> $([System.IO.Path]::GetFileName($pdb))"
+          }
 
       # Installed via npm rather than the get-cli shell script: the latter writes to
       # /usr/local/bin, which is not reliably writable under Git Bash on the Windows
       # runner. Node is preinstalled on all three runner images.
+      #
+      # continue-on-error so an npm outage cannot fail a build-only dry run; the upload
+      # step below fails hard if sentry-cli is genuinely needed and missing.
       - name: Install sentry-cli
         run: npm install -g @sentry/cli@2
         shell: bash
+        continue-on-error: true
 
+      # Runs on every release tag, and on manual runs unless `upload` was unchecked.
+      # `inputs.upload` is null on a tag push and GitHub casts both null and false to 0,
+      # so a bare `inputs.upload != false` would skip the automatic path entirely.
       - name: Upload debug information files to Sentry
-        if: ${{ inputs.upload != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_RELEASE: ${{ inputs.sentry-release || github.sha }}
-        run: |
-          set -eu
-          if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
-            echo "::warning::Sentry credentials not configured (SENTRY_AUTH_TOKEN secret, SENTRY_ORG/SENTRY_PROJECT vars). Skipping upload."
-            exit 0
-          fi
-          # `--include-sources` embeds source context for frames in our own code, which
-          # is what makes a Nanite/renderer crash readable without checking out the tag.
-          sentry-cli debug-files upload \
-            --include-sources \
-            --wait \
-            bin/
-          sentry-cli releases new "$SENTRY_RELEASE" || true
-          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto || true
-          sentry-cli releases finalize "$SENTRY_RELEASE" || true
         shell: bash
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${SENTRY_AUTH_TOKEN:-}" ] || missing="$missing SENTRY_AUTH_TOKEN"
+          [ -n "${SENTRY_ORG:-}" ] || missing="$missing SENTRY_ORG"
+          [ -n "${SENTRY_PROJECT:-}" ] || missing="$missing SENTRY_PROJECT"
+          if [ -n "$missing" ]; then
+            # A release tag that silently ships without symbols is the failure mode this
+            # whole workflow exists to prevent, so never fail open on the automatic path.
+            echo "::error::Sentry credentials missing:$missing"
+            exit 1
+          fi
+          command -v sentry-cli >/dev/null || { echo "::error::sentry-cli install failed."; exit 1; }
+          # `--include-sources` embeds source context for frames in our own code, which is
+          # what makes a Nanite/renderer crash readable without checking out the tag.
+          sentry-cli debug-files upload --include-sources --wait bin/
 
       - name: Upload build artifact
         uses: ./.github/actions/upload-artifact
         with:
           name: ${{ matrix.cache-name }}
           path: bin/*
+
+  # Release bookkeeping runs once, after every platform has uploaded its symbols --
+  # not once per matrix leg, which would race on the same release object.
+  finalize-release:
+    name: Finalize Sentry release
+    needs: build
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.upload }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install sentry-cli
+        run: npm install -g @sentry/cli@2
+
+      - name: Create and finalize release
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_RELEASE: ${{ inputs.sentry-release || github.sha }}
+        run: |
+          set -euo pipefail
+          sentry-cli releases new "$SENTRY_RELEASE"
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto
+          sentry-cli releases finalize "$SENTRY_RELEASE"

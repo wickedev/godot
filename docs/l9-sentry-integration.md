@@ -73,7 +73,9 @@ Android는 이미 `platform/android/detect.py:252`에 `-Wl,--build-id`가 있다
 
 ### (b) `.github/workflows/release_symbols.yml` — 신규
 
-태그(`v*`) 및 수동 실행 전용. 6개 매트릭스(linux/windows/macos × template_release/template_debug).
+**릴리스 태그(`*-stable`)** 및 수동 실행 전용. 6개 매트릭스(linux/windows/macos × template_release/template_debug).
+
+> 트리거가 `*-stable`인 이유: 이 포크는 업스트림 Godot의 태그 관례를 유지한다. 실측 — `v*` 태그 **0개**, `*-stable` 태그 **72개**(`4.7.1-stable` 등). 초안의 `v*` 트리거는 **한 번도 발화하지 않았을 것**이다. 포크 태그 정책은 메인테이너가 `*-stable` 유지로 확정.
 
 ```
 production=yes debug_symbols=yes separate_debug_symbols=yes
@@ -87,22 +89,34 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 | Windows MSVC | `bin/*.pdb` | `/Zi` + `/DEBUG:FULL` (`SConstruct:808-810`) |
 | macOS | `bin/*.dSYM` (arch별) | `dsymutil` (`platform_macos_builders.py:115-124`) |
 
-**PR CI에 넣지 않은 이유:** `linux_builds.yml:50`이 *"Debug symbols disabled as they're huge on this build and we hit the 14 GB limit for runners"*라고 이미 적고 있다. 심볼 빌드를 매 PR에 켜면 러너 용량·캐시·시간이 전부 터진다. 릴리스 태그에서만 돈다.
+**러너 준비는 기존 플랫폼 워크플로를 그대로 복제한다** — Windows D3D12 SDK·ANGLE·AccessKit, macOS Vulkan SDK(MoltenVK)·ANGLE·AccessKit, Linux `libwayland-bin`. 심볼은 **출하본과 같은 기능 세트로 빌드된 바이너리**에서 나와야 하므로 이 스텝들은 `linux/windows/macos_builds.yml`과 계속 동기화되어야 한다.
+
+**PR CI에 넣지 않은 이유:** `linux_builds.yml:50`이 *"Debug symbols disabled as they're huge on this build and we hit the 14 GB limit for runners"*라고 이미 적고 있다. 심볼 빌드를 매 PR에 켜면 러너 용량·캐시·시간이 전부 터진다.
 
 **`windows_builds.yml:124`의 `Remove-Item ... *.pdb`는 건드리지 않았다.** 그 잡은 `debug_symbols=no`라 `/DEBUG:NONE`이 걸리고 애초에 의미 있는 `.pdb`가 생기지 않는다. 손대면 L1과의 충돌면만 넓어진다.
 
-### (c) 심볼 검증 게이트 — 조용한 실패 차단
+### (c) 심볼 **대응** 검증 게이트 — 조용한 실패 차단
 
-업로드 직전에 플랫폼별로 산출물을 **검증하고 없으면 빌드를 실패**시킨다. Linux는 `readelf -n`으로 build ID 존재까지 확인한다.
+존재 확인이 아니라 **출하 바이너리와 사이드카가 같은 디버그 식별자를 갖는지**를 검사하고, 어긋나면 빌드를 실패시킨다.
 
-이 게이트를 넣은 이유: **심볼 파이프라인의 실패는 첫 필드 크래시가 주소 나열로 돌아올 때까지 보이지 않는다.** runtime-misc §7(e)의 ⚠️ 경고("이걸 안 하면 Sentry를 붙여도 주소 나열만 온다")를 CI가 강제하게 만든 것이다.
+| 플랫폼 | 검증 |
+|---|---|
+| Linux | `readelf -n`으로 바이너리와 `.debugsymbols`의 **build ID 동일성** 대조. 미존재/불일치 시 실패 |
+| macOS | 두 arch를 `lipo`로 합쳐 **실제 출하 형태(universal)를 만든 뒤**, `dwarfdump --uuid`로 **모든 슬라이스 UUID가 dSYM에 커버되는지** 확인 |
+| Windows | `.exe`↔`.pdb` 베이스네임 짝 확인. **PDB GUID+age 동일성은 `sentry-cli`가 업로드 시 검증**한다(불일치 PDB는 거부됨) |
 
-### (d) 업로드
+> **macOS에 대한 근거:** `lipo`는 Mach-O 슬라이스의 UUID를 변경하지 않는다. 따라서 arch별 dSYM은 universal 바이너리에 대해 유효하다 — 다만 이 리포트는 그걸 **가정하지 않고 실제로 대조해서 증명**한다.
+>
+> ⚠️ **범위 한정:** 이 워크플로는 export template 바이너리와 그 심볼까지만 다룬다. `generate_bundle`을 통한 **완전한 `.app`/export-template zip 조립은 하지 않는다** — `generate_bundle`은 release와 debug 바이너리가 **같은 잡에 함께** 있어야 동작하는데 현재 매트릭스는 target별로 잡이 분리돼 있다. 패키징까지 필요하면 별도 태스크로 분리 요청.
 
-`sentry-cli debug-files upload --include-sources --wait bin/` + 릴리스 생성/커밋 연결/파이널라이즈.
-`--include-sources`는 우리 코드 프레임에 소스 컨텍스트를 심는다 — 렌더러 크래시를 태그 체크아웃 없이 읽기 위함.
+### (d) 업로드 / 릴리스 마감
 
-자격증명 미설정 시 **경고 후 스킵**(실패시키지 않음). 포크에 아직 Sentry 조직이 없어도 워크플로가 초록으로 돌아야 하기 때문.
+- 업로드 조건: `github.event_name != 'workflow_dispatch' || inputs.upload`
+  > ⚠️ 초안의 `inputs.upload != false`는 **버그였다.** 태그 push 이벤트에서 `inputs.upload`는 null이고, GitHub 식은 null과 false를 **둘 다 0으로 캐스팅**하므로 `null != false` → `0 != 0` → **false**가 된다. 즉 자동 릴리스 경로에서 업로드가 통째로 스킵됐을 것이다. 리뷰에서 지적받아 수정.
+- **fail-open 금지:** 자격증명이 없으면 **실패**시킨다. 심볼 없이 조용히 릴리스가 나가는 것이 이 워크플로가 막으려는 실패 모드 그 자체다. 빌드 전용 드라이런을 원하면 수동 실행에서 `upload=false`를 쓴다.
+- `sentry-cli` 설치는 `continue-on-error` — npm 장애가 드라이런을 죽이지 않게. 실제 업로드가 필요한데 없으면 업로드 스텝이 하드 실패한다.
+- **릴리스 생성/커밋연결/파이널라이즈는 매트릭스가 아니라 후속 단일 잡(`finalize-release`)** 에서 1회 실행한다. 매트릭스 6개가 같은 릴리스 객체에 동시 쓰기하면 레이스가 난다. `|| true` 억제도 제거했다 — 실패는 드러나야 한다.
+- `--include-sources`는 우리 코드 프레임에 소스 컨텍스트를 심는다 — 렌더러 크래시를 태그 체크아웃 없이 읽기 위함.
 
 ---
 
@@ -136,6 +150,8 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 - **미니덤프.** runtime-misc §7(c)는 Windows SEH에 `MiniDumpWriteDump` 추가(~30줄, 국소 코어)를 제안한다. sentry-native가 자체 미니덤프를 쓰므로 **중복 가능성**이 높다. 애드온 배선 후 실측으로 판정할 것.
 - **프로덕션 텔레메트리**(세션·성능·이탈). runtime-misc §7(c)에 있으나 Task #6 범위 밖.
 - **Android/iOS 심볼.** 워크플로는 데스크톱 3플랫폼만 다룬다. 모바일은 콘솔(W4)과 함께 별도 판단.
+- **패키징 미포함.** macOS `.app`/export-template zip 조립(`generate_bundle`)은 범위 밖 — §2(c) 참조.
+- **Windows PDB GUID+age 동일성을 워크플로가 직접 단언하지 않는다.** `sentry-cli`의 업로드 시 거부에 의존한다. 네이티브 도구만으로 PE 디버그 디렉터리를 파싱하는 건 러너에 보장되지 않는 도구(`llvm-pdbutil`/`dumpbin`)를 요구한다.
 - **`--build-id` 실기 검증 미완.** 개발 머신이 macOS라 `platform=linuxbsd` 구성이 불가하다(`ERROR: Invalid target platform "linuxbsd"`). 플래그 경로는 코드 검토로만 확인했고, **실증은 워크플로의 `readelf -n` 게이트가 CI에서 수행**한다. 첫 릴리스 실행 시 이 스텝의 출력을 확인할 것.
 
 ---
