@@ -27,7 +27,7 @@
 | 0 | `gb_albedo` | RGBA8 unorm | albedo.rgb + alpha | 리졸브·AOV |
 | 1 | `gb_normal` | **RGBA16 unorm** | **.xy = 셰이딩 노멀 oct / .zw = 지오메트릭 노멀 oct** (v1.3 병합 — 두 노멀은 리저버 기각에서 항상 함께 읽힘) | 리졸브·ReSTIR·SSR·AOV |
 | 2 | `gb_orm` | RGBA8 unorm | ao / roughness / metallic / sss-mask | 리졸브·ReSTIR·AOV |
-| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택. 클리어 값 = 0 → "잔차 없음")** | 리졸브·ReSTIR·AOV |
+| 3 | `gb_emission` | RGBA16F | emission.rgb + **a = LOD 잔차 상한(정규화 화면공간, §4.1 — v1.3에서 §5.1-(i) 채택. 클리어 값 = 0 → "잔차 없음"). 출처는 G2 §4의 `analytic_error`이며 `error`가 아니다 — A등급 회람 중, 2026-08-25** | 리졸브·ReSTIR·AOV |
 | 4 | `gb_depth` | R32F | view-space Z (`-vertex.z`) | 위치 재구성·전 소비자 |
 | 5 | `gb_objectid` | R32_UINT (**유효 24-bit**, §3) | instance ID | Nanite 리졸브·Cryptomatte·RT 히트 매칭 |
 | 6 | `gb_motion` | RG16F | screen-space motion, **NDC 단위·지터 제거** | TAA·ReSTIR·AOV |
@@ -56,7 +56,9 @@
 
 ### 4.1 Nanite 모션·히스토리의 LOD 전환 계약 (v1.2 신설, 동결)
 
-Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터 LOD 오차의 화면 투영으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다. §4의 N-1 `gb_normal`(.xy 셰이딩/.zw 지오 양쪽) 보장도 같은 캐비엇과 같은 상한을 받는다.
+Nanite 경로의 모션은 **이전 프레임 트라이앵글 동일성이 아니라 인스턴스 변환(이전/현재) + 현재 LOD의 오브젝트공간 위치**에서 유도한다 — DAG 컷이 프레임마다 움직여 N 프레임의 트라이앵글은 일반적으로 N-1에 존재하지 않는다. LOD 전환 시 표면 잔차는 **해당 클러스터의 `analytic_error`(G2 §4)를 화면 투영한 값으로 상한**이 잡히며(오프라인에 이미 알려진 값), 리졸브가 이 상한을 소비자(ReSTIR 기각 판단 등)에게 전달한다.
+
+**필드명을 박는 이유 (A등급 개정 회람 중, 2026-08-25).** G2 §4가 단일 "LOD 오차"를 **측정값 `error`(런타임 컷 전용, 타이트)** 와 **`analytic_error`(증명된 상한)** 로 분리했다. v1.2~v1.3의 이 문단은 소스를 필드명으로 특정하지 않았는데, 이제 **둘 중 `analytic_error`만 상한이다.** 더 타이트한 `error`를 `gb_emission.a`에 배선하면 ReSTIR 기각 임계가 **과소보수적**이 되어 **틀린 기각이 조용히** 일어난다 — 화면에는 아무 오류도 나타나지 않고 조명만 미묘하게 틀린다. 그래서 이 절과 §2 표 양쪽에 필드명을 명시한다. §4의 N-1 `gb_normal`(.xy 셰이딩/.zw 지오 양쪽) 보장도 같은 캐비엇과 같은 상한을 받는다.
 
 ### 4.2 G2 파급 요구 (v1.2 신설 — G2 계약에 위임하되 여기 기록)
 
