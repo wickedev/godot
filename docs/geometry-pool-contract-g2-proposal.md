@@ -17,9 +17,10 @@
 
 ## 2. 풀 버퍼 생성 계약
 
-**단일 대형 SSBO 풀** (bindless 부재 확정 — RD 스파이크 ⓒ FAIL — 이므로 단일 버퍼 + 오프셋/BDA가 유일 경로이자 성능상으로도 정석):
-- 생성 usage: `STORAGE`(컬링/리졸브 읽기) + **BDA**(`buffer_get_device_address`) + **AS-build 입력**(acceleration structure build input — Vulkan `ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY`) + `TRANSFER_TO`(스트리밍 업로드). **나중에 플래그를 바꾸면 스트리밍 레이어 전체 개조**(nanite-impl §10.4-3) — 이 목록이 G2의 존재 이유다.
-- 크기 상한 질의: `LIMIT_MAX_STORAGE_BUFFER_SIZE`(= 49, 훅 ③ 신설) 사용. 1GiB 가정 금지(훅 ③에서 과대평가 확인됨).
+**SSBO로도 바인딩 가능한 단일 대형 정점/인덱스 버퍼 풀** (bindless 부재 확정 — RD 스파이크 ⓒ FAIL — 이므로 단일 버퍼 + 오프셋/BDA가 유일 경로이자 성능상으로도 정석):
+- **생성 진입점 동결 (2026-08-25 C3 dgx 실측 — 플래그보다 바꾸기 어려운 계약):** 정점 풀은 **`vertex_buffer_create`**, 인덱스 풀은 **`index_buffer_create`** 로 생성한다. `storage_buffer_create`로 만든 버퍼는 **BLAS 입력이 될 수 없다** — `blas_create`(`rendering_device.cpp:302`)가 `vertex_buffer_owner`(`:325`)/`index_buffer_owner`(`:344`)만 조회한다("Parameter vertex_buffer is null"로 거부, 실측). 역방향은 성립: `uniform_set_create`의 STORAGE_BUFFER 분기(`:4743-4761`)는 `BUFFER_USAGE_STORAGE_BIT`가 있으면 vertex/index 버퍼도 받는다.
+- 생성 플래그: `BUFFER_CREATION_AS_STORAGE_BIT | BUFFER_CREATION_DEVICE_ADDRESS_BIT | BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT` — 이 조합으로 SSBO 읽기·BDA·AS 빌드 입력 3용도 전부 성립(dgx 실측 3줄: blas OK · device_address OK · storage 바인딩 OK). 스트리밍 업로드(`buffer_update`)는 기본 지원. **나중에 플래그를 바꾸면 스트리밍 레이어 전체 개조**(nanite-impl §10.4-3) — 이 목록이 G2의 존재 이유다.
+- 크기 상한 질의: `LIMIT_MAX_STORAGE_BUFFER_SIZE`(= 49, 훅 ③ 신설) 사용. 1GiB 가정 금지(훅 ③에서 과대평가 확인됨). ⚠️ 풀이 정점 버퍼로 생성되므로 이 상한이 vertex buffer에 동일 적용되는지 L1 확인 항목(C3 지적).
 - 업로드 경로: `buffer_update` 부분 갱신. 리드백(요청 페이지)은 async 링 — 예산은 다운로드 스테이징 분리 노브(Task #19) 확정 후 산정. **왕복 2~3프레임(멀티스레드) 전제.**
 
 ## 3. 정점 레코드 (디코드 후 보장)
@@ -71,5 +72,5 @@ vis-buffer 27b 클러스터 ID로 인덱스되는 레코드가 최소 보유할 
 |---|---|---|---|
 | L1 (버퍼 생성·업로드 경로) | C1 | ⬜ | §2 플래그 실현성 (RD 레벨) |
 | L2 (풀 생산자·DAG 포맷) | C2 | ⬜ | §3 확장 + §4 레코드 |
-| L3-대행 (BLAS 소비) | C3 | ⬜ | §6 — 양자화 입력 검증 포함 |
+| L3-대행 (BLAS 소비) | C3 | ✅ **승인/서명 (2026-08-25)** | §6 실기 검증 + §2 생성 진입점 블로커 제기·반영(조건부→서명). 근거: c3/lumen-spike 73fde51b48, misc/rt_spike/ 재현 가능 |
 | 메인테이너 | ✅ 제안 | | |
