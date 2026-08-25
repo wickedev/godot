@@ -1461,7 +1461,7 @@
 		</constant>
 		<constant name="DRIVER_RESOURCE_COMMAND_BUFFER" value="13" enum="DriverResource">
 			Command buffer object ([code]VkCommandBuffer[/code] on Vulkan, [code]ID3D12GraphicsCommandList[/code] on Direct3D 12). Returns [code]0[/code] on Metal, which exposes no native handle for it.
-			The [param rid] and [param index] arguments are ignored. The value returned is the [b]initial[/b] primary command buffer of the current frame slot, not whichever buffer is being recorded into at the moment of the call: when the rendering graph needs to break a dependency it ends that buffer and continues on further primary buffers of its own, which are not exposed here, as are the separately pooled secondary buffers.
+			The [param rid] and [param index] arguments are ignored. The value returned is the [b]initial[/b] primary command buffer of the current frame slot, not whichever buffer is being recorded into at the moment of the call: graph scheduling and driver workarounds may end that buffer and continue on further primary buffers of the rendering graph's own, with ordering preserved by semaphores. Those additional primary buffers are not exposed here, nor are the separately pooled secondary ones, so that a frame-level caller is given one stable handle rather than whichever buffer the graph is momentarily recording into.
 			The handle is only valid within the frame's recording lifetime and [b]must not be cached[/b] across frames or used outside it.
 		</constant>
 		<constant name="DRIVER_RESOURCE_VULKAN_DEVICE" value="0" enum="DriverResource" deprecated="Use [constant DRIVER_RESOURCE_LOGICAL_DEVICE] instead.">

@@ -8829,12 +8829,15 @@ uint64_t RenderingDevice::get_driver_resource(DriverResource p_resource, RID p_r
 			// The initial primary command buffer of the current frame slot. p_rid and p_index are
 			// ignored.
 			//
-			// This is not "the buffer being recorded into right now". When the render graph needs to
-			// break a dependency it ends this buffer and continues on further primary buffers taken
-			// from its own pool, so after such a split the handle returned here refers to a buffer
-			// that has already been ended. Those additional primaries, and the separately pooled
-			// secondary buffers, are deliberately not reachable: a caller wanting frame-level scope
-			// needs one stable handle, not whichever buffer the graph happens to be on.
+			// This is not "the buffer being recorded into right now". Graph scheduling and driver
+			// workarounds can end this buffer and continue on further primary buffers from the graph's
+			// own pool: the swapchain pass is given its own buffer by default, and the
+			// avoid_compute_after_draw workaround splits before a compute list that follows a draw.
+			// Ordering across the split is preserved by semaphores, so nothing is decoupled; what
+			// changes is that after a split the handle returned here refers to a buffer that has
+			// already been ended. Those additional primaries, and the separately pooled secondary
+			// buffers, are deliberately not reachable: a caller wanting frame-level scope needs one
+			// stable handle, not whichever buffer the graph is momentarily on.
 			//
 			// Valid only within the frame's recording lifetime; it must not be cached across frames.
 			driver_id = frames[frame].command_buffer.id;
