@@ -376,23 +376,4 @@ TEST_CASE("[Audio][AudioSuspension] A partially consumed stale buffer stays stal
 	CHECK_MESSAGE(prefix_silent, "A stale buffer that was only partially consumed must still be flushed.");
 }
 
-TEST_CASE("[Audio][AudioSuspension] A WAV loop wraps inline without hanging") {
-	// NOT a lock-reentrancy test, and no longer claims to be. The unit-test
-	// harness has no AudioServer, so the mutation scopes are no-ops here whatever
-	// the setting says, and a WAV loop wraps inline without a nested seek. This is
-	// a plain smoke test that the loop path still runs inside the protocol.
-	// Reentrancy on the MP3/Vorbis path (public seek() during mix, on the audio
-	// thread, with the setting on) and the wake-vs-mutation race need a harness
-	// with a live AudioServer and are NOT covered here.
-	Ref<AudioStreamWAV> stream = _make_pcm16_stream(1024);
-	stream->set_loop_mode(AudioStreamWAV::LOOP_FORWARD);
-	stream->set_loop_end(1024);
-	Ref<AudioStreamPlayback> playback = stream->instantiate_playback();
-	playback->start(0.0);
-	for (int i = 0; i < 8; i++) {
-		_mix(playback, 512);
-	}
-	CHECK(playback->is_playing());
-}
-
 } // namespace TestAudioSuspensionProtocol

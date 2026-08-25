@@ -93,6 +93,22 @@ protected:
 	// (start() calling seek(), a decoder's internal loop seek during mix) reenter
 	// naturally. A no-op when the feature is disabled (no wake path exists then) or
 	// no AudioServer is running.
+	//
+	// The contract, in full:
+	//  - EVERY scope locks. There is no depth optimization, because a
+	//    per-playback counter does not identify the owning thread: a main-thread
+	//    mutation could see a nonzero depth left by the audio thread and skip
+	//    the lock entirely.
+	//  - Nesting is fine. The driver mutex is recursive, so start() calling
+	//    seek(), or a looping decoder seeking inside its own mix, reenters
+	//    naturally.
+	//  - The scope spans the whole mutation, not just the state write. The
+	//    generation bump and any staleness marking happen inside it, so the wake
+	//    path never observes a half-applied mutation.
+	//  - It covers every playback reached through the public entry points --
+	//    including generator, microphone, interactive and GDExtension
+	//    playbacks -- not only the file decoders that opt into suspension. Their
+	//    mix() therefore runs under the driver lock when the feature is on.
 	void begin_stream_mutation();
 	void end_stream_mutation();
 	struct StreamMutationScope {
