@@ -32,6 +32,8 @@
 
 #include "engine_shader_lib.h"
 #include "time_of_day.h"
+#include "weather_driver.h"
+#include "weather_preset.h"
 #include "weather_bus.h"
 #include "wind_driver.h"
 
@@ -109,6 +111,8 @@ void initialize_weather_bus_module(ModuleInitializationLevel p_level) {
 	// The producers are ordinary nodes: a scene can hold several, or none.
 	GDREGISTER_CLASS(TimeOfDay);
 	GDREGISTER_CLASS(WindDriver);
+	GDREGISTER_CLASS(WeatherDriver);
+	GDREGISTER_CLASS(WeatherPreset);
 	Engine::get_singleton()->add_singleton(Engine::Singleton("WeatherBus", WeatherBus::create_singleton()));
 
 	WeatherBus::register_uniforms();
