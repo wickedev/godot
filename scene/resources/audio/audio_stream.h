@@ -148,8 +148,12 @@ public:
 	virtual void flush_suspension_residuals() {}
 	// Records that the internally buffered audio belongs to the current generation
 	// (used after an external mix consumed frames: the remaining lookahead is the
-	// valid post-mutation continuation, not stale audio).
+	// valid post-mutation continuation, not stale audio). Only ever called when the
+	// residuals were ALREADY fresh -- see mix_audio().
 	virtual void mark_suspension_residuals_fresh() {}
+	// Whether the internally buffered audio is post-mutation. A playback with no
+	// internal buffer has nothing that could go stale, so the base answer is true.
+	virtual bool suspension_residuals_are_fresh() const { return true; }
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -209,6 +213,7 @@ public:
 
 	virtual void flush_suspension_residuals() override;
 	virtual void mark_suspension_residuals_fresh() override { residual_generation.set(get_suspension_generation()); }
+	virtual bool suspension_residuals_are_fresh() const override { return residual_generation.get() == get_suspension_generation(); }
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

@@ -204,19 +204,18 @@ TEST_CASE("[Audio][AudioSuspension] External mix_audio() participates in the mut
 		CHECK(playback->get_suspension_generation() == before);
 	}
 
-	SUBCASE("A mix on a stopped playback consumes nothing: no bump") {
-		// The returned frame count cannot be the test here: the resampler
-		// reports frames WRITTEN, and on a playback that never started it
-		// reports a full buffer of output without advancing any decoder.
+	SUBCASE("A mix bumps without inspecting what the subclass did") {
+		// There is no portable "did this consume stream data?" predicate, so the
+		// protocol does not try to have one: a nonempty external mix always
+		// counts. The two errors are not symmetric -- a missed mutation plays
+		// pre-mutation audio (audible), a spurious one costs ~3 ms of silence
+		// under the wake ramp (inaudible). Even a stopped playback bumps.
 		const uint64_t before = playback->get_suspension_generation();
 		playback->mix_audio(1.0f, 64);
-		CHECK_MESSAGE(playback->get_suspension_generation() == before,
-				"Mixing a stopped playback touches no stream state; bumping would discard valid residuals on wake.");
+		CHECK(playback->get_suspension_generation() == before + 1);
 	}
 
-	SUBCASE("A mix that runs off the end of the stream still bumps") {
-		// The other side of the same distinction: this playback IS playing at
-		// entry and consumes real data, then ends mid-call. It must bump.
+	SUBCASE("A mix that runs off the end of the stream bumps too") {
 		playback->start(0.0);
 		const uint64_t before = playback->get_suspension_generation();
 		const Vector<AudioFrame> consumed = _mix_external(playback, int(RATE)); // Past the 0.5s end.
@@ -251,11 +250,61 @@ TEST_CASE("[Audio][AudioSuspension] External mix_audio() participates in the mut
 	}
 }
 
+TEST_CASE("[Audio][AudioSuspension] A partial external mix must not promote stale residuals") {
+	// The hazard: seek() moves the decoder but leaves PRE-seek audio buffered.
+	// An external mix_audio() before the wake hands the caller some of that
+	// stale audio and leaves the rest behind. Marking the leftovers "fresh"
+	// there would make the wake flush skip them, and the pre-seek tail would
+	// play on after the wake -- exactly what the flush exists to prevent.
+	const double seek_pos = 0.31;
+	Ref<AudioStreamWAV> stream = _make_pcm16_stream();
+	Ref<AudioStreamPlayback> playback = stream->instantiate_playback();
+	playback->start(0.0);
+	_mix(playback, 256); // Fill the resampler with pre-seek audio.
+
+	playback->seek(seek_pos); // Residuals are now stale.
+	const Vector<AudioFrame> partial = _mix_external(playback, 64);
+	REQUIRE(partial.size() == 64);
+
+	// The wake flush must still fire on the leftovers.
+	const double position_before_flush = playback->get_playback_position();
+	playback->flush_suspension_residuals();
+	CHECK_MESSAGE(playback->get_playback_position() == doctest::Approx(position_before_flush),
+			"The flush must not advance the decoder.");
+
+	// Same shape as the plain stale-flush case: one internal buffer of silence,
+	// then bit-exact agreement with a playback started at the seek position.
+	const Vector<AudioFrame> resumed = _mix(playback, 256);
+	Ref<AudioStreamPlayback> reference = stream->instantiate_playback();
+	reference->start(seek_pos);
+	const Vector<AudioFrame> expected = _mix(reference, 128);
+
+	bool prefix_silent = true;
+	for (int i = 0; i < 128; i++) {
+		if (resumed[i].left != 0.0f || resumed[i].right != 0.0f) {
+			prefix_silent = false;
+			break;
+		}
+	}
+	CHECK_MESSAGE(prefix_silent, "Stale residuals survived a partial external mix: they were promoted to fresh.");
+	bool tail_matches_reference = true;
+	for (int i = 0; i < 128; i++) {
+		if (!_frames_equal(resumed[128 + i], expected[i])) {
+			tail_matches_reference = false;
+			break;
+		}
+	}
+	CHECK_MESSAGE(tail_matches_reference, "Post-flush audio must bit-exactly match a fresh playback at the seek position.");
+}
+
 TEST_CASE("[Audio][AudioSuspension] A looping mix inside the protocol scope does not deadlock") {
-	// Looping decoders seek internally during mix() (on the audio thread, under
-	// the driver lock when the feature is on). The mutation scope must reenter
-	// cleanly in that nesting; a plain WAV loop wraps inline, and MP3/Vorbis
-	// call their public seek() — both paths go through the same recursive lock.
+	// SCOPE, honestly: this is a smoke test for the inline WAV loop wrap running
+	// inside the protocol, nothing more. It does NOT cover lock reentrancy. The
+	// unit-test harness has no AudioServer, so begin/end_stream_mutation() are
+	// no-ops here regardless of the setting, and a WAV loop wraps inline without
+	// a nested seek. Reentrancy on the MP3/Vorbis path (public seek() during
+	// mix, on the audio thread, with the setting on) and the wake-vs-mutation
+	// race are unverified by this suite -- see the note in the review thread.
 	Ref<AudioStreamWAV> stream = _make_pcm16_stream(1024);
 	stream->set_loop_mode(AudioStreamWAV::LOOP_FORWARD);
 	stream->set_loop_end(1024);

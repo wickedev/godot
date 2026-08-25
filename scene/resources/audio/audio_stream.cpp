@@ -109,11 +109,14 @@ Vector<AudioFrame> AudioStreamPlayback::mix_audio(float p_rate_scale, int p_fram
 	// External mixing consumes stream data outside the server's mix, which is a
 	// position mutation as far as the suspension protocol is concerned. The
 	// protocol lives HERE so the scripted binding and C++ callers share one
-	// implementation, and only a call that actually consumed frames counts as
-	// a mutation: an empty or not-playing mix must not bump (a wake would
-	// otherwise discard valid residuals), and after a consuming mix the
-	// resampler's buffered lookahead IS the post-mutation continuation, so it
-	// is marked fresh rather than left to be zero-filled on wake.
+	// implementation.
+	//
+	// Both decisions below are deliberately biased the same way, because the two
+	// errors are not symmetric. Failing to record a mutation lets the wake path
+	// treat PRE-mutation audio as valid and play it: audible. Recording one that
+	// did not happen costs at most one internal buffer (128 frames, ~3 ms) of
+	// silence on the next wake, under a ramp that is already fading in from zero:
+	// inaudible. So when in doubt, record the mutation.
 	StreamMutationScope mutation_scope(this);
 	Vector<AudioFrame> res;
 	res.resize(p_frames);
@@ -121,17 +124,26 @@ Vector<AudioFrame> AudioStreamPlayback::mix_audio(float p_rate_scale, int p_fram
 		return res;
 	}
 
-	// Sampled BEFORE mixing: a stream that ends mid-call did consume data and
-	// must bump, while one that was already stopped consumed nothing. The
-	// returned frame count alone cannot tell those apart -- the resampler
-	// reports frames WRITTEN, and on a playback that never started it reports
-	// a full buffer of (silent) output without touching the decoder.
-	const bool was_playing = is_playing();
+	// Sampled BEFORE mixing. Promoting the leftover lookahead to "fresh" is only
+	// correct if it was fresh to begin with: mixing part of an already-stale
+	// buffer hands the caller pre-mutation audio and leaves the REST of that
+	// stale audio behind, and marking it fresh would make the wake flush skip it
+	// -- the pre-seek tail would then play on. When it was stale, it stays stale
+	// and the flush drops it, which is the conservative direction.
+	const bool residuals_were_fresh = suspension_residuals_are_fresh();
 
 	int frames = mix(res.ptrw(), p_rate_scale, p_frames);
 	res.resize(frames);
-	if (was_playing && frames > 0) {
-		bump_suspension_generation();
+
+	// Every external mix counts, without inspecting what the subclass did. There
+	// is no portable predicate for "this mix consumed stream data": the returned
+	// count is frames WRITTEN, not consumed, and is_playing() is wrong for at
+	// least the microphone (records while not "playing"), the synchronized and
+	// interactive playbacks (return silence across a pending switch), and any
+	// GDExtension playback. Guessing there risks the audible error; bumping does
+	// not.
+	bump_suspension_generation();
+	if (residuals_were_fresh) {
 		mark_suspension_residuals_fresh();
 	}
 
