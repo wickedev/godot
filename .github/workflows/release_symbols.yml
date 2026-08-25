@@ -1,0 +1,219 @@
+name: 🛰️ Release Templates + Symbol Upload
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      sentry-release:
+        description: Sentry release identifier. Defaults to the current commit SHA.
+        required: false
+        type: string
+      upload:
+        description: Upload debug information files to Sentry. Disable for a build-only dry run.
+        required: false
+        default: true
+        type: boolean
+
+# Global Settings
+#
+# Unlike the PR validation workflows, this one builds *shippable* export templates
+# and keeps their debug information. `debug_symbols=yes separate_debug_symbols=yes`
+# strips the shipped binary and writes the debug info to a sidecar, so players get a
+# normal-sized binary while Sentry still gets a symbolizable stack.
+#
+# This is intentionally NOT folded into linux/windows/macos_builds.yml: those run on
+# every PR, and linux_builds.yml already documents hitting the 14 GB runner limit with
+# debug symbols enabled. Release symbol builds run on tags only.
+env:
+  SCONS_FLAGS: >-
+    production=yes
+    debug_symbols=yes
+    separate_debug_symbols=yes
+    module_text_server_fb_enabled=yes
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.name }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux template (release)
+            runner: ubuntu-22.04
+            platform: linuxbsd
+            target: template_release
+            cache-name: relsym-linux-template-release
+          - name: Linux template (debug)
+            runner: ubuntu-22.04
+            platform: linuxbsd
+            target: template_debug
+            cache-name: relsym-linux-template-debug
+          - name: Windows template (release)
+            runner: windows-latest
+            platform: windows
+            target: template_release
+            cache-name: relsym-windows-template-release
+          - name: Windows template (debug)
+            runner: windows-latest
+            platform: windows
+            target: template_debug
+            cache-name: relsym-windows-template-debug
+          - name: macOS template (release)
+            runner: macos-26
+            platform: macos
+            target: template_release
+            cache-name: relsym-macos-template-release
+          - name: macOS template (debug)
+            runner: macos-26
+            platform: macos
+            target: template_debug
+            cache-name: relsym-macos-template-debug
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          # sentry-cli derives release/commit association from git history.
+          fetch-depth: 0
+
+      - name: Free disk space (Linux)
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          df -h
+
+      - name: Linux dependencies
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config libx11-dev libxcursor-dev libxinerama-dev \
+            libgl1-mesa-dev libglu-dev libasound2-dev libpulse-dev libudev-dev \
+            libxi-dev libxrandr-dev libwayland-dev
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: ${{ matrix.cache-name }}
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Compilation
+        if: matrix.platform != 'macos'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }}
+          platform: ${{ matrix.platform }}
+          target: ${{ matrix.target }}
+
+      # macOS ships a universal binary. `dsymutil` runs per-arch, so both slices must
+      # be built for the dSYM set to cover the shipped lipo'd binary.
+      - name: Compilation (macOS x86_64)
+        if: matrix.platform == 'macos'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=x86_64 metal=no
+          platform: macos
+          target: ${{ matrix.target }}
+
+      - name: Compilation (macOS arm64)
+        if: matrix.platform == 'macos'
+        uses: ./.github/actions/godot-build
+        with:
+          scons-flags: ${{ env.SCONS_FLAGS }} arch=arm64
+          platform: macos
+          target: ${{ matrix.target }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: ${{ matrix.cache-name }}
+        continue-on-error: true
+
+      # Fail loudly rather than silently shipping unsymbolizable builds. A stripped
+      # ELF with no build ID cannot be matched to its `.debugsymbols` file by Sentry,
+      # and that failure is invisible until the first field crash comes back as a
+      # bare address list.
+      - name: Verify symbol artifacts (Linux)
+        if: matrix.platform == 'linuxbsd'
+        run: |
+          set -eu
+          shopt -s nullglob
+          syms=(bin/*.debugsymbols)
+          if [ ${#syms[@]} -eq 0 ]; then
+            echo "::error::No .debugsymbols produced; separate_debug_symbols did not run."
+            exit 1
+          fi
+          for bin in bin/godot.linuxbsd.*; do
+            case "$bin" in *.debugsymbols) continue ;; esac
+            if ! file "$bin" | grep -q ELF; then continue; fi
+            if ! readelf -n "$bin" | grep -q "Build ID"; then
+              echo "::error::$bin has no GNU build ID; Sentry cannot match its symbols."
+              exit 1
+            fi
+            echo "$bin: $(readelf -n "$bin" | grep 'Build ID')"
+          done
+        shell: bash
+
+      - name: Verify symbol artifacts (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          $pdbs = Get-ChildItem bin/*.pdb -ErrorAction SilentlyContinue
+          if (-not $pdbs) {
+            Write-Output "::error::No .pdb produced; MSVC debug symbols are missing."
+            exit 1
+          }
+          $pdbs | ForEach-Object { Write-Output $_.Name }
+
+      - name: Verify symbol artifacts (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          set -eu
+          if [ -z "$(ls -d bin/*.dSYM 2>/dev/null)" ]; then
+            echo "::error::No .dSYM produced; separate_debug_symbols did not run."
+            exit 1
+          fi
+          ls -d bin/*.dSYM
+        shell: bash
+
+      # Installed via npm rather than the get-cli shell script: the latter writes to
+      # /usr/local/bin, which is not reliably writable under Git Bash on the Windows
+      # runner. Node is preinstalled on all three runner images.
+      - name: Install sentry-cli
+        run: npm install -g @sentry/cli@2
+        shell: bash
+
+      - name: Upload debug information files to Sentry
+        if: ${{ inputs.upload != false }}
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_RELEASE: ${{ inputs.sentry-release || github.sha }}
+        run: |
+          set -eu
+          if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
+            echo "::warning::Sentry credentials not configured (SENTRY_AUTH_TOKEN secret, SENTRY_ORG/SENTRY_PROJECT vars). Skipping upload."
+            exit 0
+          fi
+          # `--include-sources` embeds source context for frames in our own code, which
+          # is what makes a Nanite/renderer crash readable without checking out the tag.
+          sentry-cli debug-files upload \
+            --include-sources \
+            --wait \
+            bin/
+          sentry-cli releases new "$SENTRY_RELEASE" || true
+          sentry-cli releases set-commits "$SENTRY_RELEASE" --auto || true
+          sentry-cli releases finalize "$SENTRY_RELEASE" || true
+        shell: bash
+
+      - name: Upload build artifact
+        uses: ./.github/actions/upload-artifact
+        with:
+          name: ${{ matrix.cache-name }}
+          path: bin/*
