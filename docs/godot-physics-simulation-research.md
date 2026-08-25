@@ -21,7 +21,7 @@
 | **멀티스레딩·성능** | 물리 바디 스트리밍/활성 영역 개념 없음(`physics_streaming`/`activation_region`/`physics_lod` grep 각 0). `max_bodies` 기본 10240 재시작 필요 | `JoltJobSystem`이 **`WorkerThreadPool` 정상 사용**. `AddBodiesPrepare/Finalize` 배치 삽입 이미 사용. `DISABLE_MODE_REMOVE`로 노드 단위 제거 가능 | 🟢 **순수 GDScript/GDExtension** (스트리밍 매니저) | 1~2주 | 🟢 **P0** (저비용 고효과) |
 | **GPU 물리** | 파티클 충돌은 **단방향** — 월드가 반응 안 함. GPU→CPU는 AABB 전체 스톨 리드백 1개뿐. ~~Godot이 `Jolt/Compute`·`Shaders`·`Physics/Hair`를 번들에서 제외~~ [2026-08-25: 3폴더 벤더링 완료(병합 대기) — 단 Compute는 헤어 전용 추상화라 GPU 게임플레이 물리는 여전히 부재] | `buffer_get_data_async` 바인딩됨(§Nanite 문서). SDF/Heightfield 콜라이더 존재 | 🔴 **대규모 코어** (실제 양방향) / 🟡 근사 대체는 GDScript | — | 🔴 **P4 (비권장)** |
 
-**전략적 결론 미리보기:** 🟢 P0 3개(캐릭터 계단 우회 → 물리 스트리밍 → 차량)가 AAA에서도 최우선 과제다. **AAA 재평가(2026-08-18):** 기존 "원신급" 목표에서는 런타임 파괴·클로스·GPU 물리가 낮은 우선순위였으나, AAA 포토리얼 목표에서는 파괴(§3)와 클로스(§4)의 우선순위가 상승한다. GPU 물리(§8)는 여전히 P4 — AAA에서도 CPU Jolt로 충분하고 업스트림과 충돌하기 때문.
+**전략적 결론 미리보기:** 🟢 P0 3개(캐릭터 계단 우회 → 물리 스트리밍 → 차량)가 AAA에서도 최우선 과제다. **AAA 재평가(2026-08-18):** 기존 "원신급" 목표에서는 런타임 파괴·클로스·GPU 물리가 낮은 우선순위였으나, AAA 포토리얼 목표에서는 파괴(§3)와 클로스(§4)의 우선순위가 상승한다. GPU 물리(§8)는 여전히 P4 — AAA에서도 CPU Jolt로 충분하고 업스트림과 충돌하기 때문. **[2026-08-25 갱신: GPU 게임플레이 물리는 자체 솔버(Wave 4)이며 upstream 충돌 개념은 소멸 — §8(e) 참조.]**
 
 ---
 
@@ -277,7 +277,7 @@ settings->CreateConstraints(&vertex_attrib, 1, JPH::SoftBodySharedSettings::EBen
 | 애니메이션 드리븐(스키닝 블렌드) | ✅ | ✅ `SkinVertices()` + `mEnableSkinConstraints` (`SoftBodyMotionProperties.h:94,140`) | ❌ |
 | 공기 저항/양력 | ✅ | ❌ (풍압만) | ❌ (no-op) |
 | LOD | ✅ | ❌ | ❌ |
-| GPU 솔버 | Chaos는 CPU+ISPC / NvCloth는 GPU(사실상 EOL) | ❌ (Jolt `Compute/` 폴더가 번들에서 제외됨) | ❌ |
+| GPU 솔버 | Chaos는 CPU+ISPC / NvCloth는 GPU(사실상 EOL) | ❌ (upstream `Compute/`는 헤어 전용 — 클로스/강체 GPU 솔버는 upstream에도 부재. 벤더링 여부와 무관) | ❌ |
 
 ⇒ **격차의 대부분이 "Jolt엔 있는데 Godot이 안 씀"이고, 진짜 없는 건 셀프 콜리전·공기저항·LOD 3개다.**
 
@@ -582,7 +582,7 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | **스트랜드 헤어 물리** | | | ✅ 벤더링+바람 패치 (CPU 경로, 병합 대기) |
 | GPU 게임플레이 물리 | | | 🔴 렌더러+물리 동시 개조 |
 
-**핵심 통찰:** 이 표에 **"대규모 포크"가 단 3줄뿐**이고, 그 셋 다 "안 해도 되는" 또는 "업스트림 대기" 항목이다. 렌더러 격차 문서들(§1~3)에서 절벽이 항상 "코어 통합"에 있었던 것과 대조적으로, **물리 영역엔 절벽이 없다.** 전부 완만한 경사다. **AAA에서도 이 구조는 변하지 않는다** — 달라진 것은 우선순위(클로스 B4, 파괴 Phase C의 P1 격상)뿐.
+**핵심 통찰:** 이 표에 **"대규모 포크"가 단 3줄뿐**이고, 그 셋의 최종 상태(2026-08-25)는: 셀프콜리전=자체 구현 · 헤어 시뮬=벤더링 확보 · GPU 게임플레이 물리=자체 솔버(Wave 4)다. 렌더러 격차 문서들(§1~3)에서 절벽이 항상 "코어 통합"에 있었던 것과 대조적으로, **물리 영역엔 절벽이 없다.** 전부 완만한 경사다. **AAA에서도 이 구조는 변하지 않는다** — 달라진 것은 우선순위(클로스 B4, 파괴 Phase C의 P1 격상)뿐.
 
 ---
 
@@ -682,7 +682,7 @@ AABB ParticlesStorage::particles_get_current_aabb(RID p_particles) {
 | §5 결정론·스냅샷 | 🟡 P1 | SCsub 1줄 + ~300줄. 저비용 고효과 |
 | §6 캐릭터 컨트롤러 | 🟢 P0 | GDScript 우회 2~3일. AAA에서도 여전히 최우선 |
 | §7 멀티스레딩·성능 | 🟢 P0 | GDScript 스트리밍 매니저. 가장 저비용 고효과 |
-| §8 GPU 물리 | 🔴 P4 | CPU Jolt로 충분. 업스트림 충돌 |
+| §8 GPU 물리 | 🔴 Wave 4 | 자체 솔버(벤더링된 Compute 추상화를 토대로) — 2026-08-25 확정 |
 | §11 자기 반증 | 12개 중 10개 반증 성공 | AAA에서도 실측 근거가 동일하므로 변경 없음 |
 
 ### AAA 마스터 요약표 행
