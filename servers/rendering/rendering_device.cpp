@@ -8826,11 +8826,17 @@ uint64_t RenderingDevice::get_driver_resource(DriverResource p_resource, RID p_r
 			driver_id = main_queue.id;
 			break;
 		case DRIVER_RESOURCE_COMMAND_BUFFER:
-			// The current frame's primary command buffer, which is what the render graph records
-			// into and submits. The graph may split work across secondary buffers, and those are
-			// deliberately not reachable here: a caller asking for frame-level scope would otherwise
-			// receive whichever buffer happened to be current. Only meaningful between frame begin
-			// and end.
+			// The initial primary command buffer of the current frame slot. p_rid and p_index are
+			// ignored.
+			//
+			// This is not "the buffer being recorded into right now". When the render graph needs to
+			// break a dependency it ends this buffer and continues on further primary buffers taken
+			// from its own pool, so after such a split the handle returned here refers to a buffer
+			// that has already been ended. Those additional primaries, and the separately pooled
+			// secondary buffers, are deliberately not reachable: a caller wanting frame-level scope
+			// needs one stable handle, not whichever buffer the graph happens to be on.
+			//
+			// Valid only within the frame's recording lifetime; it must not be cached across frames.
 			driver_id = frames[frame].command_buffer.id;
 			break;
 		case DRIVER_RESOURCE_QUEUE_FAMILY:
