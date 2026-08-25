@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="TimeOfDay" inherits="Node" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../class.xsd">
+	<brief_description>
+	</brief_description>
+	<description>
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="advance">
+			<return type="void" />
+			<param index="0" name="delta" type="float" />
+			<description>
+				Advances the clock by [param delta] seconds, recomputes the sun and moon, and republishes to [WeatherBus]. Happens automatically each frame unless [member paused] is set; call it directly to step deterministically.
+			</description>
+		</method>
+		<method name="get_moon_direction" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Unit vector pointing [b]toward[/b] the moon. Currently the anti-sun, which is not astronomically true but does light the night sky.
+			</description>
+		</method>
+		<method name="get_sun_direction" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Unit vector pointing [b]toward[/b] the sun, in world space. Same value and convention as [member WeatherBus.tod_sun_direction].
+			</description>
+		</method>
+		<method name="get_sun_intensity" qualifiers="const">
+			<return type="float" />
+			<description>
+				Sun intensity from the last solve, fading to [code]0.0[/code] through the horizon rather than snapping. Used for the sun light's energy when [member sun_energy_curve] is unset.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="day_length" type="float" setter="set_day_length" getter="get_day_length" default="1200.0">
+		</member>
+		<member name="day_of_year" type="int" setter="set_day_of_year" getter="get_day_of_year" default="172">
+		</member>
+		<member name="latitude_degrees" type="float" setter="set_latitude_degrees" getter="get_latitude_degrees" default="45.0">
+		</member>
+		<member name="moon_light_path" type="NodePath" setter="set_moon_light_path" getter="get_moon_light_path" default="NodePath(&quot;&quot;)">
+		</member>
+		<member name="paused" type="bool" setter="set_paused" getter="is_paused" default="false">
+		</member>
+		<member name="sun_color_ramp" type="Gradient" setter="set_sun_color_ramp" getter="get_sun_color_ramp">
+		</member>
+		<member name="sun_energy_curve" type="Curve" setter="set_sun_energy_curve" getter="get_sun_energy_curve">
+		</member>
+		<member name="sun_light_path" type="NodePath" setter="set_sun_light_path" getter="get_sun_light_path" default="NodePath(&quot;&quot;)">
+		</member>
+		<member name="time" type="float" setter="set_time" getter="get_time" default="0.25">
+		</member>
+	</members>
+</class>

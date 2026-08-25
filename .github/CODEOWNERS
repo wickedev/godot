@@ -155,6 +155,9 @@
 /modules/visual_shader/doc_classes/           @godotengine/shaders @godotengine/documentation
 /modules/visual_shader/editor/                @godotengine/shaders @godotengine/editor
 /modules/visual_shader/tests/                 @godotengine/shaders @godotengine/tests
+/modules/weather_bus/                         @godotengine/shaders
+/modules/weather_bus/doc_classes/             @godotengine/shaders @godotengine/documentation
+/modules/weather_bus/tests/                   @godotengine/shaders @godotengine/tests
 /modules/xatlas_unwrap/                       @godotengine/rendering
 
 ## Scripting

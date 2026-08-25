@@ -517,12 +517,16 @@ Files generated from upstream source:
 
 Files extracted from upstream source:
 
-- All files in `Jolt/`, except `Jolt/Jolt.cmake`, any files dependent on `ENABLE_OBJECT_STREAM` as seen in `Jolt/Jolt.cmake` and the `Jolt/Physics/Hair/`, `Jolt/Compute/` and `Jolt/Shaders/` folders.
+- All files in `Jolt/`, except `Jolt/Jolt.cmake` and any files dependent on `ENABLE_OBJECT_STREAM` as seen in `Jolt/Jolt.cmake`.
+- `Jolt/Physics/Hair/`, `Jolt/Compute/` and `Jolt/Shaders/` are vendored in full, unlike upstream Godot which omits them. None of them are compiled by default; `jolt_hair_compute=cpu` builds the hair solver on its CPU compute backend. The DX12/Vulkan/Metal backends are vendored but not built, as they require an offline HLSL compile step that does not exist yet.
 - `LICENSE`
 
 Patches:
 
 - `0001-backport-upstream-commit-63f2f57.patch` (GH-121974)
+- `0002-hair-external-acceleration.patch` — adds `Hair::SetExternalAcceleration()`, folded into the
+  per-substep gravity vector. Upstream lists wind forces as a missing feature of the hair system and
+  exposes no external force input, so there is nothing to hook without this.
 
 
 ## libbacktrace

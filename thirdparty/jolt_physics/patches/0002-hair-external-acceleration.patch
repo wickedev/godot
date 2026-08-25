@@ -1,0 +1,38 @@
+diff --git a/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.cpp b/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.cpp
+index 779f853ecf..a68a5c270a 100644
+--- a/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.cpp
++++ b/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.cpp
+@@ -87,7 +87,7 @@ void Hair::InitializeContext(UpdateContext &outCtx, float inDeltaTime, const Phy
+ 	outCtx.mHalfDeltaTime = 0.5f * outCtx.mDeltaTime;
+ 	outCtx.mInvDeltaTimeSq = outCtx.mDeltaTime > 0.0f? 1.0f / Square(outCtx.mDeltaTime) : 1.0e12f;
+ 	outCtx.mTwoDivDeltaTime = outCtx.mDeltaTime > 0.0f? 2.0f / outCtx.mDeltaTime : 1.0e12f;
+-	outCtx.mSubStepGravity = (mRotation.Conjugated() * inSystem.GetGravity()) * outCtx.mDeltaTime;
++	outCtx.mSubStepGravity = (mRotation.Conjugated() * (inSystem.GetGravity() + mExternalAcceleration)) * outCtx.mDeltaTime;
+ 
+ 	// Calculate delta transform from previous to current position and rotation
+ 	outCtx.mHasTransformChanged = mPosition != mPrevPosition || mRotation != mPrevRotation;
+diff --git a/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.h b/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.h
+index 2ec0988dcf..d95a28d52f 100644
+--- a/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.h
++++ b/thirdparty/jolt_physics/Jolt/Physics/Hair/Hair.h
+@@ -52,6 +52,12 @@ public:
+ 	/// The hair will be initialized in its default pose with zero velocity at the new position and rotation during the next update
+ 	void								OnTeleported()									{ mTeleported = true; }
+ 
++	/// External acceleration in world space, e.g. wind. Added to gravity for the duration of the next update.
++	/// Note that this means HairSettings::Material::mGravityFactor scales it too, so roots that resist gravity
++	/// also resist wind.
++	void								SetExternalAcceleration(Vec3Arg inAcceleration)	{ mExternalAcceleration = inAcceleration; }
++	Vec3								GetExternalAcceleration() const					{ return mExternalAcceleration; }
++
+ 	/// Ability to externally provide the scalp vertices buffer. This allows skipping skinning the scalp during the simulation update. You may need to override JPH_SHADER_BIND_SCALP_VERTICES in HairSkinRootsBindings.h to match the format of the provided buffer.
+ 	void								SetScalpVerticesCB(ComputeBuffer *inBuffer)		{ mScalpVerticesCB = inBuffer; }
+ 
+@@ -187,6 +193,7 @@ protected:
+ 	Quat								mRotation;										// Current rotation in world space
+ 	bool								mTeleported = true;								// If the hair got teleported and should be set to the default pose
+ 	ObjectLayer							mLayer;											// Layer for the hair to collide with
++	Vec3								mExternalAcceleration = Vec3::sZero();			// Additional world space acceleration, e.g. wind
+ 
+ 	Mat44								mScalpToHead = Mat44::sIdentity();				// When skipping skinning, this allow specifying a transform that transforms the scalp mesh into head space
+ 

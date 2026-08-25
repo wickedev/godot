@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="WeatherBus" inherits="Object" api_type="core" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Canonical world state (time of day, wind, wetness, precipitation), broadcast to every shader.
+	</brief_description>
+	<description>
+		A weather system's job is to get one state in front of every material in the world. Godot already binds the global shader uniform buffer to spatial, particles, sky, fog and canvas_item shaders alike, so this singleton owns that state and pushes it there rather than adding a second channel.
+		Setters write through immediately. A write costs a buffer store plus a dirty-page mark, and only dirty pages upload each frame, so updating these every frame is not something to budget around.
+		Shaders read the same values through [code]#include "engine://shaderlib/weather.gdshaderinc"[/code], which also declares the uniforms and documents the direction conventions. Prefer it over declaring the globals by hand, so the spelling stays in one place.
+		The C++ getters exist because not every consumer is a shader — hair simulation, buoyancy and [Area3D] wind run on the CPU and need the same numbers.
+		[b]Note:[/b] for values that are also gameplay state, [member weather_temperature] most obviously, this singleton is a mirror rather than the source of truth. Whatever simulates the weather owns the value and pushes it here. Two writers racing to own one value is a bug this class cannot detect.
+		[b]Note:[/b] built-in materials such as [BaseMaterial3D] generate their shader code in C++ and never reference global uniforms, so they cannot read this bus. Materials that need wind or wetness have to be [ShaderMaterial].
+		[b]Note:[/b] this singleton is main-thread only. The setters are unsynchronized, as are the underlying [RenderingServer] calls. Code running on a worker thread should be handed a value copied on the main thread rather than calling the getters itself.
+	</description>
+	<tutorials>
+	</tutorials>
+	<methods>
+		<method name="get_wind_velocity" qualifiers="const">
+			<return type="Vector3" />
+			<description>
+				Wind velocity in meters per second, gust applied — that is, [member wind_direction] times [member wind_speed] times [member wind_gust].
+				Matches [code]weather_wind_velocity()[/code] in [code]engine://shaderlib/weather.gdshaderinc[/code]. Use one or the other rather than recomputing it, so CPU consumers and shaders cannot drift apart.
+			</description>
+		</method>
+	</methods>
+	<members>
+		<member name="tod_moon_direction" type="Vector3" setter="set_tod_moon_direction" getter="get_tod_moon_direction" default="Vector3(0, -1, 0)">
+			Unit vector pointing [b]toward[/b] the moon, in world space. Same convention as [member tod_sun_direction].
+		</member>
+		<member name="tod_sun_direction" type="Vector3" setter="set_tod_sun_direction" getter="get_tod_sun_direction" default="Vector3(0, 1, 0)">
+			Unit vector pointing [b]toward[/b] the sun, in world space — the lighting L-vector convention. Note this is the opposite sense from [member wind_direction], which follows the fluid convention instead; each field keeps its own.
+		</member>
+		<member name="tod_sun_intensity" type="float" setter="set_tod_sun_intensity" getter="get_tod_sun_intensity" default="1.0">
+			Sun intensity multiplier. [code]0.0[/code] below the horizon.
+		</member>
+		<member name="tod_time" type="float" setter="set_tod_time" getter="get_tod_time" default="0.0">
+			Time of day as a day fraction: [code]0.0[/code] at the start of the day, approaching [code]1.0[/code] at the end of it.
+		</member>
+		<member name="weather_fog_density" type="float" setter="set_weather_fog_density" getter="get_weather_fog_density" default="0.0">
+			Fog density between [code]0.0[/code] and [code]1.0[/code].
+		</member>
+		<member name="weather_rain_intensity" type="float" setter="set_weather_rain_intensity" getter="get_weather_rain_intensity" default="0.0">
+			Rainfall intensity between [code]0.0[/code] and [code]1.0[/code].
+		</member>
+		<member name="weather_snow_intensity" type="float" setter="set_weather_snow_intensity" getter="get_weather_snow_intensity" default="0.0">
+			Snowfall intensity between [code]0.0[/code] and [code]1.0[/code].
+		</member>
+		<member name="weather_temperature" type="float" setter="set_weather_temperature" getter="get_weather_temperature" default="20.0">
+			Air temperature in degrees Celsius. Typically drives the rain/snow transition. This is usually gameplay state mirrored onto the bus rather than owned by it.
+		</member>
+		<member name="wetness_amount" type="float" setter="set_wetness_amount" getter="get_wetness_amount" default="0.0">
+			How wet the world is, between [code]0.0[/code] (dry) and [code]1.0[/code] (soaked).
+		</member>
+		<member name="wetness_porosity" type="float" setter="set_wetness_porosity" getter="get_wetness_porosity" default="0.0">
+			How far albedo darkens at full wetness, between [code]0.0[/code] and [code]1.0[/code]. Porous materials such as cloth or soil darken more than sealed ones.
+		</member>
+		<member name="wind_direction" type="Vector3" setter="set_wind_direction" getter="get_wind_direction" default="Vector3(1, 0, 0)">
+			Unit vector for the direction the wind blows [b]toward[/b], in world space — the fluid convention. Note this is the opposite sense from [member tod_sun_direction].
+		</member>
+		<member name="wind_gust" type="float" setter="set_wind_gust" getter="get_wind_gust" default="1.0">
+			Gust multiplier applied on top of [member wind_speed]. [code]1.0[/code] means no gust.
+		</member>
+		<member name="wind_speed" type="float" setter="set_wind_speed" getter="get_wind_speed" default="0.0">
+			Base wind speed in meters per second, excluding gusting. See [method get_wind_velocity] for the combined value.
+		</member>
+		<member name="wind_turbulence" type="float" setter="set_wind_turbulence" getter="get_wind_turbulence" default="0.0">
+			High-frequency jitter between [code]0.0[/code] and [code]1.0[/code]. Drives the incoherent part of foliage sway.
+		</member>
+	</members>
+</class>

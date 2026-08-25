@@ -143,6 +143,34 @@ thirdparty_sources = [
     "Jolt/TriangleSplitter/TriangleSplitterMean.cpp",
 ]
 
+# Strand-hair solver + its compute abstraction layer.
+#
+# Upstream gates the backends behind JPH_USE_CPU_COMPUTE / JPH_USE_VK / JPH_USE_DX12 /
+# JPH_USE_MTL. Only the CPU one is wired up so far: it compiles the HLSL kernels as C++ via
+# Jolt/Compute/CPU/HLSLToCPP.h and needs no shader toolchain. Upstream documents it as
+# debug-only and unoptimized, so it is a reference implementation rather than a shippable
+# path -- hence `jolt_hair_compute` defaulting to "none". The GPU backends are vendored but
+# not built: they load precompiled .spv / Jolt.metallib at runtime, which needs an offline
+# HLSL compile step we do not have, and ComputeSystemVK::Initialize() wants a dedicated
+# compute queue index that RenderingDeviceDriverVulkan does not hand out yet.
+if env["jolt_hair_compute"] != "none":
+    thirdparty_sources += [
+        "Jolt/Compute/ComputeSystem.cpp",
+        "Jolt/Physics/Hair/Hair.cpp",
+        "Jolt/Physics/Hair/HairSettings.cpp",
+        "Jolt/Physics/Hair/HairShaders.cpp",
+        "Jolt/Physics/Hair/RegisterHair.cpp",
+    ]
+
+if env["jolt_hair_compute"] == "cpu":
+    thirdparty_sources += [
+        "Jolt/Compute/CPU/ComputeBufferCPU.cpp",
+        "Jolt/Compute/CPU/ComputeQueueCPU.cpp",
+        "Jolt/Compute/CPU/ComputeSystemCPU.cpp",
+        "Jolt/Shaders/HairWrapper.cpp",
+        "Jolt/Shaders/TestComputeWrapper.cpp",
+    ]
+
 thirdparty_sources = [thirdparty_dir + file for file in thirdparty_sources]
 
 env_jolt.Prepend(CPPPATH=[thirdparty_dir])
@@ -155,6 +183,15 @@ if env.editor_build:
 
 if env["precision"] == "double":
     env_jolt.Append(CPPDEFINES=["JPH_DOUBLE_PRECISION"])
+
+if env["jolt_hair_compute"] != "none":
+    # Gates the parts that hold whichever backend is selected -- notably RegisterHair(), which
+    # registers HairSettings with the Jolt factory and has to happen for every backend, not just
+    # the CPU one.
+    env_jolt.Append(CPPDEFINES=["GODOT_JOLT_HAIR"])
+
+if env["jolt_hair_compute"] == "cpu":
+    env_jolt.Append(CPPDEFINES=["JPH_USE_CPU_COMPUTE"])
 
 env_thirdparty = env_jolt.Clone()
 env_thirdparty.disable_warnings()
@@ -173,6 +210,11 @@ env_jolt.add_source_files(module_obj, "misc/*.cpp")
 env_jolt.add_source_files(module_obj, "objects/*.cpp")
 env_jolt.add_source_files(module_obj, "shapes/*.cpp")
 env_jolt.add_source_files(module_obj, "spaces/*.cpp")
+
+if env["tests"]:
+    # Compiled in the module env so the tests can exercise Jolt without the test binary needing
+    # <Jolt/...> on its include path; tests/test_jolt_hair.h talks to this through a plain header.
+    env_jolt.add_source_files(module_obj, "tests/*.cpp")
 env.modules_sources += module_obj
 
 # Needed to force rebuilding the module files when the thirdparty library is updated.
