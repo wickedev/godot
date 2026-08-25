@@ -2872,7 +2872,10 @@
 		</constant>
 		<constant name="SUPPORTS_IMAGE_ATOMIC_64_BIT" value="17" enum="Features">
 			Support for 64-bit image atomic operations. This allows a shader to pack a depth value and an identifier into a single [constant DATA_FORMAT_R64_UINT] texel and resolve visibility with one atomic operation.
-			[b]Note:[/b] On Metal this requires both a GPU family that offers 64-bit image atomics and an OS new enough to expose native image atomics. It is not available through MoltenVK.
+			[b]Note:[/b] This reports whether the operations are actually usable, not merely whether the hardware advertises them. It is currently only available on Vulkan, and only when [constant DATA_FORMAT_R64_UINT] can be used as a storage image with atomics. Metal and Direct3D 12 have no 64-bit single-channel texture format, so they report [code]false[/code] regardless of hardware.
+		</constant>
+		<constant name="SUPPORTS_DESCRIPTOR_INDEXING" value="18" enum="Features">
+			Support for indexing a descriptor array with a value that varies per shader invocation. A visibility buffer resolve needs this, because the material it looks up is chosen per pixel rather than per draw.
 		</constant>
 		<constant name="LIMIT_MAX_BOUND_UNIFORM_SETS" value="0" enum="Limit">
 			Maximum number of uniform sets that can be bound at a given time.

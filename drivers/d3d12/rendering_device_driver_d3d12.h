@@ -106,7 +106,6 @@ class RenderingDeviceDriverD3D12 : public RenderingDeviceDriver {
 		bool depth_bounds_supported = false;
 		bool uma_supported = false;
 		bool gpu_upload_heap_supported = false;
-		bool image_atomic_64_bit_supported = false;
 	};
 
 	struct SamplerCapabilities {

@@ -2731,6 +2731,9 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 			return true;
 		case SUPPORTS_BUFFER_DEVICE_ADDRESS:
 			return device_properties->features.supports_gpu_address;
+		case SUPPORTS_DESCRIPTOR_INDEXING:
+			// Argument buffers are indexed with arbitrary per-invocation values by design.
+			return device_properties->features.argument_buffers_tier >= MTL::ArgumentBuffersTier2;
 		case SUPPORTS_DRAW_INDIRECT_COUNT:
 			// Metal has no direct equivalent of vkCmdDrawIndirectCount. Consuming a GPU-provided
 			// draw count requires MTLIndirectCommandBuffer, which this driver does not implement yet,
@@ -2745,10 +2748,13 @@ bool RenderingDeviceDriverMetal::has_feature(Features p_feature) {
 		case SUPPORTS_IMAGE_ATOMIC_32_BIT:
 			return device_properties->features.supports_native_image_atomics;
 		case SUPPORTS_IMAGE_ATOMIC_64_BIT:
-			// Two independent gates: the GPU family must offer 64-bit image atomics, and the OS/MSL
-			// version must expose native image atomics at all. supports_native_image_atomics also
-			// carries the GODOT_MTL_DISABLE_IMAGE_ATOMICS override.
-			return device_properties->features.supports_image_atomic_64_bit && device_properties->features.supports_native_image_atomics;
+			// The hardware gates (features.supports_image_atomic_64_bit and
+			// features.supports_native_image_atomics) can both be true, but Metal has no 64-bit
+			// single-channel pixel format: R64_UINT maps to Invalid in pixel_formats.cpp. There is no
+			// storage image for the atomics to act on, so reporting support would promise a path that
+			// cannot be built. Revisit if a 64-bit-wide storage image route (for example RG32_UINT
+			// viewed as 64-bit) is implemented for this driver.
+			return false;
 		case SUPPORTS_VULKAN_MEMORY_MODEL:
 			return true;
 		case SUPPORTS_POINT_SIZE:
