@@ -297,21 +297,98 @@ TEST_CASE("[Audio][AudioSuspension] A partial external mix must not promote stal
 	CHECK_MESSAGE(tail_matches_reference, "Post-flush audio must bit-exactly match a fresh playback at the seek position.");
 }
 
-TEST_CASE("[Audio][AudioSuspension] A looping mix inside the protocol scope does not deadlock") {
-	// SCOPE, honestly: this is a smoke test for the inline WAV loop wrap running
-	// inside the protocol, nothing more. It does NOT cover lock reentrancy. The
-	// unit-test harness has no AudioServer, so begin/end_stream_mutation() are
-	// no-ops here regardless of the setting, and a WAV loop wraps inline without
-	// a nested seek. Reentrancy on the MP3/Vorbis path (public seek() during
-	// mix, on the audio thread, with the setting on) and the wake-vs-mutation
-	// race are unverified by this suite -- see the note in the review thread.
+// A resampler buffer that goes stale can come back FRESH inside a single mix:
+// once the stale remainder is consumed, the refill decodes from the repositioned
+// decoder. Flushing then is not merely wasteful -- the flush does not rewind, so
+// those frames are lost for good.
+static void _check_flush_after_refill_is_lossless(int p_mix_frames) {
+	// Two playbacks driven identically; only one gets the wake flush. If the
+	// flush is correctly a no-op here, their continuations are bit-identical.
+	// Comparing against a playback merely STARTED at the seek position would not
+	// work: it has zeroed cubic-interpolation history where this one carries the
+	// last frames of the discarded buffer, so the two differ at the boundary for
+	// reasons that have nothing to do with the flush.
+	const double seek_pos = 0.31;
+	Ref<AudioStreamWAV> stream = _make_pcm16_stream();
+
+	Ref<AudioStreamPlayback> flushed = stream->instantiate_playback();
+	Ref<AudioStreamPlayback> control = stream->instantiate_playback();
+	for (const Ref<AudioStreamPlayback> &playback : { flushed, control }) {
+		playback->start(0.0);
+		_mix(playback, 256); // Buffer now holds pre-seek audio.
+		playback->seek(seek_pos); // Stale.
+		_mix_external(playback, p_mix_frames); // Consumes the stale remainder and refills.
+	}
+
+	flushed->flush_suspension_residuals(); // Must be a no-op now.
+
+	const Vector<AudioFrame> after_flush = _mix(flushed, 128);
+	const Vector<AudioFrame> expected = _mix(control, 128);
+
+	bool lossless = true;
+	for (int i = 0; i < 128; i++) {
+		if (!_frames_equal(after_flush[i], expected[i])) {
+			lossless = false;
+			break;
+		}
+	}
+	CHECK_MESSAGE(lossless, "Post-refill residuals were flushed: the flush does not rewind, so those frames are gone.");
+}
+
+TEST_CASE("[Audio][AudioSuspension] Residuals refilled after the stale remainder are not flushed") {
+	SUBCASE("The stale buffer is consumed exactly") {
+		// 128 frames at 1:1 is exactly one internal buffer.
+		_check_flush_after_refill_is_lossless(128);
+	}
+
+	SUBCASE("The stale buffer is consumed and the decoder refills more than once") {
+		_check_flush_after_refill_is_lossless(256);
+	}
+}
+
+TEST_CASE("[Audio][AudioSuspension] A partially consumed stale buffer stays stale at a low rate scale") {
+	// At rate_scale 0.01 one source frame stretches across ~100 output frames, so
+	// a mix that looks long in output terms barely advances the source and cannot
+	// exhaust the stale buffer. The drop this protects against is correspondingly
+	// long in wall-clock terms -- far beyond the wake ramp.
+	const double seek_pos = 0.31;
+	Ref<AudioStreamWAV> stream = _make_pcm16_stream();
+	Ref<AudioStreamPlayback> playback = stream->instantiate_playback();
+	playback->start(0.0);
+	_mix(playback, 256);
+
+	playback->seek(seek_pos);
+	const Vector<AudioFrame> partial = playback->mix_audio(0.01f, 512);
+	REQUIRE(partial.size() == 512);
+
+	const double position_before_flush = playback->get_playback_position();
+	playback->flush_suspension_residuals();
+	CHECK(playback->get_playback_position() == doctest::Approx(position_before_flush));
+
+	const Vector<AudioFrame> resumed = _mix(playback, 128);
+	bool prefix_silent = true;
+	for (int i = 0; i < 128; i++) {
+		if (resumed[i].left != 0.0f || resumed[i].right != 0.0f) {
+			prefix_silent = false;
+			break;
+		}
+	}
+	CHECK_MESSAGE(prefix_silent, "A stale buffer that was only partially consumed must still be flushed.");
+}
+
+TEST_CASE("[Audio][AudioSuspension] A WAV loop wraps inline without hanging") {
+	// NOT a lock-reentrancy test, and no longer claims to be. The unit-test
+	// harness has no AudioServer, so the mutation scopes are no-ops here whatever
+	// the setting says, and a WAV loop wraps inline without a nested seek. This is
+	// a plain smoke test that the loop path still runs inside the protocol.
+	// Reentrancy on the MP3/Vorbis path (public seek() during mix, on the audio
+	// thread, with the setting on) and the wake-vs-mutation race need a harness
+	// with a live AudioServer and are NOT covered here.
 	Ref<AudioStreamWAV> stream = _make_pcm16_stream(1024);
 	stream->set_loop_mode(AudioStreamWAV::LOOP_FORWARD);
 	stream->set_loop_end(1024);
 	Ref<AudioStreamPlayback> playback = stream->instantiate_playback();
 	playback->start(0.0);
-	// Mix well past the loop point repeatedly; completing without deadlock or
-	// crash (and still playing) is the assertion.
 	for (int i = 0; i < 8; i++) {
 		_mix(playback, 512);
 	}

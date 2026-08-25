@@ -145,6 +145,8 @@ void AudioStreamPlaybackMP3::seek(double p_time) {
 	}
 
 	bump_suspension_generation();
+	// Repositions without refilling the resampler: what it holds is now pre-seek.
+	mark_suspension_residuals_stale();
 	frames_mixed = uint32_t(mp3_stream->sample_rate * p_time);
 	drmp3_seek_to_pcm_frame(&mp3d, (uint64_t)frames_mixed);
 }

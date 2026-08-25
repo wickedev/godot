@@ -146,14 +146,11 @@ public:
 	// e.g. start() via begin_resample()); flushing fresh residuals would drop the
 	// first frames of the restarted stream.
 	virtual void flush_suspension_residuals() {}
-	// Records that the internally buffered audio belongs to the current generation
-	// (used after an external mix consumed frames: the remaining lookahead is the
-	// valid post-mutation continuation, not stale audio). Only ever called when the
-	// residuals were ALREADY fresh -- see mix_audio().
-	virtual void mark_suspension_residuals_fresh() {}
-	// Whether the internally buffered audio is post-mutation. A playback with no
-	// internal buffer has nothing that could go stale, so the base answer is true.
-	virtual bool suspension_residuals_are_fresh() const { return true; }
+	// Called by an opt-in playback whose seek() repositioned the decoder WITHOUT
+	// refilling the internal buffer, leaving pre-mutation audio buffered. A
+	// mutation that refills (start(), which runs begin_resample()) must not call
+	// this: its buffer is already the new position's audio.
+	virtual void mark_suspension_residuals_stale() {}
 
 	virtual void set_parameter(const StringName &p_name, const Variant &p_value);
 	virtual Variant get_parameter(const StringName &p_name) const;
@@ -188,10 +185,13 @@ class AudioStreamPlaybackResampled : public AudioStreamPlayback {
 	AudioFrame internal_buffer[INTERNAL_BUFFER_LEN + CUBIC_INTERP_HISTORY];
 	unsigned int internal_buffer_end = -1;
 	uint64_t mix_offset = 0;
-	// Generation the internal buffer's contents belong to: set by begin_resample()
-	// AFTER the caller bumped, so flush_suspension_residuals() can tell fresh
-	// (post-mutation) residuals from stale ones. See flush_suspension_residuals().
-	SafeNumeric<uint64_t> residual_generation;
+	// Whether the internal buffer holds PRE-mutation audio. This is a property of
+	// the buffer itself, not something derivable from the generation counter at a
+	// call boundary: the buffer can go stale (a seek that does not refill) and
+	// come back fresh (mix() consuming the stale remainder and refilling from the
+	// repositioned decoder) inside a single call. Set on a non-refilling
+	// reposition, cleared by every refill. Starts set: nothing is buffered yet.
+	SafeFlag residuals_stale{ true };
 
 protected:
 	void begin_resample();
@@ -212,8 +212,7 @@ public:
 	virtual int mix(AudioFrame *p_buffer, float p_rate_scale, int p_frames) override;
 
 	virtual void flush_suspension_residuals() override;
-	virtual void mark_suspension_residuals_fresh() override { residual_generation.set(get_suspension_generation()); }
-	virtual bool suspension_residuals_are_fresh() const override { return residual_generation.get() == get_suspension_generation(); }
+	virtual void mark_suspension_residuals_stale() override { residuals_stale.set(); }
 
 	AudioStreamPlaybackResampled() { mix_offset = 0; }
 };

@@ -294,6 +294,8 @@ void AudioStreamPlaybackOggVorbis::seek(double p_time) {
 	}
 
 	bump_suspension_generation();
+	// Repositions without refilling the resampler: what it holds is now pre-seek.
+	mark_suspension_residuals_stale();
 	frames_mixed = uint32_t(vorbis_data->get_sampling_rate() * p_time);
 
 	const int64_t desired_sample = p_time * get_stream_sampling_rate();

@@ -124,28 +124,20 @@ Vector<AudioFrame> AudioStreamPlayback::mix_audio(float p_rate_scale, int p_fram
 		return res;
 	}
 
-	// Sampled BEFORE mixing. Promoting the leftover lookahead to "fresh" is only
-	// correct if it was fresh to begin with: mixing part of an already-stale
-	// buffer hands the caller pre-mutation audio and leaves the REST of that
-	// stale audio behind, and marking it fresh would make the wake flush skip it
-	// -- the pre-seek tail would then play on. When it was stale, it stays stale
-	// and the flush drops it, which is the conservative direction.
-	const bool residuals_were_fresh = suspension_residuals_are_fresh();
-
 	int frames = mix(res.ptrw(), p_rate_scale, p_frames);
 	res.resize(frames);
 
-	// Every external mix counts, without inspecting what the subclass did. There
+	// Consuming frames is not repositioning: whatever lookahead is left is the
+	// continuation of what the caller just received, so this does NOT touch
+	// staleness. mix() itself clears it if it refilled from the decoder.
+	//
+	// The bump is unconditional, without inspecting what the subclass did. There
 	// is no portable predicate for "this mix consumed stream data": the returned
 	// count is frames WRITTEN, not consumed, and is_playing() is wrong for at
 	// least the microphone (records while not "playing"), the synchronized and
 	// interactive playbacks (return silence across a pending switch), and any
-	// GDExtension playback. Guessing there risks the audible error; bumping does
-	// not.
+	// GDExtension playback.
 	bump_suspension_generation();
-	if (residuals_were_fresh) {
-		mark_suspension_residuals_fresh();
-	}
 
 	return res;
 }
@@ -222,16 +214,18 @@ void AudioStreamPlaybackResampled::begin_resample() {
 	//mix buffer
 	_mix_internal(internal_buffer + 4, INTERNAL_BUFFER_LEN);
 	mix_offset = 0;
-	// The buffer now holds audio produced under the caller's (post-bump)
-	// generation: a wake must not flush it (see flush_suspension_residuals()).
-	residual_generation.set(get_suspension_generation());
+	// The buffer now holds audio decoded at the current position, so a wake must
+	// not flush it (see flush_suspension_residuals()).
+	residuals_stale.clear();
 }
 
 void AudioStreamPlaybackResampled::flush_suspension_residuals() {
-	if (residual_generation.get() == get_suspension_generation()) {
-		// The mutation that woke us already refilled the buffer (start() path):
-		// these residuals are the first frames of the new stream position, not
-		// stale audio. Flushing them would drop the start of the sound.
+	if (!residuals_stale.is_set()) {
+		// The buffer holds audio decoded at the current position -- either the
+		// mutation refilled it (start() via begin_resample()) or a later mix()
+		// consumed the stale audio and refilled. Flushing here would drop those
+		// frames for good: the flush does not rewind the decoder, so anything
+		// discarded is never decoded again.
 		return;
 	}
 	// Stale pre-mutation audio (seek() repositions the decoder without
@@ -244,7 +238,7 @@ void AudioStreamPlaybackResampled::flush_suspension_residuals() {
 	}
 	mix_offset = 0;
 	internal_buffer_end = -1;
-	residual_generation.set(get_suspension_generation());
+	residuals_stale.clear();
 }
 
 void AudioStreamPlaybackResampled::_begin_resample_bind() {
@@ -311,6 +305,9 @@ int AudioStreamPlaybackResampled::mix(AudioFrame *p_buffer, float p_rate_scale, 
 			internal_buffer[2] = internal_buffer[INTERNAL_BUFFER_LEN + 2];
 			internal_buffer[3] = internal_buffer[INTERNAL_BUFFER_LEN + 3];
 			int mixed_frames = _mix_internal(internal_buffer + 4, INTERNAL_BUFFER_LEN);
+			// Refilled from the decoder's current position: whatever was stale
+			// here has been consumed and replaced.
+			residuals_stale.clear();
 			if (mixed_frames != INTERNAL_BUFFER_LEN) {
 				// internal_buffer[mixed_frames] is the first frame of silence.
 				internal_buffer_end = mixed_frames;

@@ -97,6 +97,8 @@ void AudioStreamPlaybackWAV::seek(double p_time) {
 	}
 
 	bump_suspension_generation();
+	// Repositions without refilling the resampler: what it holds is now pre-seek.
+	mark_suspension_residuals_stale();
 	offset = int64_t(p_time * base->mix_rate);
 }
 
