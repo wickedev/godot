@@ -3391,8 +3391,14 @@
 			The size of a block allocated in the staging buffers. Staging buffers are the intermediate resources the engine uses to upload or download data to the GPU. This setting determines the max amount of data that can be transferred in a copy operation. Increasing this will result in faster data transfers at the cost of extra memory.
 			[b]Note:[/b] This property is only read when the project starts. There is currently no way to change this value at run-time.
 		</member>
+		<member name="rendering/rendering_device/staging_buffer/download_max_size_mb" type="int" setter="" getter="" default="0">
+			The maximum amount of memory allowed to be used by the [i]download[/i] staging buffers, which back readbacks from the GPU such as [method RenderingDevice.buffer_get_data_async]. If [code]0[/code], the download buffers use [member rendering/rendering_device/staging_buffer/max_size_mb] instead, which is the behavior of projects that predate this setting.
+			Raise this when a project reads back more per frame than it uploads — GPU-driven culling results or streaming page requests, for example — so that the readback budget can grow without also growing the upload budget.
+			[b]Note:[/b] The block size is shared with the upload staging buffers; see [member rendering/rendering_device/staging_buffer/block_size_kb].
+			[b]Note:[/b] This property is only read when the project starts. There is currently no way to change this value at run-time.
+		</member>
 		<member name="rendering/rendering_device/staging_buffer/max_size_mb" type="int" setter="" getter="" default="128">
-			The maximum amount of memory allowed to be used by staging buffers. If the amount of data being uploaded or downloaded exceeds this amount, the GPU will stall and wait for previous frames to finish.
+			The maximum amount of memory allowed to be used by the upload staging buffers, and by the download staging buffers unless [member rendering/rendering_device/staging_buffer/download_max_size_mb] is set. If the amount of data being transferred exceeds the applicable budget, the GPU will stall and wait for previous frames to finish.
 			[b]Note:[/b] This property is only read when the project starts. There is currently no way to change this value at run-time.
 		</member>
 		<member name="rendering/rendering_device/staging_buffer/texture_download_region_size_px" type="int" setter="" getter="" default="64">
