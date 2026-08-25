@@ -1,5 +1,8 @@
 """Run the workflow's own PowerShell PE parser against the shared fixtures.
 
+Both scripts build from the one fixture table in validate_pe_codeview.all_fixtures(),
+so neither can quietly cover less than the other.
+
 validate_pe_codeview.py tests a Python mirror of the parse. That mirror cannot catch
 PowerShell-specific defects, and one bit immediately: `$b[$a..$b]` on a byte array
 yields Object[], which does not bind the Guid(byte[]) overload, so PowerShell selected
@@ -26,8 +29,6 @@ import yaml
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 WORKFLOW = os.path.join(REPO, ".github", "workflows", "release_symbols.yml")
-
-EXPECT_OK = ["ok_pe32plus", "ok_pe32", "ok_notfirst", "ok_age9"]
 
 
 def load_fixture_builder():
@@ -84,24 +85,18 @@ def main():
     tmp = tempfile.mkdtemp(prefix="pecv_")
     fixtures = os.path.join(tmp, "fixtures")
     os.makedirs(fixtures)
-    cases = {
-        "ok_pe32plus": v.build_pe(magic=v.PE32_PLUS),
-        "ok_pe32": v.build_pe(magic=v.PE32),
-        "ok_notfirst": v.build_pe(extra_entries=2),
-        "ok_age9": v.build_pe(age=9),
-        "bad_size0": v.build_pe(size_of_data=0),
-        "bad_trunc": v.build_pe(size_of_data=20),
-        "bad_noterm": v.build_pe(pdb=b"godot.pdb", terminate_name=False, size_of_data=25),
-        "bad_notrsds": v.build_pe(signature=b"NB10"),
-        "bad_dirsize": v.build_pe(dir_size_override=30),
-        "bad_dirrva": v.build_pe(dir_rva_override=0x900000),
-    }
-    for key, image in cases.items():
-        with open(os.path.join(fixtures, f"{key}.bin"), "wb") as f:
+    # Same table the Python suite uses. Defining cases here instead would let the two
+    # implementations drift into covering different sets, which is how the zero-size
+    # and section-overrun cases went untested in PowerShell.
+    table = v.all_fixtures()
+    expect_ok = [name for name, (_, should_parse, _) in table.items() if should_parse]
+    for name, (image, _, _) in table.items():
+        with open(os.path.join(fixtures, f"{name}.bin"), "wb") as f:
             f.write(image)
+    print(f"{len(table)} shared fixtures ({len(expect_ok)} expected to parse)")
 
     script = os.path.join(tmp, "test.ps1")
-    expect = ",".join(f'"{n}"' for n in EXPECT_OK)
+    expect = ",".join(f'"{n}"' for n in expect_ok)
     with open(script, "w", encoding="utf-8") as f:
         f.write(fn + HARNESS.format(expect=expect, fixtures=fixtures))
 

@@ -40,6 +40,8 @@ def build_pe(
     extra_entries=0,
     dir_size_override=None,
     dir_rva_override=None,
+    sec_raw_size_override=None,
+    truncate_file_to=None,
 ):
     """Assemble a minimal PE image carrying a CodeView debug record.
 
@@ -82,7 +84,7 @@ def build_pe(
     sec = opt + opt_size
     buf[sec : sec + 8] = b".rdata\0\0"
     struct.pack_into("<I", buf, sec + 12, sec_va)
-    struct.pack_into("<I", buf, sec + 16, sec_size)
+    struct.pack_into("<I", buf, sec + 16, sec_size if sec_raw_size_override is None else sec_raw_size_override)
     struct.pack_into("<I", buf, sec + 20, sec_raw)
 
     dbg_file = sec_raw + (dbg_rva - sec_va)
@@ -108,6 +110,8 @@ def build_pe(
         # Fill to the end of the record so no NUL appears inside SizeOfData.
         for off in range(cv_raw + 24 + len(pdb), cv_raw + max(size_of_data, record_len)):
             buf[off] = 0x41
+    if truncate_file_to is not None:
+        return bytes(buf[:truncate_file_to])
     return bytes(buf)
 
 
@@ -177,6 +181,51 @@ def parse(b):
     raise ParseError("no CodeView (RSDS) debug entry")
 
 
+def all_fixtures():
+    """The shared case table. Both this script and validate_pe_codeview_pwsh.py build
+    from here, so neither can silently cover less than the other.
+
+    Maps name -> (image bytes, should_parse, note).
+    """
+    sec_va, sec_size = 0x1000, 0xC00
+    dir_rva = sec_va + 0x10
+    # Ends exactly on the section boundary: the containment check must use <=, not <.
+    exact_fit = sec_va + sec_size - dir_rva
+
+    return {
+        "ok_pe32plus": (build_pe(magic=PE32_PLUS), True, "well-formed PE32+"),
+        "ok_pe32": (build_pe(magic=PE32), True, "well-formed PE32 (data dir 16B earlier)"),
+        "ok_notfirst": (build_pe(extra_entries=2), True, "CodeView is not the first entry"),
+        "ok_age9": (build_pe(age=9), True, "age must reach the debug id"),
+        "ok_dir_ends_at_section_end": (
+            build_pe(dir_size_override=exact_fit - (exact_fit % 28)),
+            True,
+            "directory ends exactly at section end; boundary must be inclusive",
+        ),
+        "bad_size0": (build_pe(size_of_data=0), False, "entry SizeOfData zero"),
+        "bad_trunc": (build_pe(size_of_data=20), False, "entry shorter than an RSDS header"),
+        "bad_noterm": (
+            build_pe(pdb=b"godot.pdb", terminate_name=False, size_of_data=25),
+            False,
+            "PDB name not NUL-terminated inside the record",
+        ),
+        "bad_notrsds": (build_pe(signature=b"NB10"), False, "signature is not RSDS"),
+        "bad_dirsize_not_multiple": (build_pe(dir_size_override=30), False, "trailing partial entry"),
+        "bad_dirsize_zero": (build_pe(dir_size_override=0), False, "empty directory"),
+        "bad_dir_overruns_section": (
+            build_pe(dir_size_override=28 * 4096),
+            False,
+            "directory extends past its section",
+        ),
+        "bad_dir_rva_unmapped": (build_pe(dir_rva_override=0x900000), False, "RVA in no section"),
+        "bad_dir_past_eof": (
+            build_pe(sec_raw_size_override=0x4000, truncate_file_to=0x420),
+            False,
+            "section claims to contain the directory but the file ends first",
+        ),
+    }
+
+
 def debug_id(guid, age):
     """Sentry's PE/PDB debug identifier: GUID then age, uppercase, no separators."""
     return (guid.hex + format(age, "x")).upper()
@@ -204,57 +253,21 @@ def main():
             return
         failures.append(f"{label}: ACCEPTED malformed input ({because}); got {g}/{age}/{pdb}")
 
-    # Well-formed, both optional-header shapes. The data directory sits 16 bytes
-    # further into PE32+ than PE32.
-    expect_ok("PE32+ well-formed", build_pe(magic=PE32_PLUS), DEFAULT_GUID, 7, "godot.pdb")
-    expect_ok("PE32 well-formed", build_pe(magic=PE32), DEFAULT_GUID, 7, "godot.pdb")
+    fixtures = all_fixtures()
+    for name, (image, should_parse, note) in fixtures.items():
+        if should_parse:
+            expect_ok(f"{name} ({note})", image, DEFAULT_GUID, 9 if name == "ok_age9" else 7, "godot.pdb")
+        else:
+            expect_reject(f"{name} ({note})", image, note)
 
-    # The CodeView entry need not be first.
-    expect_ok(
-        "CodeView after other debug entries",
-        build_pe(extra_entries=2),
-        DEFAULT_GUID,
-        7,
-        "godot.pdb",
-    )
-
-    # Age must survive: same GUID with a different age is a DIFFERENT binary, and
-    # treating them as equal is what lets a stale PDB ship.
-    g2, a2, _ = parse(build_pe(age=9))
-    g1, a1, _ = parse(build_pe(age=7))
+    # Age must survive into the identifier: same GUID with a different age is a
+    # different binary, and conflating them is what lets a stale PDB ship.
+    g1, a1, _ = parse(fixtures["ok_pe32plus"][0])
+    g2, a2, _ = parse(fixtures["ok_age9"][0])
     if debug_id(g1, a1) == debug_id(g2, a2):
-        failures.append("age is not part of the debug id: age 7 and 9 produced the same value")
+        failures.append("age is not part of the debug id: ages 7 and 9 produced the same value")
     else:
         print(f"[OK  ] age distinguishes builds: {debug_id(g1, a1)} != {debug_id(g2, a2)}")
-
-    # Malformed cases the workflow must refuse rather than read past.
-    expect_reject("SizeOfData=0", build_pe(size_of_data=0), "zero-length record")
-    expect_reject("SizeOfData truncated", build_pe(size_of_data=20), "record shorter than an RSDS header")
-    expect_reject(
-        "PDB name unterminated",
-        build_pe(pdb=b"godot.pdb", terminate_name=False, size_of_data=25),
-        "no NUL inside SizeOfData",
-    )
-    expect_reject("no CodeView entry", build_pe(signature=b"NB10"), "signature is not RSDS")
-
-    # Whole-directory bounds. Individual SizeOfData checks do not cover these: the
-    # directory itself can be truncated, overrun its section, or fall off the file.
-    expect_reject(
-        "directory size not a multiple of 28",
-        build_pe(dir_size_override=30),
-        "trailing partial entry",
-    )
-    expect_reject("directory size zero", build_pe(dir_size_override=0), "empty directory")
-    expect_reject(
-        "directory overruns its section",
-        build_pe(dir_size_override=28 * 4096),
-        "extends past the containing section",
-    )
-    expect_reject(
-        "directory RVA outside any section",
-        build_pe(dir_rva_override=0x900000),
-        "unmapped RVA",
-    )
 
     if failures:
         print()

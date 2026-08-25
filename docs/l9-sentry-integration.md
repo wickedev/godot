@@ -113,8 +113,14 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 >
 > **디렉터리 단위:** 엔트리 검사만으로는 부족하다. 디렉터리 자체가 잘리거나 섹션을 넘거나 파일 밖으로 나갈 수 있다. 그래서 `dbgSize % 28 == 0`(잘린 마지막 엔트리 차단), **디렉터리 전체**가 담긴 섹션의 raw 범위 안에 들어갈 것, `dbgFileOff + dbgSize <= 파일 크기`를 검사한다.
 >
-> **파싱 로직 시험:** `misc/scripts/validate_pe_codeview.py`가 PE32/PE32+ 정상 케이스, CodeView가 첫 엔트리가 아닌 경우, age가 debug id를 실제로 가르는지, 그리고 malformed 4종(SizeOfData=0 / 절단 / 이름 미종료 / RSDS 아님)을 시험하며 **실패 시 non-zero로 종료**한다. pre-commit 훅으로 등록되어 이 스크립트나 워크플로가 바뀌면 돌아간다.
-> ⚠️ **이건 Python 미러를 시험하는 것이지 PowerShell을 실행하는 게 아니다.** 두 구현이 어긋나면 잡지 못한다 — 양쪽 주석에 "keep in step"을 명시해 뒀다.
+> **파싱 로직 시험 — 픽스처 14종, 두 구현 모두에서:**
+> `validate_pe_codeview.all_fixtures()`가 **단일 케이스 표**이고 Python 스위트와 PowerShell 러너가 **둘 다 여기서** 만든다. 한쪽만 적게 커버하는 일이 구조적으로 불가능하다 — 실제로 zero-size·section-overrun 케이스가 PowerShell 쪽에서 빠져 있었고, 그래서 표를 중앙화했다.
+>
+> 정상 5종(PE32 / PE32+ / CodeView 비-선두 / age 반영 / **디렉터리가 섹션 끝에 정확히 맞닿는 경계**) + malformed 9종(엔트리 `SizeOfData` 0·절단·이름 미종료·RSDS 아님, 디렉터리 28배수 아님·크기 0·섹션 초과·RVA 미매핑·**섹션 매핑은 되지만 파일 끝을 넘음**). **실패 시 non-zero 종료.**
+>
+> **두 스크립트 모두 pre-commit 훅**이다:
+> - `validate_pe_codeview.py` — Python 미러
+> - `validate_pe_codeview_pwsh.py` — **워크플로에서 `Get-PeCodeView`를 그대로 추출해 실제 pwsh로 실행**. pwsh 없는 머신에선 스킵
 >
 > **Windows 검증을 sentry-cli에 위임하지 않는 이유:** `sentry-cli`는 DIF를 **파일 단위로 각자의 debug id에 따라** 받는다. 따라서 **이름만 맞고 내용이 다른 PDB(stale PDB)도 업로드는 정상 성공**한다 — 자기 debug id로 등록될 뿐이다. 그러면 크래시가 왔을 때 EXE의 debug id에 맞는 DIF가 없어 심볼이 안 붙는다. **업로드 성공은 대응 검증이 아니다.** 그래서 PE 디버그 디렉터리(directory 6, `IMAGE_DEBUG_TYPE_CODEVIEW`, `RSDS` 레코드)를 직접 읽어 대조한다.
 >
@@ -191,7 +197,7 @@ production=yes debug_symbols=yes separate_debug_symbols=yes
 - **프로덕션 텔레메트리**(세션·성능·이탈). runtime-misc §7(c)에 있으나 Task #6 범위 밖.
 - **Android/iOS 심볼.** 워크플로는 데스크톱 3플랫폼만 다룬다. 모바일은 콘솔(W4)과 함께 별도 판단.
 - **패키징 미포함.** macOS `.app`/export-template zip 조립(`generate_bundle`)은 범위 밖 — §2(c) 참조.
-- **PowerShell 파싱 코드 자체는 CI 첫 실행이 첫 검증이다.** 오프셋 산술은 `misc/scripts/validate_pe_codeview.py`가 Python 미러로 시험하지만(§2(c)), **PowerShell 전사(轉寫)를 실행해 본 것은 아니다.** 로컬에 pwsh가 없다.
+- **PowerShell 파싱은 실제 pwsh로 검증됐다**(7.4.6/aarch64, 픽스처 14종 통과, §2(c)). **아직 Windows에서 실행되지 않은 것**은 `sentry-cli debug-files check`의 출력 포맷, 실제 MSVC PDB 대조, DLL 스테이징 경로다 — 파싱 로직 자체는 아니다.
 - **`--build-id` 실기 검증 미완.** 개발 머신이 macOS라 `platform=linuxbsd` 구성이 불가하다(`ERROR: Invalid target platform "linuxbsd"`). 플래그 경로는 코드 검토로만 확인했고, **실증은 워크플로의 `readelf -n` 게이트가 CI에서 수행**한다. 첫 릴리스 실행 시 이 스텝의 출력을 확인할 것.
 
 ---

@@ -438,11 +438,21 @@ jobs:
           # PIX SDKs, and a recursive copy republished them into dist/, undoing the very
           # contamination this staging step was introduced to remove. It also picked up
           # a WinPixEventRuntime.dll from the SDK on builds where use_pix was false.
+          # Only this build's own output locations. Scanning every child directory
+          # meant an unrelated or leftover arch directory could supply a D3D12Core.dll,
+          # satisfy the presence check, and hide that the arch we are actually shipping
+          # has no runtime at all. The arch comes from the binary we just verified,
+          # e.g. godot.windows.template_release.x86_64.console.exe -> x86_64.
           $binRoot = (Resolve-Path bin).Path
+          $arch = ($bins[0].Name -split '\.')[3]
+          if (-not $arch) {
+            Write-Output "::error::Could not determine architecture from $($bins[0].Name)."
+            exit 1
+          }
           $searchDirs = @($binRoot)
-          Get-ChildItem -Path bin -Directory -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -ne "build_deps" } |
-            ForEach-Object { $searchDirs += $_.FullName }
+          $archDir = Join-Path $binRoot $arch
+          if (Test-Path $archDir) { $searchDirs += $archDir }
+          Write-Output "staging runtime dependencies for arch '$arch' from: $($searchDirs -join ', ')"
 
           $stagedD3D12 = $false
           foreach ($dir in $searchDirs) {
