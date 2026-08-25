@@ -57,7 +57,50 @@ func _run() -> void:
 	#     vendor-dependent, which is exactly the thing worth measuring. ---
 	_try_blas("snorm16x3", RenderingDevice.DATA_FORMAT_R16G16B16_SNORM, _pack_snorm16x3(), 6)
 
+	# --- Stage 4: the G2 section 2 pool contract on ONE buffer. ---
+	_pool_contract()
+
 	_done = true
+
+
+## G2 section 2 wants a single pool that is simultaneously an SSBO (culling/resolve
+## reads), a BDA source, and acceleration-structure build input. Whether that is one
+## buffer or several depends on which creation entry point Godot files the RID under,
+## which the flag list alone does not capture -- so try it.
+func _pool_contract() -> void:
+	var data := _pack_f32()
+	var bits := (RenderingDevice.BUFFER_CREATION_AS_STORAGE_BIT
+		| RenderingDevice.BUFFER_CREATION_DEVICE_ADDRESS_BIT
+		| RenderingDevice.BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT)
+
+	# (a) storage_buffer_create -- the literal reading of "single large SSBO pool".
+	var sbuf := _rd.storage_buffer_create(data.size(), data)
+	var sgeom := RDAccelerationStructureGeometry.new()
+	sgeom.vertex_buffer = sbuf
+	sgeom.vertex_stride = 12
+	sgeom.vertex_count = 3
+	sgeom.vertex_format = RenderingDevice.DATA_FORMAT_R32G32B32_SFLOAT
+	var sblas := _rd.blas_create([sgeom], 0)
+	print("RESULT pool[storage_buffer_create]=%s" % ("ACCEPTED" if sblas.is_valid() else "REJECTED by blas_create"))
+
+	# (b) vertex_buffer_create with the full flag set.
+	var vbuf := _rd.vertex_buffer_create(data.size(), data, bits)
+	if not vbuf.is_valid():
+		print("RESULT pool[vertex_buffer_create]=CREATE_FAILED")
+		return
+	var vgeom := RDAccelerationStructureGeometry.new()
+	vgeom.vertex_buffer = vbuf
+	vgeom.vertex_stride = 12
+	vgeom.vertex_count = 3
+	vgeom.vertex_format = RenderingDevice.DATA_FORMAT_R32G32B32_SFLOAT
+	var vblas := _rd.blas_create([vgeom], 0)
+	var built := vblas.is_valid() and _rd.blas_build(vblas) == OK
+	print("RESULT pool[vertex_buffer_create+all_flags]_blas=%s" % ("OK" if built else "FAILED"))
+	var addr := _rd.buffer_get_device_address(vbuf)
+	print("RESULT pool[vertex_buffer_create+all_flags]_device_address=%s" % ("OK" if addr != 0 else "ZERO"))
+	if vblas.is_valid():
+		_cleanup.push_back(vblas)
+	_cleanup.push_back(vbuf)
 
 
 func _try_blas(label: String, fmt: int, data: PackedByteArray, stride: int) -> void:

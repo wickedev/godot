@@ -42,7 +42,31 @@ RESULT blas[snorm16x3]=OK (stride=6B)
 
 ⇒ **G2 §6 서명 조건("실기 1회 후 서명")을 충족한다.** 단 §3의 이식성 단서는 그대로다 — 6B는 스펙 필수가 아니므로 계약은 8B로 동결하고 6B는 벤더별 최적화로 남긴다.
 
-### ⚠️ 발견 — ray query만 쓸 때도 hit SBT를 강제한다
+### ⚠️ 발견 2 — G2 §2 "단일 SSBO 풀"은 생성 진입점을 바꿔야 성립한다
+
+G2 §2는 풀을 *"단일 대형 SSBO 풀"* + usage 플래그 4종으로 적는다. **플래그만으로는 부족하다 — 어느 생성 함수로 만들었는지가 결정적이다.**
+
+`blas_create`(`rendering_device.cpp:302`)는 정점 버퍼를 **`vertex_buffer_owner`에서만** 찾는다(`:325`). 인덱스는 **`index_buffer_owner`에서만**(`:344`). 반면 `uniform_set_create`의 `UNIFORM_TYPE_STORAGE_BUFFER` 분기(`:4743-4761`)는 **storage·vertex·index 버퍼를 모두 받되, vertex/index는 `BUFFER_USAGE_STORAGE_BIT`가 있어야** 한다.
+
+실측(dgx/GB10):
+```
+RESULT pool[storage_buffer_create]=REJECTED by blas_create
+RESULT pool[vertex_buffer_create+all_flags]_blas=OK
+RESULT pool[vertex_buffer_create+all_flags]_device_address=OK
+```
+
+⇒ **`storage_buffer_create`로 만든 풀은 BLAS 입력이 될 수 없다**("Parameter vertex_buffer is null"). 정점 풀은 반드시:
+```
+vertex_buffer_create(size, data,
+    BUFFER_CREATION_AS_STORAGE_BIT
+  | BUFFER_CREATION_DEVICE_ADDRESS_BIT
+  | BUFFER_CREATION_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT)
+```
+이 조합 하나로 SSBO 읽기·BDA·AS 빌드 입력이 **전부 성립**함을 확인했다. 인덱스 풀도 같은 이유로 `index_buffer_create`여야 한다.
+
+**G2가 이걸 동결해야 하는 이유:** §2 스스로 *"나중에 플래그를 바꾸면 스트리밍 레이어 전체 개조"*라고 적는다. 생성 진입점은 플래그보다 더 바꾸기 어렵다 — 풀 타입이 바뀌면 그 풀을 참조하는 모든 코드가 바뀐다.
+
+### ⚠️ 발견 3 — ray query만 쓸 때도 hit SBT를 강제한다
 
 TLAS 빌드는 세 경우 모두 실패했다:
 ```
