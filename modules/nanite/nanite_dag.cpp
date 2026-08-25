@@ -338,6 +338,13 @@ Vector<String> NaniteDAG::validate() const {
 		if (!(g.error >= error)) {
 			errors.push_back(at + vformat("MONOTONICITY VIOLATED: parent error %f is not at least the cluster's own error %f.", g.error, error));
 		}
+		// The analytic edge carries the same requirement. It is built the same
+		// way, so it holds for the same reason -- but a payload can be corrupted
+		// independently of the measured value, and checking only one of the two
+		// leaves the other free to invert.
+		if (!(g.analytic_error >= get_cluster_analytic_error(i))) {
+			errors.push_back(at + vformat("MONOTONICITY VIOLATED: parent analytic error %f is not at least the cluster's own %f.", g.analytic_error, get_cluster_analytic_error(i)));
+		}
 		if (!g.lod_bounds.contains(get_cluster_lod_bounds(i), epsilon)) {
 			errors.push_back(at + "MONOTONICITY VIOLATED: parent LOD sphere does not enclose the cluster's LOD sphere.");
 		}
@@ -405,11 +412,20 @@ String NaniteDAG::get_report() const {
 	String report = vformat("Nanite DAG: %d levels, %d clusters, %d groups, %d triangles, %d vertices (format %d, builder %d, %d deviation samples/triangle)\n",
 			get_level_count(), get_cluster_count(), get_group_count(), get_triangle_count(), vertex_count,
 			FORMAT_VERSION, BUILDER_VERSION, deviation_samples_per_triangle);
-	report += "  level | clusters | triangles | max error\n";
-	report += "  ------+----------+-----------+----------\n";
+	report += "  level | clusters | triangles | max error | analytic | ratio\n";
+	report += "  ------+----------+-----------+-----------+----------+------\n";
 	for (uint32_t level = 0; level < get_level_count(); level++) {
-		report += vformat("  %5d | %8d | %9d | %.6f\n",
-				level, get_level_cluster_count(level), get_level_triangle_count(level), get_level_max_error(level));
+		float measured = 0.0f;
+		float analytic = 0.0f;
+		for (uint32_t i = level_offsets[level]; i < level_offsets[level + 1]; i++) {
+			measured = MAX(measured, get_cluster_error(i));
+			analytic = MAX(analytic, get_cluster_analytic_error(i));
+		}
+		// The gap between what was measured and what is provable is worth
+		// seeing: if it widens sharply the sampling is missing something.
+		report += vformat("  %5d | %8d | %9d | %9.6f | %8.6f | %.1fx\n",
+				level, get_level_cluster_count(level), get_level_triangle_count(level),
+				measured, analytic, measured > 0.0f ? (double)analytic / (double)measured : 0.0);
 	}
 
 	report += "  level | tri/cl avg | tri/cl max | vtx/cl avg | vtx/cl max | slice vtx | shared vtx | dup\n";
@@ -913,6 +929,11 @@ Dictionary NaniteDAG::_get_statistics_bind() const {
 		entry["clusters"] = get_level_cluster_count(level);
 		entry["triangles"] = get_level_triangle_count(level);
 		entry["max_error"] = get_level_max_error(level);
+		float analytic = 0.0f;
+		for (uint32_t i = level_offsets[level]; i < level_offsets[level + 1]; i++) {
+			analytic = MAX(analytic, get_cluster_analytic_error(i));
+		}
+		entry["max_analytic_error"] = analytic;
 		levels.push_back(entry);
 	}
 	stats["levels"] = levels;

@@ -26,6 +26,30 @@
 				Returns a mesh of every cluster on [param level], each cluster in its own color.
 			</description>
 		</method>
+		<method name="get_cluster_analytic_error" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="cluster" type="int" />
+			<description>
+				Returns a deviation the simplification that produced [param cluster] provably cannot exceed, in mesh units.
+				Unlike [method get_cluster_error] this is derived rather than sampled, so it holds without qualification - but it assumes a flat triangle departs from the surface by its own radius, and on real geometry runs one to two orders of magnitude larger. The runtime cut uses the measured value; this exists for consumers needing a guarantee, and so the ratio between the two is visible.
+			</description>
+		</method>
+		<method name="get_cluster_error" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="cluster" type="int" />
+			<description>
+				Returns how far the surface moved when [param cluster] was produced, in mesh units: the largest deviation found at the sampling density recorded on the graph, measured in both directions between the original geometry and the simplified result.
+				This is a measured maximum rather than a proven bound, which is why the sampling density travels with the graph. Zero for level 0, which is the unsimplified input. See [method get_cluster_analytic_error] for the derived counterpart.
+			</description>
+		</method>
+		<method name="get_cluster_parent_error" qualifiers="const">
+			<return type="float" />
+			<param index="0" name="cluster" type="int" />
+			<description>
+				Returns the error of the group that would replace [param cluster] with coarser geometry, in mesh units, or [constant @GDScript.INF] if it is a root and nothing coarser exists.
+				Together with [method get_cluster_error] this gives the interval of thresholds over which the cluster is the right choice: it is drawn when its own error is within the threshold but its replacement's is not.
+			</description>
+		</method>
 		<method name="get_cluster_count" qualifiers="const">
 			<return type="int" />
 			<description>

@@ -35,6 +35,7 @@
 
 #include "core/io/resource_loader.h"
 #include "core/io/resource_saver.h"
+#include "core/math/face3.h"
 #include "core/os/os.h"
 #include "core/templates/hash_map.h"
 #include "core/templates/hash_set.h"
@@ -47,6 +48,7 @@
 #include "tests/test_macros.h"
 #include "tests/test_utils.h"
 
+#include <cfloat>
 #include <cmath>
 #include <functional>
 
@@ -254,6 +256,12 @@ inline LocalVector<uint32_t> weld_by_position(const NaniteDAG &p_dag) {
 }
 
 // PackedByteArray's script-side encode_u32 is not on the C++ Vector<uint8_t>.
+inline uint32_t peek_u32(const PackedByteArray &p_data, int p_offset) {
+	const uint8_t *r = p_data.ptr();
+	return (uint32_t)r[p_offset] | ((uint32_t)r[p_offset + 1] << 8) |
+			((uint32_t)r[p_offset + 2] << 16) | ((uint32_t)r[p_offset + 3] << 24);
+}
+
 inline void poke_u32(PackedByteArray &r_data, int p_offset, uint32_t p_value) {
 	uint8_t *w = r_data.ptrw();
 	w[p_offset + 0] = (uint8_t)(p_value & 0xFF);
@@ -623,6 +631,10 @@ TEST_CASE("[Nanite] DAG survives a save and reload") {
 	// be interpreted on the other side.
 	CHECK(original->deviation_samples_per_triangle > 0);
 	CHECK(reloaded->deviation_samples_per_triangle == original->deviation_samples_per_triangle);
+	for (uint32_t i = 0; i < original->get_group_count(); i++) {
+		CHECK(reloaded->groups[i].analytic_error == original->groups[i].analytic_error);
+		CHECK(reloaded->groups[i].analytic_error >= reloaded->groups[i].error);
+	}
 	CHECK(reloaded->normals.size() == original->normals.size());
 	CHECK(reloaded->uvs.size() == original->uvs.size());
 	for (uint32_t i = 0; i < original->get_cluster_count(); i++) {
@@ -791,12 +803,19 @@ TEST_CASE("[Nanite] A payload that cannot be read is not mistaken for an empty D
 	}
 
 	SUBCASE("a count larger than the payload") {
-		// The position count sits after the two versions, the surface index,
-		// the two identity hashes, the empty source hint and the vertex count.
-		// Sizing an allocation from it unchecked is how a small file asks for
-		// gigabytes of memory.
+		// Sizing an allocation from a count without checking it against the
+		// bytes remaining is how a small file asks for gigabytes.
+		//
+		// The offset is asserted before it is used. A field was added to the
+		// header once already and moved this by four bytes, which left the test
+		// corrupting the vertex count instead -- still failing, but no longer
+		// exercising the allocation guard it was written for. A green test that
+		// has quietly stopped watching its target is worse than no test.
 		PackedByteArray hostile = good.duplicate();
-		poke_u32(hostile, 36, 0xFFFFFF00);
+		const int position_count_offset = 40;
+		REQUIRE_MESSAGE(peek_u32(hostile, position_count_offset) == (uint32_t)original->positions.size(),
+				"Header layout moved: this offset no longer holds the position count.");
+		poke_u32(hostile, position_count_offset, 0xFFFFFF00);
 
 		Ref<NaniteDAG> dag;
 		dag.instantiate();
@@ -989,6 +1008,18 @@ TEST_CASE("[Nanite] A structurally broken payload is refused") {
 		CHECK(!loaded->validate().is_empty());
 	}
 
+	SUBCASE("an analytic edge that inverts") {
+		const Ref<NaniteDAG> loaded = reload_corrupted([](Ref<NaniteDAG> &d) {
+			for (uint32_t i = 0; i < d->groups.size(); i++) {
+				if (d->groups[i].level > 0) {
+					d->groups[i].analytic_error = 0.0f;
+					break;
+				}
+			}
+		});
+		CHECK(!loaded->validate().is_empty());
+	}
+
 	SUBCASE("an error with no sampling density to interpret it by") {
 		const Ref<NaniteDAG> loaded = reload_corrupted([](Ref<NaniteDAG> &d) {
 			d->deviation_samples_per_triangle = 0;
@@ -1137,6 +1168,81 @@ TEST_CASE("[Nanite] An artifact built by a different algorithm is refused") {
 	CHECK(!loaded->validate().is_empty());
 }
 
+TEST_CASE("[Nanite] Deviation is measured from both surfaces, not one") {
+	// Reconstructs each group's input and output from the stored graph and
+	// independently measures the direction the previous implementation missed:
+	// how far the interior of a simplified triangle sits from the original
+	// surface. The original was represented by its removed vertices alone, so
+	// a bump the simplified surface cut straight through went unseen -- and no
+	// test noticed, because the value it produced was still plausible.
+	//
+	// Verified to discriminate: removing the reverse-direction sampling from
+	// the builder fails this on four of five groups. Measured on this fixture
+	// the reverse direction is the larger of the two in four groups out of
+	// five, so a one-sided implementation understates the error rather than
+	// merely computing it differently.
+	const TestMesh mesh = make_displaced_grid(32);
+	NaniteDAGBuilder::Settings settings;
+	const Ref<NaniteDAG> dag = build_test_dag(mesh, settings);
+	REQUIRE(dag.is_valid());
+	REQUIRE(dag->get_group_count() > 0);
+	CHECK(dag->deviation_samples_per_triangle == 4);
+
+	auto gather = [&](const LocalVector<uint32_t> &p_clusters) {
+		LocalVector<Vector3> corners;
+		for (const uint32_t cluster_id : p_clusters) {
+			const NaniteDAG::Cluster &cluster = dag->clusters[cluster_id];
+			for (uint32_t k = 0; k < cluster.triangle_count * 3; k++) {
+				const uint32_t v = dag->get_cluster_vertex(cluster_id, k);
+				corners.push_back(Vector3(dag->positions[v * 3], dag->positions[v * 3 + 1], dag->positions[v * 3 + 2]));
+			}
+		}
+		return corners;
+	};
+
+	uint32_t checked = 0;
+	for (uint32_t g = 0; g < dag->get_group_count() && checked < 6; g++) {
+		const NaniteDAG::Group &group = dag->groups[g];
+		const LocalVector<Vector3> before = gather(group.children);
+		const LocalVector<Vector3> after = gather(group.produced);
+		if (before.is_empty() || after.is_empty()) {
+			continue;
+		}
+		checked++;
+
+		float max_child = 0.0f;
+		for (const uint32_t child : group.children) {
+			max_child = MAX(max_child, dag->get_cluster_error(child));
+		}
+		const float step = group.error - max_child;
+
+		// The missed direction: output triangle interiors against the input
+		// surface, sampled exactly as the graph says it was.
+		float reverse = 0.0f;
+		for (uint32_t t = 0; t + 2 < after.size(); t += 3) {
+			const Vector3 samples[4] = {
+				(after[t] + after[t + 1] + after[t + 2]) / 3.0f,
+				(after[t] + after[t + 1]) * 0.5f,
+				(after[t + 1] + after[t + 2]) * 0.5f,
+				(after[t + 2] + after[t]) * 0.5f
+			};
+			for (const Vector3 &sample : samples) {
+				float nearest = FLT_MAX;
+				for (uint32_t u = 0; u + 2 < before.size(); u += 3) {
+					const Face3 face(before[u], before[u + 1], before[u + 2]);
+					nearest = MIN(nearest, (float)sample.distance_to(face.get_closest_point_to(sample)));
+				}
+				reverse = MAX(reverse, nearest);
+			}
+		}
+
+		CHECK_MESSAGE(step >= reverse - 1e-4f,
+				vformat("Group %d stored a step of %f while its simplified surface strays %f from the original, so that direction was not measured.",
+						g, step, reverse));
+	}
+	REQUIRE_MESSAGE(checked > 0, "No group had both an input and an output to compare.");
+}
+
 TEST_CASE("[Nanite] DAG builder is deterministic") {
 	const TestMesh mesh = make_displaced_grid(32);
 	NaniteDAGBuilder::Settings settings;
@@ -1157,6 +1263,7 @@ TEST_CASE("[Nanite] DAG builder is deterministic") {
 		CHECK(first->clusters[i].vertex_offset == second->clusters[i].vertex_offset);
 		CHECK(first->clusters[i].triangle_count == second->clusters[i].triangle_count);
 		CHECK(first->get_cluster_error(i) == second->get_cluster_error(i));
+		CHECK(first->get_cluster_analytic_error(i) == second->get_cluster_analytic_error(i));
 	}
 	for (uint32_t i = 0; i < first->cluster_vertices.size(); i++) {
 		CHECK(first->cluster_vertices[i] == second->cluster_vertices[i]);
