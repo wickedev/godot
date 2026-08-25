@@ -61,6 +61,8 @@ RD 스파이크 + 코어 훅 3건  →  통합 GBuffer 스키마 동결  →  Na
 | 게이트 | 시점 | 조건 | 해금되는 것 | 실패 시 |
 |--------|:----:|------|-------------|---------|
 | **G0** | M1 | RD 스파이크 3건 판정 + 코어 훅 3건 머지 + Sentry 라이브 | 전 레인 본격 착수 | bindless 불가 → VT는 단일 아틀라스+UV 인디렉션으로 축소 설계 |
+
+> **G0 중간 판정 (2026-08-25, C3 스파이크 `docs/rd-capability-spike-report.md`):** ⓐ async 리드백 🟢 PASS — 왕복 법칙 **단일스레드 `fq-1` / 멀티스레드 `fq`** (VT/Nanite 팝인 예산은 **멀티 2~3프레임 전제**로 설계할 것; 32MB/f까지 무스톨, macOS 실측). ⓑ 스레드 가드 🟡 — #99750 존속, 승인 우회 `call_on_render_thread` **0프레임 비용**. ⓒ descriptor-indexing 🔴 **FAIL** — 디바이스 생성이 `Vulkan11Features`만 체인, **VT 축소 분기 발동**. 단 회피로 복원용 최소 변경(Vulkan12Features 체인+nonuniform, Task #18)은 코어 훅급이라 Wave 0~1로 편성 — 성공 시 nanite-perf §③ "고정 샘플러 배열 nonuniform" 회피로가 되살아남. 잔여: Windows/Linux 재측정(하니스 동봉). 코어 훅은 ②③ 랜딩·①④ 진행 중, Sentry는 재리뷰 중.
 | **G1** | M4 | **통합 GBuffer 스키마 v1 동결** (Tier 레이아웃 + `gb_objectid` 네임스페이스) | L1 deferred 리졸브 / L2 S3 / L3 ReSTIR 입력 / L7 AOV export | **가장 비싼 실패.** 4레인 재작업 |
 | **G2** | M6 | **지오 풀 버퍼 계약 동결** — BDA + AS-build usage 플래그 | L2 스트리밍 레이어 / L3 BLAS 직접 빌드 | 나중 변경 시 스트리밍 레이어 전체 개조(nanite-impl §10.4-3) |
 | **G3** | M10 | Nanite S2 하니스 판정 (컬링·LOD 컷·HZB 실증) | S3/S4 진입 | DAG 품질 미달 → S1으로 회귀 |
@@ -289,7 +291,7 @@ L9 인프라      [Sentry+프로파일러P0/P1]──[P2]──[P3]────�
 | 항목 | 기존 판정 | 재판정 |
 |------|-----------|--------|
 | **GPU 게임플레이 물리** | 🔴 P4 "자체 구현 금지, 업스트림과 충돌" | 🔴 **자체 솔버 (2026-08-25 재판정, C4 upstream 실측).** `Jolt/Compute`(51파일/4,967줄)는 범용 GPU 물리가 아니라 **헤어 솔버 전용 컴퓨트 추상화** — `Physics/` 전체에서 소비자가 `Hair/` 하나뿐, GPU 리지드바디/브로드페이즈/콜리전/소프트바디 전무. 벤더링으로 얻는 건 **추상화 토대**(외부 VkDevice 주입·순수가상 얼로케이터)이고 솔버는 우리가 쓴다. Wave 4(G5 이후) 배치 |
-| **스트랜드 헤어 물리** | 🔴 P3 장기 "Jolt `Physics/Hair` 대기" | 🟡 **스코프 내.** 시뮬 = 벤더링(`Hair/` 8파일/2,611줄 실존 확인) / 렌더 = 스트랜드 래스터 + Marschner·Chiang BSDF(L1+L6). ⚠️ **벤더링 즉시 얻는 건 CPU 경로뿐**(`JPH_USE_CPU_COMPUTE` — upstream 주석 "debugging purposes, not optimized") — **GPU 경로는 G5(컴퓨트 큐) + HLSL→SPIR-V/metallib 오프라인 툴체인 신설 선행**(셰이더가 HLSL, upstream이 빌드 미제공, Godot에 DXC 의존 없음) |
+| **스트랜드 헤어 물리** | 🔴 P3 장기 "Jolt `Physics/Hair` 대기" | 🟡 **스코프 내.** 시뮬 = 벤더링(`Hair/` 8파일/2,611줄 실존 확인) / 렌더 = 스트랜드 래스터 + Marschner·Chiang BSDF(L1+L6). ⚠️ **벤더링 즉시 얻는 건 CPU 경로뿐**(`JPH_USE_CPU_COMPUTE` — upstream 주석 "debugging purposes, not optimized") — **GPU 경로는 G5(컴퓨트 큐) + HLSL→SPIR-V/metallib 오프라인 툴체인 신설 선행**(셰이더가 HLSL, upstream이 빌드 미제공, Godot에 DXC 의존 없음). **성숙도 캐비엇(C4, `Hair.h:22-32` upstream 자체 주석 "still in development"):** Wind forces 부재 → **바람 연동은 자체 구현**(Task #8 전역 바람 버스와 접점), LOD 부재, 충돌은 ConvexHullShape 한정, CPU/GPU 이중 저장 메모리 낭비 |
 | **소프트바디 셀프 콜리전** | 🔴 "Jolt 업스트림 대기" | 🔴 **자체 구현 확정 (2026-08-25 실측, C4).** 번들 5.6.0의 `SoftBody/` 전체에서 셀프 콜리전 심볼 0건 — 있는 것은 `Shape::CollideSoftBodyVertices`(버텍스 vs 외부 shape) + `SoftBodyShape.cpp:118`(바디 A 버텍스 vs 바디 B shape)뿐, **인트라바디 경로 부재**. constraint도 Edge/DihedralBend/Volume/LRA/Skinned뿐. (B)에서 유일하게 벤더링으로 안 풀리는 항목 — L5 자체 구현, XPBD 셀프 콜리전 브로드페이즈 신설 |
 
 ### (C) 기술적으로 틀린 *수단* → 목표는 유지, **수단만 교체** (뒤집지 않음)
