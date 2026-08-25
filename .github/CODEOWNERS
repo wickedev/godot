@@ -13,6 +13,9 @@
 # Doc
 
 /doc/                                         @godotengine/documentation
+
+# Fork research & planning documents (maintainer-owned).
+/docs/                        @godotengine/documentation
 /doc/translations/                            @godotengine/i18n
 
 # Drivers
