@@ -290,7 +290,7 @@ vis-buffer 리졸브에서 머티리얼 인덱스는 **픽셀마다 다르다 = 
 | ⓐ **스톨 임계·비용** | GPU 타임스탬프 계측 + 통제된 씬 | 프레임타임 관측은 노이즈에 묻혔다(위 표). **L9 GPU 프로파일러 P1/P2가 선행되어야 한다** |
 | ⓐ·ⓑ **Windows / AMD / Intel / 모바일 재측정** | 하니스를 각 플랫폼에서 실행 | 지금까지 Metal(Apple M2 Pro)·Vulkan(NVIDIA GB10) 두 조합뿐이다. 왕복 = `fq-1`이 드라이버·벤더 무관인지는 미확인 |
 | ⓐ **마셜링 지연 전반** | 워커 스레드·물리 틱·프레임 후반 enqueue | **단일 시계로 측정 불가.** 메인→렌더는 정의상 두 스레드에 걸친다. 별도 방법론이 필요하고 이 리포트는 수치를 내지 않는다 |
-| `thread_model=2` 종료 시 SIGABRT | 원인 규명 | 전 프로브 완료 후 엔진 종료 중 발생. `RenderingDevice::finalize`가 자기 렌더스레드 가드에 걸린다(`rendering_device.cpp:8925`). 하니스 문제인지 엔진 문제인지 **미판정** |
+| ~~`thread_model=2` 종료 시 SIGABRT~~ | — | **판정 완료 — 하니스가 아니라 코어 수명주기 결함이다.** 렌더 스레드가 RD 소유권을 가져간 뒤 shutdown join에서 메인으로 복구되지 않아, `finalize`가 잘못된 스레드에서 돌며 자기 가드에 걸리고(`rendering_device.cpp:8925`) 드라이버 정리가 건너뛰어진다. 별도 태스크로 추적 중. 전 프로브 출력은 그 이전에 나온다 |
 | ⓒ macOS 어서션 실체 | MoltenVK에서 nonuniform indexing이 실제 동작하는지 | `:1027` 불일치의 해석이 갈림 |
 
 **하니스:** `misc/rd_capability_spike/` (GDScript, 실행 1줄). 다른 레인이 자기 플랫폼에서 그대로 돌려 `RESULT` 라인을 회신하면 위 표가 채워진다.
